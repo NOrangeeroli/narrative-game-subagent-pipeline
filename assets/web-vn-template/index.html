@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Narrative Game</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="app" class="app">
+      <section id="stage" class="stage">
+        <div class="shade"></div>
+        <div class="topbar">
+          <div id="title" class="title"></div>
+          <button id="restart" class="icon-button" title="Restart" aria-label="Restart">R</button>
+        </div>
+        <section class="dialogue" aria-live="polite">
+          <h1 id="node-title"></h1>
+          <div id="speaker" class="speaker"></div>
+          <p id="line" class="line"></p>
+          <div id="choices" class="choices"></div>
+          <button id="continue" class="continue">Continue</button>
+        </section>
+      </section>
+    </main>
+    <script src="./story-data.js"></script>
+    <script src="./runtime.js"></script>
+  </body>
+</html>

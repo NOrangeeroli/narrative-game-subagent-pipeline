@@ -1,0 +1,6 @@
+interface:
+  display_name: "Narrative Game Pipeline"
+  short_description: "Build branching games with subagents"
+  default_prompt: "Use $narrative-game-subagent-pipeline to generate a playable branching narrative game from my prompt."
+policy:
+  allow_implicit_invocation: true

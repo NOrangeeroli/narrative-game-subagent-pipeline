@@ -1,0 +1,45 @@
+# Repair Routing
+
+Route failures to the smallest owner. The controller creates the repair ticket and gives it to exactly the agent that can fix the artifact.
+
+## Owner Table
+
+| Failure | Owner |
+| --- | --- |
+| malformed or backend-specific requirements | `PromptAnalyst` |
+| missing event anchors or synopsis traceability | `LinearSynopsisDesigner` |
+| duplicate node ids, broken edge refs, missing terminals | `BranchGraphDesigner` |
+| missing state variable, stale graph refs, missing edge semantics | `BaseGameIRDesigner` |
+| topology and semantics both need coordinated change | `BranchGraphDesigner` then `BaseGameIRDesigner`, or a paired planning pass |
+| missing realization plan, wrong exit binding, unsupported playable kind | `NodeRealizationPlanner` |
+| bad Yarn title, invalid command, missing outcome, changed state refs | affected `NodeDialogueWriter` |
+| missing asset id, wrong prefix, bad trace | `AssetDirector` |
+| Web export failure | controller/tool bug first |
+| Unity export failure | controller/template bug first |
+
+## Repair Ticket Shape
+
+```json
+{
+  "ticket_id": "repair.stage.1",
+  "issue_ids": ["issue.stage.1"],
+  "owners": ["NodeDialogueWriter"],
+  "artifact_scope": "yarn_fragment",
+  "repair_order": ["yarn_fragment"],
+  "instructions": [
+    "Previous output failed validation: complete_activity needs outcome arg.",
+    "Return corrected payload only. Preserve upstream ids and schema_version 0.1.0."
+  ],
+  "source_report_path": "reports/validation-report.json",
+  "retry_count": 1
+}
+```
+
+## Rules
+
+- Do not ask for broad rewrites when a local repair can fix the issue.
+- Include the failed payload, validation findings, upstream artifacts, and exact expected contract.
+- Preserve stable ids unless the finding specifically says an id is invalid.
+- After repair, rerun validation before continuing.
+- Stop after the retry budget and report the preserved run directory instead of overwriting evidence.
+
