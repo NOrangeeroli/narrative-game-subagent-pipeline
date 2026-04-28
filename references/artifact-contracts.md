@@ -39,7 +39,7 @@ Required shape:
 
 Do not include branches, dialogue scripts, Yarn titles, Unity paths, or asset prompts.
 
-## `chapter_branch_graph.json`
+## `branch_graph.json`
 
 Required shape:
 
@@ -47,6 +47,9 @@ Required shape:
 {
   "metadata": {"schema_version": "0.1.0", "generated_by": "BranchGraphDesigner", "notes": []},
   "title": "Story title",
+  "graph_scope": "full_game",
+  "clusters": [],
+  "source_outline_ids": ["event.intro"],
   "start_node_id": "node.intro",
   "nodes": [
     {
@@ -76,6 +79,7 @@ Allowed `node_type`: `start`, `scene`, `choice`, `convergence`, `terminal`.
 Allowed `condition_type`: `unconditional`, `player_choice`, `state_gate`, `outcome`, `terminal_resolution`.
 
 Branch graph owns topology and player-facing labels, not executable state semantics.
+It must not contain Yarn text, Unity paths, image-generation prompts, or persistent state effects.
 
 ## `game_ir.json`
 
@@ -84,6 +88,19 @@ Required shape:
 ```json
 {
   "metadata": {"schema_version": "0.1.0", "generated_by": "BaseGameIRDesigner", "notes": []},
+  "design_brief": {
+    "target_experience": "...",
+    "tone": "...",
+    "themes": [],
+    "must_keep_constraints": [],
+    "production_constraints": {},
+    "narrative_bible": {
+      "cast": [],
+      "locations": [],
+      "timeline": [],
+      "continuity_rules": []
+    }
+  },
   "world": {"summary": "..."},
   "entities": [{"id": "char.hero", "kind": "character", "name": "Hero", "description": "..."}],
   "global_state_variables": [
@@ -200,3 +217,60 @@ Allowed `kind`: `background`, `cg`, `portrait`, `bgm`, `sfx`, `ui`.
 
 Do not include generated image bytes, provider URLs, API calls, or Unity import paths.
 
+## `asset-manifest.json`
+
+Controller-authored production plan and runtime lookup table, following the `unity-vn-studio` split between visual direction and generated files.
+
+Required shape:
+
+```json
+{
+  "project_id": "vn.project.sample",
+  "style_bible": {"palette": [], "rendering_mode": "...", "lighting_mood": "..."},
+  "characters": [
+    {
+      "id": "char.hero",
+      "display_name": "Hero",
+      "canon_ref_asset_id": "charref.hero.core",
+      "canon_ref_file_ref": "generated/charrefs/charref.hero.core.png",
+      "base_portrait_asset_id": "portrait.hero",
+      "expression_asset_ids": ["portrait.hero"],
+      "portrait_assets": [
+        {
+          "asset_id": "portrait.hero",
+          "emotion": "neutral",
+          "file_ref": "generated/portraits/portrait.hero.png",
+          "source_file_ref": "generated/portraits/source/portrait.hero.png"
+        }
+      ],
+      "costume_rules": "",
+      "color_anchors": []
+    }
+  ],
+  "backgrounds": [
+    {
+      "asset_id": "bg.intro",
+      "scene_id": "node.intro",
+      "location_tag": "intro",
+      "time_of_day": "default",
+      "spec": {},
+      "file_ref": "generated/backgrounds/bg.intro.png"
+    }
+  ],
+  "cgs": [],
+  "ui": [],
+  "audio": [],
+  "version": "v1"
+}
+```
+
+Every runtime-facing visual asset must have a stable `asset_id` and a `file_ref` under `workspace/generated-assets/`. Asset IDs do not encode engine paths. Generated files, prompt snapshots, and model/provider metadata belong in `workspace/generated-assets/` and `reports/asset-generation-report.json`, not in `asset-direction.json`.
+
+Supported generation providers:
+
+- `local-svg`: deterministic offline fallback for immediate playable exports.
+- `mock`: tiny placeholder PNGs for pipeline tests.
+- `gemini`: model-backed image generation using `GEMINI_API_KEY`.
+- `openai-ppioImage`: PPIO image generation using `IMAGE_API_KEY`, `IMAGE_MODEL`, optional `IMAGE_BASE_URL`, `IMAGE_RESPONSE_TYPE`, `IMAGE_EXTRA_PARAMS`, and `IMAGE_REWRITE_RULES`.
+
+Portrait post-processing attempts `rembg` background removal when available; `reports/asset-validation.json` must catch missing portrait transparency.

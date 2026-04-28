@@ -9,6 +9,7 @@ from pathlib import Path
 
 from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
+from generate_assets import generate_assets
 from pipeline_lib import (
     build_realization_manifest,
     ensure_run_layout,
@@ -19,7 +20,9 @@ from pipeline_lib import (
     write_not_implemented_stubs,
     write_text,
 )
+from plan_assets import plan_asset_manifest
 from story_ir import parse_yarn, verify_story_ir
+from validate_assets import validate_assets
 from write_report import write_final_report
 
 
@@ -39,11 +42,22 @@ def init_run(args: argparse.Namespace) -> None:
     write_json(run_root / "reports" / "controller-todo.json", {
         "status": "initialized",
         "prompt_path": "inputs/prompt.txt",
-        "required_next_artifacts": [
+        "required_design_artifacts": [
             "workspace/design_layer/user_requirements.json",
             "workspace/design_layer/chapter_linear_synopsis.json",
-            "workspace/design_layer/chapter_branch_graph.json",
+            "workspace/design_layer/branch_graph.json",
             "workspace/design_layer/game_ir.json",
+        ],
+        "runtime_design_artifacts": [
+            "workspace/design_layer/branch_graph.json",
+            "workspace/design_layer/game_ir.json",
+        ],
+        "asset_pipeline_artifacts": [
+            "workspace/asset-direction.json",
+            "workspace/asset-manifest.json",
+            "workspace/generated-assets/",
+            "reports/asset-generation-report.json",
+            "reports/asset-validation.json",
         ],
     })
     print(str(run_root))
@@ -86,6 +100,20 @@ def build_run(args: argparse.Namespace) -> None:
         print(json.dumps(story_report, indent=2))
         raise SystemExit(1)
 
+    if not args.skip_assets and path_for(run_root, "asset_direction").exists():
+        plan_asset_manifest(run_root)
+        generate_assets(
+            run_root,
+            provider=args.asset_provider,
+            model=args.asset_model,
+            overwrite=args.asset_overwrite,
+            remove_backgrounds=args.asset_remove_backgrounds,
+        )
+        asset_report = validate_assets(run_root)
+        if asset_report["status"] == "fail":
+            print(json.dumps(asset_report, indent=2))
+            raise SystemExit(1)
+
     web_path = None
     if not args.skip_web:
         web_path = export_web_vn(run_root)
@@ -113,6 +141,12 @@ def main() -> None:
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("--run-root", required=True)
     build_parser.add_argument("--skip-web", action="store_true")
+    build_parser.add_argument("--skip-assets", action="store_true")
+    build_parser.add_argument("--asset-provider", default=None)
+    build_parser.add_argument("--asset-model", default=None)
+    build_parser.add_argument("--asset-overwrite", action="store_true")
+    build_parser.add_argument("--no-asset-remove-backgrounds", action="store_false", dest="asset_remove_backgrounds")
+    build_parser.set_defaults(asset_remove_backgrounds=True)
     build_parser.add_argument("--export-unity", action="store_true")
     build_parser.set_defaults(func=build_run)
 

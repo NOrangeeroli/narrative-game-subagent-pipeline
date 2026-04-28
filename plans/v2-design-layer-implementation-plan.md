@@ -448,7 +448,7 @@ fail if validation has blocking errors
 compile public branch_graph.json
 compile public game_ir.json
 write compile_report.json
-optionally write chapter_branch_graph.json compatibility alias
+do not write graph compatibility aliases
 ```
 
 ### `design_v2_project_context.py`
@@ -515,7 +515,7 @@ Complete the v1 refactor first:
 canonical branch_graph.json
 game_ir design_brief
 two-file downstream prompts
-legacy graph alias support
+no legacy graph alias support
 two-file validation fixture
 ```
 

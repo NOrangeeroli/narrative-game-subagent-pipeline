@@ -44,7 +44,7 @@ Use these canonical paths inside each run:
 inputs/prompt.txt
 workspace/design_layer/user_requirements.json
 workspace/design_layer/chapter_linear_synopsis.json
-workspace/design_layer/chapter_branch_graph.json
+workspace/design_layer/branch_graph.json
 workspace/design_layer/game_ir.json
 workspace/state/shared-state.schema.json
 workspace/realization/node-realization-plans.json
@@ -55,8 +55,12 @@ workspace/vn/fragments/*.manifest.json
 workspace/vn/story.yarn
 workspace/vn/story.storyir.json
 workspace/asset-direction.json
+workspace/asset-manifest.json
+workspace/generated-assets/
 build/web-vn/
 build/unity-project/
+reports/asset-generation-report.json
+reports/asset-validation.json
 reports/*.json
 ```
 
@@ -67,14 +71,15 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 1. Initialize the run with `scripts/run_pipeline.py init`.
 2. Spawn front-half subagents using `references/subagent-prompts.md`:
    `PromptAnalyst`, `LinearSynopsisDesigner`, `BranchGraphDesigner`, and `BaseGameIRDesigner`.
-3. Save accepted payloads to `workspace/design_layer/`.
+3. Save accepted payloads to `workspace/design_layer/`. The design layer produces all four files, while downstream agents receive only `branch_graph.json` and `game_ir.json` derived context.
 4. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
 5. Spawn `NodeRealizationPlanner` after shared state is projected.
 6. Spawn one `NodeDialogueWriter` per `vn_yarn` or `cutscene_yarn` realization plan. Batch these workers when there are many nodes.
 7. Save each accepted Yarn fragment and sidecar manifest under `workspace/vn/fragments/`.
 8. Spawn `AssetDirector` after story verification when visual direction is needed. It returns art direction only.
-9. Run `scripts/run_pipeline.py build --run-root <run>`.
-10. Inspect `reports/final-report.json`, `reports/validation-report.json`, and the playable export.
+9. During build, the controller plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
+10. Run `scripts/run_pipeline.py build --run-root <run>`.
+11. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
 ## Boundaries
 
@@ -94,6 +99,10 @@ Unsupported `battle`, `interaction`, `puzzle`, `exploration`, and `external_stub
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
 - `scripts/story_ir.py`: lower Yarn to a simple StoryIR and verify titles, jumps, and outcomes.
+- `scripts/plan_assets.py`: convert `asset-direction.json` into a deterministic runtime `asset-manifest.json`.
+- `scripts/generate_assets.py`: generate or reuse visual assets from `asset-manifest.json` through `local-svg`, `mock`, `gemini`, or `openai-ppioImage` providers.
+- `scripts/asset_image_providers.py`: provider adapters, request/response logging, PPIO response parsing, and Gemini image requests.
+- `scripts/validate_assets.py`: verify generated asset files and portrait transparency.
 - `scripts/export_web_vn.py`: export a self-contained browser-playable VN.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.

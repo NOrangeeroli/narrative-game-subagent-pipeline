@@ -2,6 +2,7 @@
   const story = window.NARRATIVE_GAME_STORY;
   const state = Object.assign({}, story.initial_state || {});
   const nodes = new Map((story.nodes || []).map((node) => [node.id, node]));
+  const assets = new Map((story.assets || []).map((asset) => [asset.asset_id, asset]));
   let currentNodeId = story.start_node_id;
   let beatIndex = 0;
 
@@ -13,6 +14,7 @@
   const continueButton = document.getElementById("continue");
   const restartButton = document.getElementById("restart");
   const stage = document.getElementById("stage");
+  const portraitsEl = document.getElementById("portraits");
 
   function hashColor(value, offset) {
     let hash = offset;
@@ -23,9 +25,32 @@
   }
 
   function setBackground(assetId) {
+    const asset = assets.get(assetId);
+    if (asset && asset.runtime_path) {
+      stage.style.setProperty("--scene-image", `url("${asset.runtime_path}")`);
+      stage.classList.add("has-asset-bg");
+      return;
+    }
     const a = hashColor(assetId || "default", 17);
     const b = hashColor(assetId || "default", 137);
+    stage.classList.remove("has-asset-bg");
     stage.style.setProperty("--scene-gradient", `linear-gradient(135deg, hsl(${a} 34% 32%), hsl(${b} 28% 18%) 58%, hsl(${(a + b) % 360} 38% 28%))`);
+  }
+
+  function renderPortraits(node) {
+    portraitsEl.innerHTML = "";
+    const portraitIds = (node.portrait_ids || []).filter((id) => {
+      const asset = assets.get(id);
+      return asset && asset.runtime_path;
+    });
+    portraitIds.forEach((id, index) => {
+      const asset = assets.get(id);
+      const image = document.createElement("img");
+      image.src = asset.runtime_path;
+      image.alt = "";
+      image.className = `portrait portrait-${index}`;
+      portraitsEl.appendChild(image);
+    });
   }
 
   function applyWrites(writes) {
@@ -96,6 +121,7 @@
     titleEl.textContent = story.title || "Narrative Game";
     nodeTitleEl.textContent = node.title || node.id;
     setBackground(node.background_id || node.id);
+    renderPortraits(node);
     const beats = node.beats && node.beats.length ? node.beats : [{ speaker: "Narrator", text: "..." }];
     const beat = beats[Math.min(beatIndex, beats.length - 1)];
     speakerEl.textContent = beat.speaker || "Narrator";
@@ -123,4 +149,3 @@
 
   render();
 })();
-

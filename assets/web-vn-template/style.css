@@ -35,11 +35,51 @@ button {
   transition: background 260ms ease;
 }
 
+.stage.has-asset-bg {
+  background:
+    linear-gradient(135deg, rgba(22, 24, 25, 0.16), rgba(8, 9, 12, 0.58)),
+    var(--scene-image),
+    var(--scene-gradient, linear-gradient(135deg, #31516b, #151820 58%, #6f4934));
+  background-position: center;
+  background-size: cover;
+}
+
 .shade {
   position: absolute;
   inset: 0;
   background: radial-gradient(circle at 50% 28%, transparent 0, rgba(0, 0, 0, 0.25) 44%, rgba(0, 0, 0, 0.74) 100%);
   pointer-events: none;
+}
+
+.portraits {
+  position: absolute;
+  z-index: 1;
+  inset: auto 3vw clamp(116px, 19vh, 210px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(2px, 2vw, 28px);
+  pointer-events: none;
+}
+
+.portrait {
+  width: auto;
+  height: clamp(250px, 46vh, 500px);
+  max-width: 30vw;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 26px rgba(0, 0, 0, 0.42));
+}
+
+.portrait-0 {
+  transform: translateY(6px);
+}
+
+.portrait-1 {
+  transform: translateY(-8px);
+}
+
+.portrait-2 {
+  transform: translateY(12px);
 }
 
 .topbar {
@@ -145,5 +185,15 @@ button {
     width: calc(100vw - 20px);
     margin-bottom: 10px;
   }
-}
 
+  .portraits {
+    inset: auto 0 42vh;
+    gap: 0;
+    opacity: 0.9;
+  }
+
+  .portrait {
+    height: 38vh;
+    max-width: 36vw;
+  }
+}

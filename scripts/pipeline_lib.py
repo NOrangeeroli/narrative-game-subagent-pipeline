@@ -18,16 +18,19 @@ STAGE_PATHS = {
     "prompt": "inputs/prompt.txt",
     "requirements": "workspace/design_layer/user_requirements.json",
     "synopsis": "workspace/design_layer/chapter_linear_synopsis.json",
-    "branch_graph": "workspace/design_layer/chapter_branch_graph.json",
+    "branch_graph": "workspace/design_layer/branch_graph.json",
     "game_ir": "workspace/design_layer/game_ir.json",
     "shared_state": "workspace/state/shared-state.schema.json",
     "realization_plans": "workspace/realization/node-realization-plans.json",
     "realization_manifest": "workspace/realization/realization-manifest.json",
     "asset_direction": "workspace/asset-direction.json",
+    "asset_manifest": "workspace/asset-manifest.json",
     "story_yarn": "workspace/vn/story.yarn",
     "story_ir": "workspace/vn/story.storyir.json",
     "validation_report": "reports/validation-report.json",
     "story_report": "reports/story-verification.json",
+    "asset_generation_report": "reports/asset-generation-report.json",
+    "asset_validation_report": "reports/asset-validation.json",
     "final_report": "reports/final-report.json",
 }
 
@@ -87,6 +90,7 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/realization/stubs",
         "workspace/vn/fragments",
         "workspace/runtime",
+        "workspace/generated-assets",
         "build/web-vn",
         "build/unity-project",
         "reports",
@@ -212,40 +216,40 @@ def validate_branch_graph(payload: Json | None) -> list[Finding]:
     nodes = as_list(payload.get("nodes"))
     edges = as_list(payload.get("edges"))
     if not nodes:
-        findings.append(Finding("error", "schema", "Branch graph must include nodes.", "chapter_branch_graph.nodes"))
+        findings.append(Finding("error", "schema", "Branch graph must include nodes.", "branch_graph.nodes"))
     node_ids: set[str] = set()
     for index, node in enumerate(nodes):
         if not isinstance(node, dict):
-            findings.append(Finding("error", "schema", "Node entries must be objects.", f"chapter_branch_graph.nodes[{index}]"))
+            findings.append(Finding("error", "schema", "Node entries must be objects.", f"branch_graph.nodes[{index}]"))
             continue
         node_id = node.get("id")
         if not isinstance(node_id, str) or not node_id.strip():
-            findings.append(Finding("error", "schema", "Node entry needs id.", f"chapter_branch_graph.nodes[{index}].id"))
+            findings.append(Finding("error", "schema", "Node entry needs id.", f"branch_graph.nodes[{index}].id"))
         elif node_id in node_ids:
-            findings.append(Finding("error", "duplicate_id", f"Duplicate node id: {node_id}", f"chapter_branch_graph.nodes[{index}].id"))
+            findings.append(Finding("error", "duplicate_id", f"Duplicate node id: {node_id}", f"branch_graph.nodes[{index}].id"))
         else:
             node_ids.add(node_id)
         if not (object_has_text(node, "summary") or object_has_text(node, "body")):
-            findings.append(Finding("warning", "thin_node", "Node should include summary or body.", f"chapter_branch_graph.nodes[{index}]"))
+            findings.append(Finding("warning", "thin_node", "Node should include summary or body.", f"branch_graph.nodes[{index}]"))
     start_id = payload.get("start_node_id")
     if not isinstance(start_id, str) or start_id not in node_ids:
-        findings.append(Finding("error", "missing_start", "start_node_id must reference an existing node.", "chapter_branch_graph.start_node_id"))
+        findings.append(Finding("error", "missing_start", "start_node_id must reference an existing node.", "branch_graph.start_node_id"))
     edge_ids: set[str] = set()
     for index, edge in enumerate(edges):
         if not isinstance(edge, dict):
-            findings.append(Finding("error", "schema", "Edge entries must be objects.", f"chapter_branch_graph.edges[{index}]"))
+            findings.append(Finding("error", "schema", "Edge entries must be objects.", f"branch_graph.edges[{index}]"))
             continue
         edge_id = edge.get("id")
         if not isinstance(edge_id, str) or not edge_id.strip():
-            findings.append(Finding("error", "schema", "Edge entry needs id.", f"chapter_branch_graph.edges[{index}].id"))
+            findings.append(Finding("error", "schema", "Edge entry needs id.", f"branch_graph.edges[{index}].id"))
         elif edge_id in edge_ids:
-            findings.append(Finding("error", "duplicate_id", f"Duplicate edge id: {edge_id}", f"chapter_branch_graph.edges[{index}].id"))
+            findings.append(Finding("error", "duplicate_id", f"Duplicate edge id: {edge_id}", f"branch_graph.edges[{index}].id"))
         else:
             edge_ids.add(edge_id)
         for key in ("from", "to"):
             ref = edge.get(key)
             if not isinstance(ref, str) or ref not in node_ids:
-                findings.append(Finding("error", "invalid_reference", f"Edge {edge_id or index} has invalid {key} node reference: {ref}", f"chapter_branch_graph.edges[{index}].{key}"))
+                findings.append(Finding("error", "invalid_reference", f"Edge {edge_id or index} has invalid {key} node reference: {ref}", f"branch_graph.edges[{index}].{key}"))
     terminal_nodes = [node for node in nodes if isinstance(node, dict) and (node.get("is_terminal") is True or node.get("node_type") == "terminal")]
     if not terminal_nodes:
         findings.append(Finding("warning", "no_terminal", "Branch graph has no explicit terminal node."))
@@ -286,6 +290,8 @@ def validate_game_ir(payload: Json | None, branch_graph: Json | None = None) -> 
     forbidden = re.compile(r"\b(Unity|Yarn|Gemini|Assets/|Resources/|portrait\.|bg\.)\b", re.I)
     if forbidden.search(json.dumps(payload, ensure_ascii=False)):
         findings.append(Finding("warning", "base_design_leak", "Game IR mentions backend or asset terms; persistent semantics should stay mode-neutral."))
+    if not isinstance(payload.get("design_brief"), dict):
+        findings.append(Finding("warning", "missing_design_brief", "Game IR should include design_brief so downstream agents do not need source design artifacts.", "game_ir.design_brief"))
     return findings
 
 
