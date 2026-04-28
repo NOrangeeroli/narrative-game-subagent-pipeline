@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from export_web_vn import build_story_payload
-from pipeline_lib import copy_tree, skill_root, write_text
+from pipeline_lib import copy_tree, load_optional_json, path_for, skill_root, write_json, write_text
 
 
 def export_unity_project(run_root: Path) -> Path:
@@ -16,6 +16,9 @@ def export_unity_project(run_root: Path) -> Path:
     copy_tree(skill_root() / "assets" / "unity-template", project_root)
     story = build_story_payload(run_root)
     write_text(project_root / "Assets" / "Resources" / "story.json", json.dumps(story, ensure_ascii=False, indent=2))
+    gameplay_manifest = load_optional_json(path_for(run_root, "gameplay_manifest"))
+    if gameplay_manifest:
+        write_json(project_root / "Assets" / "Resources" / "gameplay-manifest.json", gameplay_manifest)
     template_path = project_root / "Assets" / "Scripts" / "GameController.cs.template"
     controller_path = project_root / "Assets" / "Scripts" / "GameController.cs"
     controller_path.write_text(template_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -32,4 +35,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

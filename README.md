@@ -2,7 +2,7 @@
 
 Codex skill for generating playable branching narrative games from a prompt through a structured artifact pipeline.
 
-The skill coordinates authoring subagents, validates canonical design artifacts, assembles Yarn-style narrative fragments, and exports playable Web VN and optional Unity project scaffolds.
+The skill coordinates authoring subagents, validates canonical design artifacts, assembles Yarn-style narrative fragments, validates typed gameplay realization units, and exports playable Web VN and optional Unity project scaffolds.
 
 ## Contents
 

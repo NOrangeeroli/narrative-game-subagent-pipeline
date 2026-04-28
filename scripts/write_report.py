@@ -16,6 +16,8 @@ def relative_exists(run_root: Path, key: str) -> bool:
 def write_final_report(run_root: Path) -> Path:
     validation = load_optional_json(path_for(run_root, "validation_report")) or {"status": "missing", "findings": []}
     story_report = load_optional_json(path_for(run_root, "story_report")) or {"status": "missing", "findings": []}
+    gameplay_validation = load_optional_json(path_for(run_root, "gameplay_validation_report")) or {"status": "missing", "findings": []}
+    gameplay_coverage = load_optional_json(path_for(run_root, "gameplay_coverage_report")) or {"status": "missing"}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     web_path = run_root / "build" / "web-vn" / "index.html"
     unity_path = run_root / "build" / "unity-project"
@@ -32,13 +34,14 @@ def write_final_report(run_root: Path) -> Path:
         if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".svg"}
     ) if generated_asset_root.exists() else []
     status = "succeeded"
-    if validation.get("status") == "fail" or story_report.get("status") == "fail" or asset_validation.get("status") == "fail" or not web_path.exists():
+    if validation.get("status") == "fail" or story_report.get("status") == "fail" or gameplay_validation.get("status") == "fail" or asset_validation.get("status") == "fail" or not web_path.exists():
         status = "failed"
     payload = {
         "status": status,
         "run_root": str(run_root),
         "validation_status": validation.get("status"),
         "story_verification_status": story_report.get("status"),
+        "gameplay_validation_status": gameplay_validation.get("status"),
         "asset_validation_status": asset_validation.get("status"),
         "playable_exports": {
             "web_vn": str(web_path) if web_path.exists() else None,
@@ -50,6 +53,12 @@ def write_final_report(run_root: Path) -> Path:
             "asset_validation_report": STAGE_PATHS["asset_validation_report"] if (run_root / STAGE_PATHS["asset_validation_report"]).exists() else None,
             "generated_asset_count": len(generated_assets),
             "web_vn_assets": web_assets,
+        },
+        "gameplay": {
+            "manifest": STAGE_PATHS["gameplay_manifest"] if (run_root / STAGE_PATHS["gameplay_manifest"]).exists() else None,
+            "validation_report": STAGE_PATHS["gameplay_validation_report"] if (run_root / STAGE_PATHS["gameplay_validation_report"]).exists() else None,
+            "coverage_report": STAGE_PATHS["gameplay_coverage_report"] if (run_root / STAGE_PATHS["gameplay_coverage_report"]).exists() else None,
+            "coverage": gameplay_coverage,
         },
         "design_layer": {
             "version": "v1-refactored",

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
+from pipeline_lib import Json, as_list, load_gameplay_units, load_optional_json, path_for, write_json
 
 
 def sanitize_file_stem(value: str) -> str:
@@ -71,12 +71,67 @@ def make_style_bible(asset_direction: Json) -> Json:
     }
 
 
+def kind_for_asset_id(asset_id: str) -> str:
+    prefix = asset_id.split(".", 1)[0]
+    return {
+        "bg": "background",
+        "cg": "cg",
+        "portrait": "portrait",
+        "bgm": "bgm",
+        "sfx": "sfx",
+        "enemy": "enemy",
+        "prop": "prop",
+        "hotspot": "hotspot",
+        "symbol": "symbol",
+        "effect": "effect",
+        "icon": "icon",
+        "map": "map",
+        "ui": "ui",
+    }.get(prefix, "ui")
+
+
+def collect_required_assets(run_root: Path) -> list[Json]:
+    plans = load_optional_json(path_for(run_root, "realization_plans")) or {"plans": []}
+    gameplay_units = load_gameplay_units(run_root)
+    required: dict[str, Json] = {}
+    for plan in as_list(plans.get("plans")):
+        if not isinstance(plan, dict):
+            continue
+        node_id = plan.get("source_node_id")
+        for asset_id in as_list(plan.get("required_assets")):
+            if isinstance(asset_id, str):
+                required.setdefault(asset_id, {
+                    "asset_id": asset_id,
+                    "kind": kind_for_asset_id(asset_id),
+                    "description": f"Runtime asset required by {node_id}.",
+                    "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
+                    "provider_hints": [],
+                })
+    for unit in gameplay_units.values():
+        node_id = unit.get("source_node_id")
+        for asset_id in as_list(unit.get("required_assets")):
+            if isinstance(asset_id, str):
+                required.setdefault(asset_id, {
+                    "asset_id": asset_id,
+                    "kind": kind_for_asset_id(asset_id),
+                    "description": f"Gameplay asset required by {node_id}.",
+                    "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
+                    "provider_hints": [],
+                })
+    return list(required.values())
+
+
 def plan_asset_manifest(run_root: Path) -> Json:
     branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     asset_direction = load_optional_json(path_for(run_root, "asset_direction")) or {"asset_directions": []}
     project_id = sanitize_file_stem(str(branch_graph.get("title") or "generated-narrative-game")).lower()
     directions = [asset for asset in as_list(asset_direction.get("asset_directions")) if isinstance(asset, dict) and isinstance(asset.get("asset_id"), str)]
+    seen_direction_ids = {asset["asset_id"] for asset in directions}
+    for required_asset in collect_required_assets(run_root):
+        if required_asset["asset_id"] not in seen_direction_ids:
+            directions.append(required_asset)
+            seen_direction_ids.add(required_asset["asset_id"])
     character_names = collect_character_names(game_ir)
 
     backgrounds = []
@@ -119,10 +174,10 @@ def plan_asset_manifest(run_root: Path) -> Json:
             portrait_ids_by_character.setdefault(character_id, []).append(asset_id)
             portrait_specs[asset_id] = spec
             continue
-        if kind == "ui" or asset_id.startswith("ui."):
+        if kind in ("ui", "enemy", "prop", "hotspot", "symbol", "effect", "icon", "map") or asset_id.startswith(("ui.", "enemy.", "prop.", "hotspot.", "symbol.", "effect.", "icon.", "map.")):
             ui.append({
                 "asset_id": asset_id,
-                "kind": asset_slug(asset_id),
+                "kind": str(kind or asset_slug(asset_id)),
                 "spec": spec,
                 "file_ref": f"generated/ui/{sanitize_file_stem(asset_id)}.png",
             })

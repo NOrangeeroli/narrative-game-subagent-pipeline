@@ -13,7 +13,12 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | topology and semantics both need coordinated change | `BranchGraphDesigner` then `BaseGameIRDesigner`, or a paired planning pass |
 | missing realization plan, wrong exit binding, unsupported playable kind | `NodeRealizationPlanner` |
 | bad Yarn title, invalid command, missing outcome, changed state refs | affected `NodeDialogueWriter` |
+| invalid battle unit, weak verb coverage, missing victory path | `BattleRealizationWriter` |
+| invalid interaction unit, unreachable completion, broken hotspot gate | `InteractionRealizationWriter` |
+| invalid puzzle unit, missing solution, no fail-forward or hints | `PuzzleRealizationWriter` |
+| invalid exploration unit, broken local exit, unreachable planned outcome | `ExplorationRealizationWriter` |
 | missing asset id, wrong prefix, bad trace | `AssetDirector` |
+| gameplay adapter runtime failure | controller/runtime adapter bug first |
 | Web export failure | controller/tool bug first |
 | Unity export failure | controller/template bug first |
 
@@ -42,4 +47,3 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 - Preserve stable ids unless the finding specifically says an id is invalid.
 - After repair, rerun validation before continuing.
 - Stop after the retry budget and report the preserved run directory instead of overwriting evidence.
-

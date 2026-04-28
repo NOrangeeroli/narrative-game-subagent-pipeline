@@ -23,15 +23,32 @@ STAGE_PATHS = {
     "shared_state": "workspace/state/shared-state.schema.json",
     "realization_plans": "workspace/realization/node-realization-plans.json",
     "realization_manifest": "workspace/realization/realization-manifest.json",
+    "gameplay_manifest": "workspace/realization/gameplay-manifest.json",
     "asset_direction": "workspace/asset-direction.json",
     "asset_manifest": "workspace/asset-manifest.json",
     "story_yarn": "workspace/vn/story.yarn",
     "story_ir": "workspace/vn/story.storyir.json",
     "validation_report": "reports/validation-report.json",
     "story_report": "reports/story-verification.json",
+    "gameplay_validation_report": "reports/gameplay-validation.json",
+    "gameplay_coverage_report": "reports/gameplay-coverage.json",
     "asset_generation_report": "reports/asset-generation-report.json",
     "asset_validation_report": "reports/asset-validation.json",
     "final_report": "reports/final-report.json",
+}
+
+GAMEPLAY_KINDS = ("battle", "interaction", "puzzle", "exploration")
+GAMEPLAY_KIND_DIRS = {
+    "battle": ("battles", ".battle.json"),
+    "interaction": ("interactions", ".interaction.json"),
+    "puzzle": ("puzzles", ".puzzle.json"),
+    "exploration": ("explorations", ".exploration.json"),
+}
+GAMEPLAY_ADAPTER_SUPPORT = {
+    "battle.choice_duel": {"kind": "battle", "web_vn": True, "unity": False},
+    "interaction.inspect_scene": {"kind": "interaction", "web_vn": True, "unity": False},
+    "puzzle.sequence_lock": {"kind": "puzzle", "web_vn": True, "unity": False},
+    "exploration.room_nav": {"kind": "exploration", "web_vn": True, "unity": False},
 }
 
 
@@ -88,6 +105,10 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/design_layer",
         "workspace/state",
         "workspace/realization/stubs",
+        "workspace/realization/battles",
+        "workspace/realization/interactions",
+        "workspace/realization/puzzles",
+        "workspace/realization/explorations",
         "workspace/vn/fragments",
         "workspace/runtime",
         "workspace/generated-assets",
@@ -396,6 +417,210 @@ def validate_realization_plans(plans: Json | None, branch_graph: Json | None, sh
     return findings
 
 
+def gameplay_artifact_path(run_root: Path, kind: str, source_node_id: str) -> Path:
+    directory, suffix = GAMEPLAY_KIND_DIRS[kind]
+    safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_node_id).strip("_") or "node.unknown"
+    return run_root / "workspace" / "realization" / directory / f"{safe_node}{suffix}"
+
+
+def gameplay_plans(plans: Json | None) -> list[Json]:
+    return [
+        plan
+        for plan in as_list((plans or {}).get("plans"))
+        if isinstance(plan, dict) and plan.get("realization_kind") in GAMEPLAY_KINDS
+    ]
+
+
+def state_ref_from_op(op: Any) -> str | None:
+    if isinstance(op, str):
+        return op
+    if isinstance(op, dict):
+        ref = op.get("state_variable_id") or op.get("id")
+        return ref if isinstance(ref, str) else None
+    return None
+
+
+def validate_state_ops(findings: list[Finding], ops: list[Any], state_ids: set[str], path: str) -> None:
+    for index, op in enumerate(ops):
+        ref = state_ref_from_op(op)
+        if ref and ref not in state_ids:
+            findings.append(Finding("error", "state_reference", f"State operation references missing variable: {ref}", f"{path}[{index}]"))
+
+
+def validate_gameplay_unit(unit: Json | None, plan: Json, shared_state: Json | None, artifact_path: str) -> list[Finding]:
+    findings: list[Finding] = []
+    kind = str(plan.get("realization_kind"))
+    source_node_id = str(plan.get("source_node_id"))
+    unit_id = str(plan.get("unit_id"))
+    state_ids = {var.get("id") for var in as_list((shared_state or {}).get("variables")) if isinstance(var, dict)}
+    if unit is None:
+        findings.append(Finding("error", "missing_gameplay_unit", f"Missing gameplay unit for {source_node_id}.", artifact_path))
+        return findings
+    if not isinstance(unit, dict):
+        findings.append(Finding("error", "schema", "Gameplay unit must be a JSON object.", artifact_path))
+        return findings
+    if unit.get("source_node_id") != source_node_id:
+        findings.append(Finding("error", "source_node_id", f"Gameplay unit source_node_id must be {source_node_id}.", f"{artifact_path}.source_node_id"))
+    if unit.get("realization_unit_id") != unit_id:
+        findings.append(Finding("error", "realization_unit_id", f"Gameplay unit realization_unit_id must be {unit_id}.", f"{artifact_path}.realization_unit_id"))
+    if unit.get("realization_kind") != kind:
+        findings.append(Finding("error", "realization_kind", f"Gameplay unit realization_kind must be {kind}.", f"{artifact_path}.realization_kind"))
+    adapter_id = unit.get("adapter_id")
+    adapter_support = GAMEPLAY_ADAPTER_SUPPORT.get(str(adapter_id))
+    if not adapter_support:
+        findings.append(Finding("error", "unsupported_adapter", f"Unsupported gameplay adapter: {adapter_id}", f"{artifact_path}.adapter_id"))
+    elif adapter_support.get("kind") != kind:
+        findings.append(Finding("error", "adapter_kind", f"Adapter {adapter_id} is not valid for {kind}.", f"{artifact_path}.adapter_id"))
+    if not isinstance(unit.get("runtime_spec"), dict):
+        findings.append(Finding("error", "runtime_spec", "Gameplay unit needs object runtime_spec.", f"{artifact_path}.runtime_spec"))
+
+    expected_edges = {binding.get("edge_id") for binding in as_list(plan.get("exit_bindings")) if isinstance(binding, dict)}
+    actual_edges = {binding.get("edge_id") for binding in as_list(unit.get("exit_bindings")) if isinstance(binding, dict)}
+    missing = expected_edges - actual_edges
+    extra = actual_edges - expected_edges
+    if missing:
+        findings.append(Finding("error", "exit_binding", f"Gameplay unit missing exit bindings: {sorted(missing)}", f"{artifact_path}.exit_bindings"))
+    if extra:
+        findings.append(Finding("error", "exit_binding", f"Gameplay unit has extra exit bindings: {sorted(extra)}", f"{artifact_path}.exit_bindings"))
+
+    validate_state_ops(findings, as_list(unit.get("required_state_reads")), state_ids, f"{artifact_path}.required_state_reads")
+    validate_state_ops(findings, as_list(unit.get("state_writes")), state_ids, f"{artifact_path}.state_writes")
+    for binding_index, binding in enumerate(as_list(unit.get("exit_bindings"))):
+        if isinstance(binding, dict):
+            validate_state_ops(findings, as_list(binding.get("state_writes")), state_ids, f"{artifact_path}.exit_bindings[{binding_index}].state_writes")
+    for asset_index, asset_id in enumerate(as_list(unit.get("required_assets"))):
+        if not (isinstance(asset_id, str) and re.match(r"^[a-z][a-z0-9_-]*\.", asset_id)):
+            findings.append(Finding("warning", "asset_id", "Gameplay asset ids should use stable prefixed ids.", f"{artifact_path}.required_assets[{asset_index}]"))
+    trace = unit.get("source_trace") if isinstance(unit.get("source_trace"), dict) else {}
+    if source_node_id not in as_list(trace.get("node_ids") if isinstance(trace, dict) else []):
+        findings.append(Finding("warning", "source_trace", "Gameplay unit source_trace should include source node id.", f"{artifact_path}.source_trace.node_ids"))
+    findings.extend(validate_gameplay_runtime_spec(unit, artifact_path))
+    return findings
+
+
+def validate_gameplay_runtime_spec(unit: Json, artifact_path: str) -> list[Finding]:
+    findings: list[Finding] = []
+    kind = unit.get("realization_kind")
+    spec = unit.get("runtime_spec") if isinstance(unit.get("runtime_spec"), dict) else {}
+    if kind == "battle":
+        actions = as_list(spec.get("player_actions") or spec.get("actions"))
+        if len([action for action in actions if isinstance(action, dict)]) < 2:
+            findings.append(Finding("error", "battle_actions", "Battle runtime_spec needs at least two player actions.", f"{artifact_path}.runtime_spec.player_actions"))
+        opponent = spec.get("opponent")
+        if not isinstance(opponent, dict):
+            findings.append(Finding("error", "battle_opponent", "Battle runtime_spec needs opponent.", f"{artifact_path}.runtime_spec.opponent"))
+        win_conditions = as_list(spec.get("win_conditions"))
+        if not win_conditions:
+            findings.append(Finding("error", "battle_victory", "Battle runtime_spec needs at least one win condition.", f"{artifact_path}.runtime_spec.win_conditions"))
+    elif kind == "interaction":
+        hotspots = as_list(spec.get("hotspots"))
+        if not hotspots:
+            findings.append(Finding("error", "interaction_hotspots", "Interaction runtime_spec needs at least one hotspot.", f"{artifact_path}.runtime_spec.hotspots"))
+        if not isinstance(spec.get("completion"), dict):
+            findings.append(Finding("error", "interaction_completion", "Interaction runtime_spec needs completion.", f"{artifact_path}.runtime_spec.completion"))
+    elif kind == "puzzle":
+        if not as_list(spec.get("solution")):
+            findings.append(Finding("error", "puzzle_solution", "Puzzle runtime_spec needs a deterministic solution.", f"{artifact_path}.runtime_spec.solution"))
+        if not as_list(spec.get("clues")):
+            findings.append(Finding("warning", "puzzle_clues", "Puzzle runtime_spec should include at least one clue.", f"{artifact_path}.runtime_spec.clues"))
+        if not (as_list(spec.get("hints")) or isinstance(unit.get("fail_forward"), dict)):
+            findings.append(Finding("warning", "puzzle_fail_forward", "Puzzle should include hints or fail-forward behavior.", artifact_path))
+    elif kind == "exploration":
+        areas = as_list(spec.get("areas"))
+        area_ids = {area.get("id") for area in areas if isinstance(area, dict)}
+        if not areas:
+            findings.append(Finding("error", "exploration_areas", "Exploration runtime_spec needs at least one area.", f"{artifact_path}.runtime_spec.areas"))
+        start_area = spec.get("start_area_id")
+        if start_area not in area_ids:
+            findings.append(Finding("error", "exploration_start", "Exploration start_area_id must reference an area.", f"{artifact_path}.runtime_spec.start_area_id"))
+        for area_index, area in enumerate(areas):
+            if not isinstance(area, dict):
+                continue
+            for exit_index, local_exit in enumerate(as_list(area.get("exits"))):
+                if isinstance(local_exit, dict) and local_exit.get("target_area_id") not in area_ids:
+                    findings.append(Finding("error", "exploration_exit", "Exploration local exit references missing area.", f"{artifact_path}.runtime_spec.areas[{area_index}].exits[{exit_index}].target_area_id"))
+    return findings
+
+
+def build_gameplay_manifest(run_root: Path, plans: Json, shared_state: Json | None) -> tuple[Json, ValidationResult]:
+    result = ValidationResult()
+    manifest_units = []
+    coverage = {
+        "status": "clear",
+        "implemented": [],
+        "missing": [],
+        "unsupported": [],
+        "skipped": [],
+    }
+    for plan in gameplay_plans(plans):
+        kind = str(plan.get("realization_kind"))
+        source_node_id = str(plan.get("source_node_id"))
+        artifact_path = gameplay_artifact_path(run_root, kind, source_node_id)
+        relative_artifact = str(artifact_path.relative_to(run_root))
+        unit = None
+        if artifact_path.exists():
+            try:
+                unit = read_json(artifact_path)
+            except Exception as exc:  # noqa: BLE001
+                result.add("error", "invalid_json", f"Cannot parse gameplay unit: {exc}", relative_artifact)
+        else:
+            coverage["missing"].append(source_node_id)
+        if unit is not None:
+            result.extend(validate_gameplay_unit(unit, plan, shared_state, relative_artifact))
+            adapter_id = str(unit.get("adapter_id"))
+            status = "implemented" if adapter_id in GAMEPLAY_ADAPTER_SUPPORT else "unsupported"
+            coverage["implemented" if status == "implemented" else "unsupported"].append(source_node_id)
+            manifest_units.append({
+                "source_node_id": source_node_id,
+                "realization_unit_id": plan.get("unit_id"),
+                "realization_kind": kind,
+                "adapter_id": adapter_id,
+                "artifact_path": relative_artifact,
+                "status": status,
+            })
+        else:
+            result.extend(validate_gameplay_unit(None, plan, shared_state, relative_artifact))
+            manifest_units.append({
+                "source_node_id": source_node_id,
+                "realization_unit_id": plan.get("unit_id"),
+                "realization_kind": kind,
+                "adapter_id": None,
+                "artifact_path": relative_artifact,
+                "status": "missing",
+            })
+    if coverage["missing"] or coverage["unsupported"]:
+        coverage["status"] = "has_gaps"
+    manifest = {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "narrative_game_pipeline"},
+        "source_plan_path": STAGE_PATHS["realization_plans"],
+        "units": manifest_units,
+        "adapter_support": {
+            adapter_id: {"web_vn": support["web_vn"], "unity": support["unity"]}
+            for adapter_id, support in sorted(GAMEPLAY_ADAPTER_SUPPORT.items())
+        },
+    }
+    write_json(path_for(run_root, "gameplay_manifest"), manifest)
+    write_json(path_for(run_root, "gameplay_validation_report"), result.to_json())
+    write_json(path_for(run_root, "gameplay_coverage_report"), coverage)
+    return manifest, result
+
+
+def load_gameplay_units(run_root: Path) -> dict[str, Json]:
+    manifest = load_optional_json(path_for(run_root, "gameplay_manifest")) or {"units": []}
+    units: dict[str, Json] = {}
+    for entry in as_list(manifest.get("units")):
+        if not isinstance(entry, dict) or entry.get("status") != "implemented":
+            continue
+        source_node_id = entry.get("source_node_id")
+        artifact_path = entry.get("artifact_path")
+        if not isinstance(source_node_id, str) or not isinstance(artifact_path, str):
+            continue
+        path = run_root / artifact_path
+        if path.exists():
+            units[source_node_id] = read_json(path)
+    return units
+
+
 def validate_all(run_root: Path, write_projections: bool = False) -> ValidationResult:
     ensure_run_layout(run_root)
     result = ValidationResult()
@@ -430,8 +655,13 @@ def build_realization_manifest(plans: Json) -> Json:
     }
 
 
-def write_not_implemented_stubs(run_root: Path, plans: Json) -> list[Json]:
+def write_not_implemented_stubs(run_root: Path, plans: Json, gameplay_manifest: Json | None = None) -> list[Json]:
     stubs: list[Json] = []
+    implemented_gameplay = {
+        unit.get("source_node_id")
+        for unit in as_list((gameplay_manifest or {}).get("units"))
+        if isinstance(unit, dict) and unit.get("status") == "implemented"
+    }
     for plan in as_list(plans.get("plans")):
         if not isinstance(plan, dict):
             continue
@@ -439,6 +669,8 @@ def write_not_implemented_stubs(run_root: Path, plans: Json) -> list[Json]:
         if kind in ("vn_yarn", "cutscene_yarn"):
             continue
         source_node_id = str(plan.get("source_node_id", "unknown"))
+        if kind in GAMEPLAY_KINDS and source_node_id in implemented_gameplay:
+            continue
         stub = {
             "metadata": {"schema_version": "0.1.0", "generated_by": "narrative_game_pipeline"},
             "source_node_id": source_node_id,
@@ -449,7 +681,7 @@ def write_not_implemented_stubs(run_root: Path, plans: Json) -> list[Json]:
             "required_state_reads": plan.get("required_state_reads", []),
             "state_writes": plan.get("state_writes", []),
             "implementation_status": "not_implemented",
-            "explanation": "This realization kind is reserved by the self-contained v1 pipeline and is not implemented as playable gameplay.",
+            "explanation": "This realization kind is not implemented by the current adapter set or was explicitly skipped.",
         }
         write_json(run_root / "workspace" / "realization" / "stubs" / f"{source_node_id}.not-implemented.json", stub)
         stubs.append(stub)

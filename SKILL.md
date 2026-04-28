@@ -49,6 +49,11 @@ workspace/design_layer/game_ir.json
 workspace/state/shared-state.schema.json
 workspace/realization/node-realization-plans.json
 workspace/realization/realization-manifest.json
+workspace/realization/gameplay-manifest.json
+workspace/realization/battles/*.battle.json
+workspace/realization/interactions/*.interaction.json
+workspace/realization/puzzles/*.puzzle.json
+workspace/realization/explorations/*.exploration.json
 workspace/realization/stubs/*.not-implemented.json
 workspace/vn/fragments/*.yarn
 workspace/vn/fragments/*.manifest.json
@@ -61,6 +66,8 @@ build/web-vn/
 build/unity-project/
 reports/asset-generation-report.json
 reports/asset-validation.json
+reports/gameplay-validation.json
+reports/gameplay-coverage.json
 reports/*.json
 ```
 
@@ -75,11 +82,13 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 4. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
 5. Spawn `NodeRealizationPlanner` after shared state is projected.
 6. Spawn one `NodeDialogueWriter` per `vn_yarn` or `cutscene_yarn` realization plan. Batch these workers when there are many nodes.
-7. Save each accepted Yarn fragment and sidecar manifest under `workspace/vn/fragments/`.
-8. Spawn `AssetDirector` after story verification when visual direction is needed. It returns art direction only.
-9. During build, the controller plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
-10. Run `scripts/run_pipeline.py build --run-root <run>`.
-11. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
+7. Spawn gameplay realization writers for supported non-VN plans:
+   `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
+8. Save accepted Yarn fragments under `workspace/vn/fragments/` and accepted gameplay units under their `workspace/realization/<kind>/` directories.
+9. Spawn `AssetDirector` after story and gameplay verification when visual direction is needed. It returns art direction only.
+10. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
+11. Run `scripts/run_pipeline.py build --run-root <run>`.
+12. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
 ## Boundaries
 
@@ -89,14 +98,20 @@ Base design artifacts must not contain Yarn syntax, Unity paths, image-generatio
 
 `shared-state.schema.json` is projected from `game_ir.json`; do not author it by hand unless repairing the projector itself.
 
-Every branch graph node maps to exactly one realization plan. Per-node workers produce fragments or stubs; the controller exports one game, not one project per node.
+Every branch graph node maps to exactly one realization plan. Per-node workers produce fragments, gameplay units, or stubs; the controller exports one game, not one project per node.
 
-Unsupported `battle`, `interaction`, `puzzle`, `exploration`, and `external_stub` units become typed not-implemented stubs unless the user asks for an implemented custom adapter.
+Supported gameplay adapters are declarative and fixed by the controller:
+`battle.choice_duel`, `interaction.inspect_scene`, `puzzle.sequence_lock`, and `exploration.room_nav`.
+Subagents do not write runtime code for these adapters.
+
+`external_stub` and unsupported adapters become typed not-implemented stubs. Supported `battle`, `interaction`, `puzzle`, and `exploration` plans require matching gameplay unit artifacts.
 
 ## Tools
 
 - `scripts/run_pipeline.py`: initialize runs and build/export accepted artifacts.
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
+- `scripts/validate_gameplay.py`: validate gameplay realization units and write gameplay reports.
+- `scripts/compile_gameplay_manifest.py`: compile gameplay unit artifacts into `workspace/realization/gameplay-manifest.json`.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
 - `scripts/story_ir.py`: lower Yarn to a simple StoryIR and verify titles, jumps, and outcomes.
 - `scripts/plan_assets.py`: convert `asset-direction.json` into a deterministic runtime `asset-manifest.json`.

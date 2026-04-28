@@ -14,6 +14,7 @@ from pipeline_lib import (
     as_list,
     copy_tree,
     dialogue_beats_from_yarn,
+    load_gameplay_units,
     load_optional_json,
     load_yarn_fragments,
     path_for,
@@ -95,6 +96,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
     asset_directions = as_list(asset_direction.get("asset_directions"))
     runtime_assets = runtime_assets or {}
     fragments = load_yarn_fragments(run_root)
+    gameplay_units = load_gameplay_units(run_root)
 
     fragments_by_node = {fragment["node_id"]: fragment for fragment in fragments}
     plan_by_node = {
@@ -103,12 +105,9 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         if isinstance(plan, dict)
     }
     edges_by_from: dict[str, list[Json]] = {}
-    edge_by_id: dict[str, Json] = {}
     for edge in as_list(branch_graph.get("edges")):
         if isinstance(edge, dict) and isinstance(edge.get("from"), str):
             edges_by_from.setdefault(edge["from"], []).append(edge)
-            if isinstance(edge.get("id"), str):
-                edge_by_id[edge["id"]] = edge
 
     initial_state = {
         variable.get("id"): variable.get("initial_value")
@@ -123,10 +122,12 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         node_id = node["id"]
         plan = plan_by_node.get(node_id, {})
         fragment = fragments_by_node.get(node_id)
-        beats = dialogue_beats_from_yarn(fragment["yarn_text"]) if fragment else [{"speaker": "Narrator", "text": node_text(node)}]
+        gameplay_unit = gameplay_units.get(node_id)
+        entry_text = str(gameplay_unit.get("entry_text") or node_text(node)) if gameplay_unit else node_text(node)
+        beats = dialogue_beats_from_yarn(fragment["yarn_text"]) if fragment else [{"speaker": "Narrator", "text": entry_text}]
         exit_bindings = {
             binding.get("edge_id"): binding
-            for binding in as_list(plan.get("exit_bindings") if isinstance(plan, dict) else [])
+            for binding in as_list((gameplay_unit or plan).get("exit_bindings") if isinstance((gameplay_unit or plan), dict) else [])
             if isinstance(binding, dict)
         }
         choices = []
@@ -134,7 +135,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
             edge_id = edge.get("id")
             binding = exit_bindings.get(edge_id, {})
             choices.append({
-                "label": edge.get("label") or edge.get("condition_label") or edge.get("outcome_label") or "Continue",
+                "label": binding.get("label") or edge.get("label") or edge.get("condition_label") or edge.get("outcome_label") or "Continue",
                 "target": edge.get("to"),
                 "edge_id": edge_id,
                 "outcome_id": binding.get("outcome_id") or edge_id,
@@ -142,9 +143,11 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
                 "conditions": edge.get("conditions", []),
             })
         required_assets = as_list(plan.get("required_assets") if isinstance(plan, dict) else [])
+        if isinstance(gameplay_unit, dict):
+            required_assets = [*required_assets, *as_list(gameplay_unit.get("required_assets"))]
         background_id = next((asset for asset in required_assets if isinstance(asset, str) and asset.startswith("bg.")), None)
         portrait_ids = [asset for asset in required_assets if isinstance(asset, str) and asset.startswith("portrait.")]
-        story_nodes.append({
+        story_node = {
             "id": node_id,
             "title": node.get("title") or node_id,
             "background_id": background_id or node.get("asset_id") or "bg.default",
@@ -152,7 +155,18 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
             "beats": beats,
             "choices": choices,
             "is_terminal": bool(node.get("is_terminal") or node.get("node_type") == "terminal" or not choices),
-        })
+            "realization_kind": plan.get("realization_kind") if isinstance(plan, dict) else "vn_yarn",
+        }
+        if isinstance(gameplay_unit, dict):
+            story_node["gameplay_unit_id"] = gameplay_unit.get("realization_unit_id")
+            story_node["gameplay"] = {
+                "adapter_id": gameplay_unit.get("adapter_id"),
+                "entry_text": gameplay_unit.get("entry_text", ""),
+                "runtime_spec": gameplay_unit.get("runtime_spec", {}),
+                "exit_bindings": gameplay_unit.get("exit_bindings", []),
+                "fail_forward": gameplay_unit.get("fail_forward", {}),
+            }
+        story_nodes.append(story_node)
 
     assets = []
     for asset in asset_directions:
@@ -171,6 +185,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         "initial_state": initial_state,
         "nodes": story_nodes,
         "assets": assets,
+        "gameplay_units": gameplay_units,
     }
 
 

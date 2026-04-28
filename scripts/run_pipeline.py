@@ -11,10 +11,12 @@ from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
 from pipeline_lib import (
+    build_gameplay_manifest,
     build_realization_manifest,
     ensure_run_layout,
     load_optional_json,
     path_for,
+    read_json,
     validate_all,
     write_json,
     write_not_implemented_stubs,
@@ -59,6 +61,15 @@ def init_run(args: argparse.Namespace) -> None:
             "reports/asset-generation-report.json",
             "reports/asset-validation.json",
         ],
+        "gameplay_pipeline_artifacts": [
+            "workspace/realization/battles/*.battle.json",
+            "workspace/realization/interactions/*.interaction.json",
+            "workspace/realization/puzzles/*.puzzle.json",
+            "workspace/realization/explorations/*.exploration.json",
+            "workspace/realization/gameplay-manifest.json",
+            "reports/gameplay-validation.json",
+            "reports/gameplay-coverage.json",
+        ],
     })
     print(str(run_root))
 
@@ -77,7 +88,12 @@ def build_run(args: argparse.Namespace) -> None:
         raise SystemExit("Missing workspace/realization/node-realization-plans.json")
     manifest = build_realization_manifest(plans)
     write_json(path_for(run_root, "realization_manifest"), manifest)
-    stubs = write_not_implemented_stubs(run_root, plans)
+    shared_state = read_json(path_for(run_root, "shared_state")) if path_for(run_root, "shared_state").exists() else {"variables": []}
+    gameplay_manifest, gameplay_validation = build_gameplay_manifest(run_root, plans, shared_state)
+    if gameplay_validation.status == "fail":
+        print(json.dumps(gameplay_validation.to_json(), indent=2))
+        raise SystemExit(1)
+    stubs = write_not_implemented_stubs(run_root, plans, gameplay_manifest)
     write_json(run_root / "reports" / "not-implemented-realizations.json", {
         "status": "has_stubs" if stubs else "clear",
         "count": len(stubs),

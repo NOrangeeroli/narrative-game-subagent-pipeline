@@ -151,7 +151,7 @@ Required shape:
 
 Allowed `realization_kind`: `vn_yarn`, `cutscene_yarn`, `battle`, `interaction`, `puzzle`, `exploration`, `external_stub`.
 
-In v1, only `vn_yarn` and `cutscene_yarn` become playable content. Other kinds become not-implemented stubs.
+`vn_yarn` and `cutscene_yarn` use Yarn fragment pairs. `battle`, `interaction`, `puzzle`, and `exploration` use typed gameplay unit JSON files and registered runtime adapters. `external_stub` remains a not-implemented stub.
 
 ## Yarn Fragment Pair
 
@@ -193,6 +193,142 @@ Manifest shape:
 
 Use `complete_activity` for controller-owned outcomes. Do not invent topology or persistent state.
 
+## Gameplay Realization Units
+
+For non-VN playable plans, write exactly one unit artifact:
+
+```text
+workspace/realization/battles/<node-id>.battle.json
+workspace/realization/interactions/<node-id>.interaction.json
+workspace/realization/puzzles/<node-id>.puzzle.json
+workspace/realization/explorations/<node-id>.exploration.json
+```
+
+Shared shape:
+
+```json
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "BattleRealizationWriter", "notes": []},
+  "source_node_id": "node.example",
+  "realization_unit_id": "realization.node_example",
+  "realization_kind": "battle",
+  "adapter_id": "battle.choice_duel",
+  "entry_text": "Short player-facing setup text.",
+  "exit_bindings": [{"outcome_id": "victory", "edge_id": "edge.example_to_next", "label": "Continue", "state_writes": []}],
+  "required_state_reads": [],
+  "state_writes": [],
+  "required_assets": ["bg.example", "ui.example"],
+  "runtime_spec": {},
+  "fail_forward": {"enabled": true, "outcome_id": "partial_success", "summary": "..."},
+  "continuity_summary": "...",
+  "source_trace": {"requirement_ids": [], "event_ids": [], "node_ids": ["node.example"], "edge_ids": [], "game_ir_ids": []}
+}
+```
+
+Allowed first adapters:
+
+```text
+battle.choice_duel
+interaction.inspect_scene
+puzzle.sequence_lock
+exploration.room_nav
+```
+
+Gameplay units must preserve plan topology. Their `exit_bindings` must cover the realization plan exits exactly once, and all persistent state reads/writes must reference variables declared in `game_ir.json`.
+
+### `battle.choice_duel`
+
+`runtime_spec` should include:
+
+```json
+{
+  "prompt": "Choose a tactic.",
+  "player": {"label": "Player", "stats": [{"id": "focus", "label": "Focus", "initial": 3}]},
+  "opponent": {"label": "Rival", "stats": [{"id": "resolve", "label": "Resolve", "initial": 3}]},
+  "player_actions": [
+    {"id": "observe", "label": "Observe", "feedback": "...", "effects": [{"side": "opponent", "stat_id": "resolve", "operation": "decrement", "value": 1}]}
+  ],
+  "enemy_pattern": [{"id": "press", "feedback": "...", "effects": [{"side": "player", "stat_id": "focus", "operation": "decrement", "value": 1}]}],
+  "win_conditions": [{"side": "opponent", "stat_id": "resolve", "operator": "less_than_or_equal", "value": 0, "outcome_id": "victory"}],
+  "lose_conditions": [{"side": "player", "stat_id": "focus", "operator": "less_than_or_equal", "value": 0, "outcome_id": "defeat"}],
+  "max_rounds": 4
+}
+```
+
+### `interaction.inspect_scene`
+
+`runtime_spec` should include:
+
+```json
+{
+  "prompt": "Inspect the area.",
+  "hotspots": [
+    {"id": "map", "label": "Map", "reveal_text": "A route is marked.", "required_for_completion": true}
+  ],
+  "completion": {"required_hotspots": ["map"], "outcome_id": "complete", "label": "Move on"}
+}
+```
+
+### `puzzle.sequence_lock`
+
+`runtime_spec` should include:
+
+```json
+{
+  "prompt": "Enter the sequence.",
+  "clues": ["The mural shows dawn before flame."],
+  "options": [{"id": "dawn", "label": "Dawn"}, {"id": "flame", "label": "Flame"}],
+  "solution": ["dawn", "flame"],
+  "hints": ["Start with the first mural symbol."],
+  "max_attempts": 3,
+  "solved_outcome_id": "solved",
+  "failed_outcome_id": "partial_success"
+}
+```
+
+### `exploration.room_nav`
+
+`runtime_spec` should include:
+
+```json
+{
+  "start_area_id": "gate",
+  "areas": [
+    {
+      "id": "gate",
+      "label": "Gate",
+      "description": "A narrow gate opens into the path.",
+      "discoveries": [{"id": "marker", "label": "Trail marker", "text": "It points east."}],
+      "exits": [{"label": "Go east", "target_area_id": "trail"}]
+    },
+    {"id": "trail", "label": "Trail", "description": "The trail reaches the campsite.", "discoveries": [], "exits": []}
+  ],
+  "completion": {"required_areas": ["trail"], "required_discoveries": ["marker"], "outcome_id": "complete"}
+}
+```
+
+## `gameplay-manifest.json`
+
+Controller-authored lookup table:
+
+```json
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "narrative_game_pipeline"},
+  "source_plan_path": "workspace/realization/node-realization-plans.json",
+  "units": [
+    {
+      "source_node_id": "node.example",
+      "realization_unit_id": "realization.node_example",
+      "realization_kind": "battle",
+      "adapter_id": "battle.choice_duel",
+      "artifact_path": "workspace/realization/battles/node.example.battle.json",
+      "status": "implemented"
+    }
+  ],
+  "adapter_support": {"battle.choice_duel": {"web_vn": true, "unity": false}}
+}
+```
+
 ## `asset-direction.json`
 
 Required shape:
@@ -213,7 +349,7 @@ Required shape:
 }
 ```
 
-Allowed `kind`: `background`, `cg`, `portrait`, `bgm`, `sfx`, `ui`.
+Allowed `kind`: `background`, `cg`, `portrait`, `bgm`, `sfx`, `ui`, `enemy`, `prop`, `hotspot`, `symbol`, `effect`, `icon`, `map`.
 
 Do not include generated image bytes, provider URLs, API calls, or Unity import paths.
 

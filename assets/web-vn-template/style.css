@@ -172,6 +172,83 @@ button {
   display: none;
 }
 
+.gameplay-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.activity-log {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-left: 3px solid #f4c76b;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.activity-log p,
+.activity-message,
+.clue {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.hotspot-grid,
+.gameplay-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.hotspot-grid button,
+.gameplay-actions button,
+.primary-action {
+  min-height: 44px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.hotspot-grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.primary-action {
+  background: rgba(244, 199, 107, 0.22);
+  border-color: rgba(244, 199, 107, 0.52);
+}
+
+.sequence-display {
+  min-height: 44px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f4c76b;
+  font-weight: 700;
+}
+
 @media (max-width: 640px) {
   body {
     overflow: auto;
@@ -195,5 +272,9 @@ button {
   .portrait {
     height: 38vh;
     max-width: 36vw;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
   }
 }
