@@ -1,0 +1,16 @@
+{
+  "events": [
+    {
+      "id": "event.arrival",
+      "order": 1,
+      "summary": "Ara enters the archive before dawn.",
+      "purpose": "establish stakes"
+    },
+    {
+      "id": "event.ledger",
+      "order": 2,
+      "summary": "The oath ledger can be opened or left sealed.",
+      "purpose": "choice pressure"
+    }
+  ]
+}

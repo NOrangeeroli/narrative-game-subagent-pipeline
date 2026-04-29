@@ -15,6 +15,21 @@ These agents produce the base design layer. They may depend on earlier design-la
 | BranchGraphDesigner | `design-layer/BranchGraphDesigner.md` | `workspace/design_layer/branch_graph.json` |
 | BaseGameIRDesigner | `design-layer/BaseGameIRDesigner.md` | `workspace/design_layer/game_ir.json` |
 
+## Design Layer V2
+
+These agents produce internal V2 source artifacts under `workspace/design_layer_v2/`. The controller validates and compiles those artifacts into the same public runtime interface as V1: `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`. Downstream agents must not receive raw V2 source artifacts unless a repair explicitly requires them.
+
+| Agent | Role Card | Canonical Output |
+| --- | --- | --- |
+| SourceFactExtractor | `design-layer-v2/SourceFactExtractor.md` | `workspace/design_layer_v2/source_facts/*` |
+| AdaptationPolicyDesigner | `design-layer-v2/AdaptationPolicyDesigner.md` | `workspace/design_layer_v2/adaptation/*` |
+| StateModelDesigner | `design-layer-v2/StateModelDesigner.md` | `workspace/design_layer_v2/state/*` |
+| MacroGraphDesigner | `design-layer-v2/MacroGraphDesigner.md` | `workspace/design_layer_v2/macro/macro_story_graph.json`, `workspace/design_layer_v2/control/route_merge_policy.json` |
+| MacroContractWriter | `design-layer-v2/MacroContractWriter.md` | `workspace/design_layer_v2/macro/macro_node_contracts.json` |
+| MeshExpansionPlanner | `design-layer-v2/MeshExpansionPlanner.md` | `workspace/design_layer_v2/control/mesh_expansion_policy.json` |
+| MeshLayerDesigner | `design-layer-v2/MeshLayerDesigner.md` | `workspace/design_layer_v2/subgraphs/subgraph.<parent_ref_id>.json` |
+| DesignV2CompilerReviewer | `design-layer-v2/DesignV2CompilerReviewer.md` | Review findings only |
+
 ## Post Design
 
 These agents run after the design layer. They should not reopen requirements or synopsis by default; use the durable downstream context in `game_ir.design_brief`, the graph topology in `branch_graph.json`, and controller-provided slices.

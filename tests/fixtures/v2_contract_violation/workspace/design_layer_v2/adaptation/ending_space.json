@@ -1,0 +1,1 @@
+{"endings":[{"id":"ending.closed","title":"Closed","status":"available","theme_ids":["theme.trust"],"state_requirements":["state.key_found == false"]}]}

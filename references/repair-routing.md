@@ -21,6 +21,15 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | gameplay adapter runtime failure | controller/runtime adapter bug first |
 | Web export failure | controller/tool bug first |
 | Unity export failure | controller/template bug first |
+| V2 missing or invalid source fact, character, event, theme, or world rule reference | `SourceFactExtractor` |
+| V2 adaptation references missing facts, processes, endings, or forbidden changes | `AdaptationPolicyDesigner` |
+| V2 state type, initial value, permission, or invariant failure | `StateModelDesigner` |
+| V2 macro node, macro edge, missing contract, or contract exit mismatch | `MacroGraphDesigner` then `MacroContractWriter`, based on failed path |
+| V2 expansion depth policy invalid | `MeshExpansionPlanner` |
+| V2 subgraph parent/depth mismatch | `MeshLayerDesigner` |
+| V2 subgraph violates root macro contract | `MeshLayerDesigner` |
+| V2 route merge references missing mesh node or exit | `MacroGraphDesigner` or `MeshLayerDesigner`, based on referenced id |
+| V2 simulation dead end, unreachable node, pacing budget, or theme drift warning | `DesignV2CompilerReviewer` triages first, then routes to the artifact owner |
 
 ## Repair Ticket Shape
 

@@ -1,0 +1,26 @@
+{
+  "endings": [
+    {
+      "id": "ending.open",
+      "title": "The Ledger Opens",
+      "status": "available",
+      "theme_ids": [
+        "theme.trust"
+      ],
+      "state_requirements": [
+        "state.key_found == true"
+      ]
+    },
+    {
+      "id": "ending.closed",
+      "title": "The Oath Remains Sealed",
+      "status": "available",
+      "theme_ids": [
+        "theme.trust"
+      ],
+      "state_requirements": [
+        "state.key_found == false"
+      ]
+    }
+  ]
+}

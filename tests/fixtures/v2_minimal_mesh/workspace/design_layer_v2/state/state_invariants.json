@@ -1,0 +1,18 @@
+{
+  "invariants": [
+    {
+      "id": "invariant.trust_non_negative",
+      "state_variable_ids": [
+        "state.trust"
+      ],
+      "expression": "state.trust >= 0"
+    },
+    {
+      "id": "invariant.key_boolean",
+      "state_variable_ids": [
+        "state.key_found"
+      ],
+      "expression": "state.key_found in [true, false]"
+    }
+  ]
+}

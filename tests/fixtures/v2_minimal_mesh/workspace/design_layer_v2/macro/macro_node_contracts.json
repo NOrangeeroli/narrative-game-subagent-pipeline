@@ -1,0 +1,89 @@
+{
+  "contracts": [
+    {
+      "id": "contract.intro",
+      "macro_node_id": "macro.intro",
+      "allowed_characters": [
+        "char.ara",
+        "char.niko"
+      ],
+      "allowed_locations": [
+        "fact.archive"
+      ],
+      "allowed_state_reads": [
+        "state.trust",
+        "state.key_found"
+      ],
+      "allowed_state_writes": [
+        "state.trust",
+        "state.key_found"
+      ],
+      "source_fact_ids": [
+        "fact.archive",
+        "fact.oath"
+      ],
+      "exits": [
+        {
+          "id": "exit.search",
+          "summary": "Ara reveals the ledger.",
+          "effects": [
+            {
+              "state_variable_id": "state.key_found",
+              "operation": "set",
+              "value": true
+            },
+            {
+              "state_variable_id": "state.trust",
+              "operation": "add",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "exit.leave",
+          "summary": "Ara leaves the ledger sealed.",
+          "effects": []
+        }
+      ]
+    },
+    {
+      "id": "contract.open",
+      "macro_node_id": "macro.open",
+      "allowed_characters": [
+        "char.ara",
+        "char.niko"
+      ],
+      "allowed_locations": [
+        "fact.archive"
+      ],
+      "allowed_state_reads": [
+        "state.trust",
+        "state.key_found"
+      ],
+      "allowed_state_writes": [],
+      "source_fact_ids": [
+        "fact.oath"
+      ],
+      "exits": []
+    },
+    {
+      "id": "contract.closed",
+      "macro_node_id": "macro.closed",
+      "allowed_characters": [
+        "char.ara"
+      ],
+      "allowed_locations": [
+        "fact.archive"
+      ],
+      "allowed_state_reads": [
+        "state.trust",
+        "state.key_found"
+      ],
+      "allowed_state_writes": [],
+      "source_fact_ids": [
+        "fact.oath"
+      ],
+      "exits": []
+    }
+  ]
+}

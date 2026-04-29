@@ -139,6 +139,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
                 "target": edge.get("to"),
                 "edge_id": edge_id,
                 "outcome_id": binding.get("outcome_id") or edge_id,
+                "condition_type": edge.get("condition_type", "player_choice"),
                 "state_writes": binding.get("state_writes") or (plan.get("state_writes", []) if isinstance(plan, dict) else []),
                 "conditions": edge.get("conditions", []),
             })

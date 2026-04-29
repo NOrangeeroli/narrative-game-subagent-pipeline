@@ -10,6 +10,11 @@ from pathlib import Path
 from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
+from design_v2_lib import (
+    REQUIRED_V2_FILES,
+    compile_design_v2,
+    ensure_design_v2_layout,
+)
 from pipeline_lib import (
     build_gameplay_manifest,
     build_realization_manifest,
@@ -28,28 +33,65 @@ from validate_assets import validate_assets
 from write_report import write_final_report
 
 
+V2_AUTHORING_ROLES = [
+    "SourceFactExtractor",
+    "AdaptationPolicyDesigner",
+    "StateModelDesigner",
+    "MacroGraphDesigner",
+    "MacroContractWriter",
+    "MeshExpansionPlanner",
+    "MeshLayerDesigner",
+    "DesignV2CompilerReviewer",
+]
+
+
 def init_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
+    design_layer = getattr(args, "design_layer", "v1")
+    if design_layer == "v2":
+        ensure_design_v2_layout(run_root)
     write_text(path_for(run_root, "prompt"), args.prompt.strip() + "\n")
     write_json(run_root / "graph" / "state.json", {
         "run_root": str(run_root),
-        "current_stage": "initialized",
-        "next_actions": [
-            "Spawn PromptAnalyst, LinearSynopsisDesigner, BranchGraphDesigner, and BaseGameIRDesigner.",
-            "Write accepted payloads to workspace/design_layer/.",
-            "Run validate_artifacts.py --write-projections.",
-        ],
+        "current_stage": "initialized_v2_design_layer" if design_layer == "v2" else "initialized",
+        "design_layer": design_layer,
+        "next_actions": (
+            [
+                "Spawn V2 authoring agents using references/subagents/design-layer-v2/ in order: " + " -> ".join(V2_AUTHORING_ROLES) + ".",
+                "Write accepted payloads to workspace/design_layer_v2/.",
+                "Run run_pipeline.py compile-design --design-layer v2.",
+                "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
+            ]
+            if design_layer == "v2"
+            else [
+                "Spawn PromptAnalyst, LinearSynopsisDesigner, BranchGraphDesigner, and BaseGameIRDesigner.",
+                "Write accepted payloads to workspace/design_layer/.",
+                "Run validate_artifacts.py --write-projections.",
+            ]
+        ),
     })
     write_json(run_root / "reports" / "controller-todo.json", {
         "status": "initialized",
-        "prompt_path": "inputs/prompt.txt",
-        "required_design_artifacts": [
-            "workspace/design_layer/user_requirements.json",
-            "workspace/design_layer/chapter_linear_synopsis.json",
-            "workspace/design_layer/branch_graph.json",
-            "workspace/design_layer/game_ir.json",
+        "design_layer": design_layer,
+        "authoring_roles": V2_AUTHORING_ROLES if design_layer == "v2" else [
+            "PromptAnalyst",
+            "LinearSynopsisDesigner",
+            "BranchGraphDesigner",
+            "BaseGameIRDesigner",
         ],
+        "prompt_path": "inputs/prompt.txt",
+        "required_design_artifacts": (
+            [str(Path("workspace/design_layer_v2") / relative) for relative in REQUIRED_V2_FILES]
+            + ["workspace/design_layer_v2/subgraphs/subgraph.<parent_ref_id>.json"]
+            if design_layer == "v2"
+            else [
+                "workspace/design_layer/user_requirements.json",
+                "workspace/design_layer/chapter_linear_synopsis.json",
+                "workspace/design_layer/branch_graph.json",
+                "workspace/design_layer/game_ir.json",
+            ]
+        ),
         "runtime_design_artifacts": [
             "workspace/design_layer/branch_graph.json",
             "workspace/design_layer/game_ir.json",
@@ -72,6 +114,19 @@ def init_run(args: argparse.Namespace) -> None:
         ],
     })
     print(str(run_root))
+
+
+def compile_design_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    ensure_run_layout(run_root)
+    if args.design_layer != "v2":
+        raise SystemExit("compile-design currently supports --design-layer v2.")
+    result = compile_design_v2(run_root)
+    report_path = run_root / "workspace" / "design_layer_v2" / "compile_report.json"
+    payload = load_optional_json(report_path) or result.to_json()
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if result.status == "fail":
+        raise SystemExit(1)
 
 
 def build_run(args: argparse.Namespace) -> None:
@@ -152,7 +207,13 @@ def main() -> None:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--prompt", required=True)
     init_parser.add_argument("--run-root", required=True)
+    init_parser.add_argument("--design-layer", choices=["v1", "v2"], default="v1")
     init_parser.set_defaults(func=init_run)
+
+    compile_design_parser = subparsers.add_parser("compile-design")
+    compile_design_parser.add_argument("--run-root", required=True)
+    compile_design_parser.add_argument("--design-layer", choices=["v2"], default="v2")
+    compile_design_parser.set_defaults(func=compile_design_run)
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("--run-root", required=True)

@@ -6,6 +6,7 @@
   let currentNodeId = story.start_node_id;
   let beatIndex = 0;
   let activitySession = null;
+  let pendingRouteChoice = null;
 
   const titleEl = document.getElementById("title");
   const nodeTitleEl = document.getElementById("node-title");
@@ -91,11 +92,22 @@
     return (choice.conditions || []).every(conditionPasses);
   }
 
+  function isVisibleChoice(choice) {
+    return (choice.condition_type || "player_choice") === "player_choice";
+  }
+
   function enterNode(nodeId) {
     currentNodeId = nodeId;
     beatIndex = 0;
     activitySession = null;
+    pendingRouteChoice = null;
     render();
+  }
+
+  function followChoice(choice) {
+    if (!choice || !choice.target) return;
+    applyWrites(choice.state_writes);
+    enterNode(choice.target);
   }
 
   function completeActivity(outcomeId, writes) {
@@ -128,17 +140,23 @@
 
   function renderChoices(node) {
     choicesEl.innerHTML = "";
-    const choices = (node.choices || []).filter(choicePasses);
-    if (choices.length === 0 && node.is_terminal) {
+    pendingRouteChoice = null;
+    continueButton.textContent = "Continue";
+    const availableChoices = (node.choices || []).filter(choicePasses);
+    const choices = availableChoices.filter(isVisibleChoice);
+    const routeChoices = availableChoices.filter((choice) => !isVisibleChoice(choice));
+    if (choices.length === 0 && routeChoices.length === 0 && node.is_terminal) {
       continueButton.hidden = true;
       return;
     }
     choices.forEach((choice) => {
-      choicesEl.appendChild(makeButton(choice.label || "Continue", () => {
-        applyWrites(choice.state_writes);
-        enterNode(choice.target);
-      }));
+      choicesEl.appendChild(makeButton(choice.label || "Continue", () => followChoice(choice)));
     });
+    if (choices.length === 0 && routeChoices.length > 0) {
+      pendingRouteChoice = routeChoices[0];
+      continueButton.hidden = false;
+      return;
+    }
     continueButton.hidden = true;
   }
 
@@ -464,6 +482,7 @@
       speakerEl.textContent = "";
       lineEl.textContent = `No node exists for ${currentNodeId}.`;
       continueButton.hidden = true;
+      pendingRouteChoice = null;
       choicesEl.innerHTML = "";
       return;
     }
@@ -472,6 +491,8 @@
     setBackground(node.background_id || node.id);
     renderPortraits(node);
     choicesEl.innerHTML = "";
+    continueButton.textContent = "Continue";
+    pendingRouteChoice = null;
     if (node.gameplay) {
       renderGameplay(node);
       return;
@@ -488,6 +509,10 @@
   }
 
   continueButton.addEventListener("click", () => {
+    if (pendingRouteChoice) {
+      followChoice(pendingRouteChoice);
+      return;
+    }
     beatIndex += 1;
     render();
   });
@@ -496,6 +521,7 @@
     currentNodeId = story.start_node_id;
     beatIndex = 0;
     activitySession = null;
+    pendingRouteChoice = null;
     Object.keys(state).forEach((key) => delete state[key]);
     Object.assign(state, story.initial_state || {});
     render();

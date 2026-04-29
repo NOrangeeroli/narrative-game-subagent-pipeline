@@ -1,0 +1,12 @@
+{
+  "locked_fact_ids": [
+    "fact.oath"
+  ],
+  "locks": [
+    {
+      "id": "lock.oath",
+      "fact_id": "fact.oath",
+      "reason": "The oath is the premise."
+    }
+  ]
+}

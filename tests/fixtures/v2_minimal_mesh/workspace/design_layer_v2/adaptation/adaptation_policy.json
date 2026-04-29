@@ -1,0 +1,25 @@
+{
+  "fixed_fact_ids": [
+    "fact.oath"
+  ],
+  "variable_processes": [
+    {
+      "id": "process.trust",
+      "description": "Trust changes through how deeply Ara explores the archive mesh.",
+      "allowed_fact_ids": [
+        "fact.key"
+      ]
+    }
+  ],
+  "variable_endings": [
+    {
+      "id": "ending.open",
+      "title": "The Ledger Opens"
+    },
+    {
+      "id": "ending.closed",
+      "title": "The Oath Remains Sealed"
+    }
+  ],
+  "forbidden_changes": []
+}

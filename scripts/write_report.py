@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from design_v2_lib import DESIGN_V2_COMPILE_REPORT, DESIGN_V2_ROOT, REQUIRED_V2_FILES
 from pipeline_lib import STAGE_PATHS, load_optional_json, path_for, write_json
 
 
@@ -19,6 +20,9 @@ def write_final_report(run_root: Path) -> Path:
     gameplay_validation = load_optional_json(path_for(run_root, "gameplay_validation_report")) or {"status": "missing", "findings": []}
     gameplay_coverage = load_optional_json(path_for(run_root, "gameplay_coverage_report")) or {"status": "missing"}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
+    game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
+    design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
+    v2_compile_report = load_optional_json(run_root / DESIGN_V2_COMPILE_REPORT)
     web_path = run_root / "build" / "web-vn" / "index.html"
     unity_path = run_root / "build" / "unity-project"
     web_asset_root = run_root / "build" / "web-vn" / "assets"
@@ -60,17 +64,39 @@ def write_final_report(run_root: Path) -> Path:
             "coverage_report": STAGE_PATHS["gameplay_coverage_report"] if (run_root / STAGE_PATHS["gameplay_coverage_report"]).exists() else None,
             "coverage": gameplay_coverage,
         },
-        "design_layer": {
-            "version": "v1-refactored",
-            "source_artifacts": [
-                STAGE_PATHS["requirements"],
-                STAGE_PATHS["synopsis"],
-            ],
-            "runtime_artifacts": [
-                STAGE_PATHS["branch_graph"],
-                STAGE_PATHS["game_ir"],
-            ],
-        },
+        "design_layer": (
+            {
+                "version": "v2",
+                "source_root": str(DESIGN_V2_ROOT),
+                "source_artifacts": [
+                    str(DESIGN_V2_ROOT / relative)
+                    for relative in REQUIRED_V2_FILES
+                    if (run_root / DESIGN_V2_ROOT / relative).exists()
+                ],
+                "subgraph_artifacts": sorted(
+                    str(path.relative_to(run_root))
+                    for path in (run_root / DESIGN_V2_ROOT / "subgraphs").glob("subgraph.*.json")
+                ) if (run_root / DESIGN_V2_ROOT / "subgraphs").exists() else [],
+                "compile_report": str(DESIGN_V2_COMPILE_REPORT) if (run_root / DESIGN_V2_COMPILE_REPORT).exists() else None,
+                "compile_status": v2_compile_report.get("status") if isinstance(v2_compile_report, dict) else None,
+                "runtime_artifacts": [
+                    STAGE_PATHS["branch_graph"],
+                    STAGE_PATHS["game_ir"],
+                ],
+            }
+            if design_layer_version == "v2"
+            else {
+                "version": "v1-refactored",
+                "source_artifacts": [
+                    STAGE_PATHS["requirements"],
+                    STAGE_PATHS["synopsis"],
+                ],
+                "runtime_artifacts": [
+                    STAGE_PATHS["branch_graph"],
+                    STAGE_PATHS["game_ir"],
+                ],
+            }
+        ),
         "artifacts": {
             key: value
             for key, value in STAGE_PATHS.items()

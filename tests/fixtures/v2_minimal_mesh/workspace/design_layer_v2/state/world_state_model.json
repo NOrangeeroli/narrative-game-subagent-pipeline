@@ -1,0 +1,44 @@
+{
+  "variables": [
+    {
+      "id": "state.trust",
+      "type": "integer",
+      "initial_value": 0,
+      "scope": "global",
+      "description": "Niko's trust in Ara.",
+      "readable_by": [
+        "macro.*",
+        "subgraph.*",
+        "node.*"
+      ],
+      "writable_by": [
+        "macro.*",
+        "subgraph.*",
+        "node.*"
+      ],
+      "invariants": [
+        "state.trust >= 0"
+      ]
+    },
+    {
+      "id": "state.key_found",
+      "type": "boolean",
+      "initial_value": false,
+      "scope": "global",
+      "description": "Whether Ara recovered the glass key.",
+      "readable_by": [
+        "macro.*",
+        "subgraph.*",
+        "node.*"
+      ],
+      "writable_by": [
+        "macro.*",
+        "subgraph.*",
+        "node.*"
+      ],
+      "invariants": [
+        "state.key_found in [true, false]"
+      ]
+    }
+  ]
+}

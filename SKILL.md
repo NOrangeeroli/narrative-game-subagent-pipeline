@@ -46,6 +46,7 @@ workspace/design_layer/user_requirements.json
 workspace/design_layer/chapter_linear_synopsis.json
 workspace/design_layer/branch_graph.json
 workspace/design_layer/game_ir.json
+workspace/design_layer_v2/
 workspace/state/shared-state.schema.json
 workspace/realization/node-realization-plans.json
 workspace/realization/realization-manifest.json
@@ -76,19 +77,22 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 ## Workflow
 
 1. Initialize the run with `scripts/run_pipeline.py init`.
-2. Spawn front-half subagents using the role cards under `references/subagents/design-layer/`:
+2. For V1, spawn front-half subagents using role cards under `references/subagents/design-layer/`:
    `PromptAnalyst`, `LinearSynopsisDesigner`, `BranchGraphDesigner`, and `BaseGameIRDesigner`.
-3. Save accepted payloads to `workspace/design_layer/`. The design layer produces all four files, while downstream agents receive only `branch_graph.json` and `game_ir.json` derived context.
-4. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
-5. Spawn `NodeRealizationPlanner` from `references/subagents/post-design/` after shared state is projected.
-6. Spawn one `NodeDialogueWriter` per `vn_yarn` or `cutscene_yarn` realization plan. Batch these workers when there are many nodes.
-7. Spawn gameplay realization writers for supported non-VN plans:
+3. For V2, spawn front-half subagents using role cards under `references/subagents/design-layer-v2/`:
+   `SourceFactExtractor`, `AdaptationPolicyDesigner`, `StateModelDesigner`, `MacroGraphDesigner`, `MacroContractWriter`, `MeshExpansionPlanner`, `MeshLayerDesigner`, and optional `DesignV2CompilerReviewer`.
+4. Save accepted V1 payloads to `workspace/design_layer/`. Save accepted V2 source payloads to `workspace/design_layer_v2/`, then run `scripts/run_pipeline.py compile-design --design-layer v2` to produce `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`.
+5. Downstream agents receive only `branch_graph.json`, `game_ir.json`, and controller-made slices unless a repair explicitly needs more context.
+6. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
+7. Spawn `NodeRealizationPlanner` from `references/subagents/post-design/` after shared state is projected.
+8. Spawn one `NodeDialogueWriter` per `vn_yarn` or `cutscene_yarn` realization plan. Batch these workers when there are many nodes.
+9. Spawn gameplay realization writers for supported non-VN plans:
    `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
-8. Save accepted Yarn fragments under `workspace/vn/fragments/` and accepted gameplay units under their `workspace/realization/<kind>/` directories.
-9. Spawn `AssetDirector` after story and gameplay verification when visual direction is needed. It returns art direction only.
-10. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
-11. Run `scripts/run_pipeline.py build --run-root <run>`.
-12. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
+10. Save accepted Yarn fragments under `workspace/vn/fragments/` and accepted gameplay units under their `workspace/realization/<kind>/` directories.
+11. Spawn `AssetDirector` after story and gameplay verification when visual direction is needed. It returns art direction only.
+12. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
+13. Run `scripts/run_pipeline.py build --run-root <run>`.
+14. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
 ## Boundaries
 
@@ -112,6 +116,9 @@ Subagents do not write runtime code for these adapters.
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
 - `scripts/validate_gameplay.py`: validate gameplay realization units and write gameplay reports.
 - `scripts/compile_gameplay_manifest.py`: compile gameplay unit artifacts into `workspace/realization/gameplay-manifest.json`.
+- `scripts/design_v2_validate.py`: validate V2 source design artifacts.
+- `scripts/design_v2_compile.py`: compile V2 source artifacts into `workspace/design_layer/`.
+- `scripts/design_v2_project_context.py`: project a focused node context from compiled V2 artifacts.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
 - `scripts/story_ir.py`: lower Yarn to a simple StoryIR and verify titles, jumps, and outcomes.
 - `scripts/plan_assets.py`: convert `asset-direction.json` into a deterministic runtime `asset-manifest.json`.
@@ -122,7 +129,7 @@ Subagents do not write runtime code for these adapters.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.
 
-Read `references/artifact-contracts.md` only when you need exact payload shapes. Read `references/repair-routing.md` only when validation fails. Read `references/subagents/README.md`, then only the specific subagent role card needed for the current spawn.
+Read `references/artifact-contracts.md` only when you need exact V1 payload shapes. Read `references/design-layer-v2-contracts.md` only when you need exact V2 payload shapes. Read `references/repair-routing.md` only when validation fails. Read `references/subagents/README.md`, then only the specific subagent role card needed for the current spawn. V1 design role cards live under `references/subagents/design-layer/`; V2 design role cards live under `references/subagents/design-layer-v2/`. `references/design-layer-v2-prompts.md` is a compatibility index for the V2 role cards.
 
 ## Completion
 

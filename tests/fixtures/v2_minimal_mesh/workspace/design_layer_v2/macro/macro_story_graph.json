@@ -1,0 +1,50 @@
+{
+  "title": "Archive Oath",
+  "summary": "A macro route mesh where a single archive choice opens into deeper local meshes.",
+  "start_macro_node_id": "macro.intro",
+  "nodes": [
+    {
+      "id": "macro.intro",
+      "title": "Enter the Archive",
+      "summary": "Ara decides whether to search the oath ledger or leave it untouched.",
+      "allowed_exits": [
+        "exit.search",
+        "exit.leave"
+      ]
+    },
+    {
+      "id": "macro.open",
+      "title": "Ledger Opened",
+      "summary": "Ara and Niko face the revealed oath.",
+      "allowed_exits": [],
+      "is_terminal": true,
+      "ending_id": "ending.open"
+    },
+    {
+      "id": "macro.closed",
+      "title": "Ledger Sealed",
+      "summary": "Ara leaves the oath sealed.",
+      "allowed_exits": [],
+      "is_terminal": true,
+      "ending_id": "ending.closed"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge.macro.intro.open",
+      "from": "macro.intro",
+      "to": "macro.open",
+      "exit_id": "exit.search",
+      "label": "Reveal the oath",
+      "condition_type": "player_choice"
+    },
+    {
+      "id": "edge.macro.intro.closed",
+      "from": "macro.intro",
+      "to": "macro.closed",
+      "exit_id": "exit.leave",
+      "label": "Leave it sealed",
+      "condition_type": "player_choice"
+    }
+  ]
+}

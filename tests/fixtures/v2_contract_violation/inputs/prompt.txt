@@ -1,0 +1,1 @@
+Negative fixture: the second mesh layer points at a missing parent node.
