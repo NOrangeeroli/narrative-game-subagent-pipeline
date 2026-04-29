@@ -25,7 +25,7 @@ python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py
   --run-root runs/my-game
 ```
 
-Use `references/subagent-prompts.md` to spawn clean-context authoring subagents. Save accepted payloads into the run layout described below.
+Use `references/subagents/README.md` to find the specific subagent role card needed for a clean-context authoring spawn. Save accepted payloads into the run layout described below.
 
 Build and export after required artifacts exist:
 
@@ -76,11 +76,11 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 ## Workflow
 
 1. Initialize the run with `scripts/run_pipeline.py init`.
-2. Spawn front-half subagents using `references/subagent-prompts.md`:
+2. Spawn front-half subagents using the role cards under `references/subagents/design-layer/`:
    `PromptAnalyst`, `LinearSynopsisDesigner`, `BranchGraphDesigner`, and `BaseGameIRDesigner`.
 3. Save accepted payloads to `workspace/design_layer/`. The design layer produces all four files, while downstream agents receive only `branch_graph.json` and `game_ir.json` derived context.
 4. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
-5. Spawn `NodeRealizationPlanner` after shared state is projected.
+5. Spawn `NodeRealizationPlanner` from `references/subagents/post-design/` after shared state is projected.
 6. Spawn one `NodeDialogueWriter` per `vn_yarn` or `cutscene_yarn` realization plan. Batch these workers when there are many nodes.
 7. Spawn gameplay realization writers for supported non-VN plans:
    `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
@@ -122,7 +122,7 @@ Subagents do not write runtime code for these adapters.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.
 
-Read `references/artifact-contracts.md` only when you need exact payload shapes. Read `references/repair-routing.md` only when validation fails. Read `references/subagent-prompts.md` before spawning authoring workers.
+Read `references/artifact-contracts.md` only when you need exact payload shapes. Read `references/repair-routing.md` only when validation fails. Read `references/subagents/README.md`, then only the specific subagent role card needed for the current spawn.
 
 ## Completion
 

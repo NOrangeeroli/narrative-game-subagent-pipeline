@@ -285,7 +285,7 @@ Validation should warn if `game_ir.design_brief` is missing, but it should not f
 
 ### 4. Remove Downstream Prompt Dependencies
 
-Update `references/subagent-prompts.md`:
+Update the relevant post-design role cards under `references/subagents/post-design/`:
 
 ```text
 NodeRealizationPlanner input:

@@ -566,7 +566,7 @@ The first implementation should prefer a flattened branch graph for clarity. Lat
 
 ### Milestone 5: Prompt Pack and Controller Workflow
 
-Update `SKILL.md` and `references/subagent-prompts.md`:
+Update `SKILL.md` and the relevant role cards under `references/subagents/`:
 
 ```text
 v1 workflow remains default

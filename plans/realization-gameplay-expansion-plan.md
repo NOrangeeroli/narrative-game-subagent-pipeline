@@ -637,7 +637,7 @@ Update:
 ```text
 SKILL.md
 references/artifact-contracts.md
-references/subagent-prompts.md
+references/subagents/post-design/
 references/repair-routing.md
 ```
 
