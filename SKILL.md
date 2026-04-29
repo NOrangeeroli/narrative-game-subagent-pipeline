@@ -36,6 +36,21 @@ python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py
 
 This writes a browser-playable VN under `build/web-vn/` by default. Use `--export-unity` to also generate a minimal Unity project under `build/unity-project/`.
 
+For the parallel RPG implementation target, initialize and build with an explicit target:
+
+```bash
+python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py init \
+  --prompt "A one-sentence RPG prompt" \
+  --target web-rpg \
+  --run-root runs/my-rpg
+
+python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py build \
+  --target web-rpg \
+  --run-root runs/my-rpg
+```
+
+Omitting `--target` preserves the original `web-vn` behavior.
+
 ## Artifact Layout
 
 Use these canonical paths inside each run:
@@ -55,6 +70,23 @@ workspace/realization/interactions/*.interaction.json
 workspace/realization/puzzles/*.puzzle.json
 workspace/realization/explorations/*.exploration.json
 workspace/realization/stubs/*.not-implemented.json
+workspace/rpg/rpg-campaign.json
+workspace/rpg/world-map.json
+workspace/rpg/maps/*.map.json
+workspace/rpg/actors.json
+workspace/rpg/classes.json
+workspace/rpg/items.json
+workspace/rpg/equipment.json
+workspace/rpg/skills.json
+workspace/rpg/enemies.json
+workspace/rpg/encounter-tables.json
+workspace/rpg/quests.json
+workspace/rpg/npc-dialogue.json
+workspace/rpg/events.json
+workspace/rpg/shops.json
+workspace/rpg/rest-points.json
+workspace/rpg/progression-rules.json
+workspace/rpg/rpg-manifest.json
 workspace/vn/fragments/*.yarn
 workspace/vn/fragments/*.manifest.json
 workspace/vn/story.yarn
@@ -63,11 +95,15 @@ workspace/asset-direction.json
 workspace/asset-manifest.json
 workspace/generated-assets/
 build/web-vn/
+build/web-rpg/
 build/unity-project/
 reports/asset-generation-report.json
 reports/asset-validation.json
 reports/gameplay-validation.json
 reports/gameplay-coverage.json
+reports/rpg-validation.json
+reports/rpg-balance-report.json
+reports/rpg-coverage.json
 reports/*.json
 ```
 
@@ -90,6 +126,8 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 11. Run `scripts/run_pipeline.py build --run-root <run>`.
 12. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
+For `--target web-rpg`, steps 5-8 are replaced by the RPG post-design artifact set under `workspace/rpg/`. Build compiles `workspace/rpg/rpg-manifest.json`, writes RPG validation, balance, and coverage reports, runs the same asset pipeline, and exports `build/web-rpg/`. The base design layer is unchanged; RPG agents consume `branch_graph.json`, `game_ir.json`, and controller-provided slices instead of reopening requirements or synopsis.
+
 ## Boundaries
 
 Base design artifacts must not contain Yarn syntax, Unity paths, image-generation prompts, or implementation details.
@@ -106,12 +144,17 @@ Subagents do not write runtime code for these adapters.
 
 `external_stub` and unsupported adapters become typed not-implemented stubs. Supported `battle`, `interaction`, `puzzle`, and `exploration` plans require matching gameplay unit artifacts.
 
+RPG implementation is a parallel target, not a replacement for VN. Use `--target web-rpg` only when the run has RPG artifacts under `workspace/rpg/`; default builds and old runs remain `web-vn`. RPG runtime assets are planned through the same `asset-direction.json`/`asset-manifest.json` split, with extra sections such as `tilesets`, `sprites`, `enemy_sprites`, `item_icons`, `skill_icons`, `battle_backgrounds`, and `rpg_ui`.
+
 ## Tools
 
 - `scripts/run_pipeline.py`: initialize runs and build/export accepted artifacts.
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
 - `scripts/validate_gameplay.py`: validate gameplay realization units and write gameplay reports.
 - `scripts/compile_gameplay_manifest.py`: compile gameplay unit artifacts into `workspace/realization/gameplay-manifest.json`.
+- `scripts/validate_rpg.py`: validate RPG artifacts and refresh the RPG manifest.
+- `scripts/compile_rpg_manifest.py`: compile RPG post-design artifacts into `workspace/rpg/rpg-manifest.json`.
+- `scripts/simulate_rpg_balance.py`: run a deterministic first-pass RPG encounter balance check.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
 - `scripts/story_ir.py`: lower Yarn to a simple StoryIR and verify titles, jumps, and outcomes.
 - `scripts/plan_assets.py`: convert `asset-direction.json` into a deterministic runtime `asset-manifest.json`.
@@ -119,6 +162,7 @@ Subagents do not write runtime code for these adapters.
 - `scripts/asset_image_providers.py`: provider adapters, request/response logging, PPIO response parsing, and Gemini image requests.
 - `scripts/validate_assets.py`: verify generated asset files and portrait transparency.
 - `scripts/export_web_vn.py`: export a self-contained browser-playable VN.
+- `scripts/export_web_rpg.py`: export a self-contained browser-playable RPG.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.
 

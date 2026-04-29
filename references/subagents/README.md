@@ -29,3 +29,14 @@ These agents run after the design layer. They should not reopen requirements or 
 | ExplorationRealizationWriter | `post-design/ExplorationRealizationWriter.md` | `workspace/realization/explorations/<node-id>.exploration.json` |
 | AssetDirector | `post-design/AssetDirector.md` | `workspace/asset-direction.json` |
 | ReviewSubagent | `post-design/ReviewSubagent.md` | Review findings only |
+
+## RPG Post Design
+
+These agents are used only for explicit `--target web-rpg` runs. They are parallel to VN realization and must not change the design-layer files.
+
+| Agent | Role Card | Canonical Output |
+| --- | --- | --- |
+| RPGCampaignPlanner | `post-design/rpg/RPGCampaignPlanner.md` | `workspace/rpg/rpg-campaign.json`, `workspace/rpg/world-map.json` |
+| RPGMapBuilder | `post-design/rpg/RPGMapBuilder.md` | `workspace/rpg/maps/*.map.json` |
+| RPGContentWriter | `post-design/rpg/RPGContentWriter.md` | `workspace/rpg/actors.json`, `enemies.json`, `items.json`, `skills.json`, `quests.json`, `npc-dialogue.json` |
+| RPGBalanceReviewer | `post-design/rpg/RPGBalanceReviewer.md` | Review findings or repaired RPG balance payloads |

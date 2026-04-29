@@ -64,6 +64,10 @@ def collect_runtime_assets(run_root: Path, output_root: Path, asset_directions: 
         for portrait in as_list(character.get("portrait_assets")):
             if isinstance(portrait, dict) and isinstance(portrait.get("asset_id"), str) and isinstance(portrait.get("file_ref"), str):
                 copy_manifest_asset(portrait["asset_id"], portrait["file_ref"])
+    for section in ("tilesets", "sprites", "enemy_sprites", "item_icons", "skill_icons", "equipment_icons", "battle_backgrounds", "map_assets", "rpg_ui"):
+        for asset in as_list(manifest.get(section)):
+            if isinstance(asset, dict) and isinstance(asset.get("asset_id"), str) and isinstance(asset.get("file_ref"), str):
+                copy_manifest_asset(asset["asset_id"], asset["file_ref"])
 
     if not source_root.exists():
         return runtime_paths

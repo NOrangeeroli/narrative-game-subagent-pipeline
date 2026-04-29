@@ -28,6 +28,17 @@ MOCK_PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sXl16sAAAAASUVORK5CYII="
 )
 REMOTE_IMAGE_PROVIDERS = {"gemini", "openai-ppioImage"}
+RPG_ASSET_SECTIONS = {
+    "tilesets": "tileset",
+    "sprites": "sprite",
+    "enemy_sprites": "enemy_sprite",
+    "item_icons": "item_icon",
+    "skill_icons": "skill_icon",
+    "equipment_icons": "equipment_icon",
+    "battle_backgrounds": "battle_background",
+    "map_assets": "map_asset",
+    "rpg_ui": "rpg_ui",
+}
 
 
 def sanitize_file_stem(value: str) -> str:
@@ -177,6 +188,49 @@ def render_ui_svg(asset: Json) -> str:
 '''
 
 
+def render_rpg_svg(asset: Json, role: str) -> str:
+    asset_id = str(asset.get("asset_id") or role)
+    primary = hex_color(asset_id, 21, 58, 42)
+    secondary = hex_color(asset_id, 22, 42, 28)
+    accent = hex_color(asset_id, 23, 68, 46)
+    label = escape(asset_id.split(".")[-1][:12])
+    if role == "battle_background":
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="{secondary}" />
+  <rect y="420" width="1280" height="300" fill="{primary}" opacity="0.72" />
+  <ellipse cx="640" cy="430" rx="390" ry="54" fill="#f7f2d7" opacity="0.22" />
+  <path d="M0 260 C220 190 320 300 520 230 C760 150 900 260 1280 170 L1280 0 L0 0 Z" fill="{accent}" opacity="0.48" />
+</svg>
+'''
+    if role == "tileset":
+        tiles = []
+        colors = [primary, secondary, accent, "#6b7f64", "#314038", "#9a855d"]
+        for y in range(4):
+            for x in range(4):
+                color = colors[(x + y * 2) % len(colors)]
+                tiles.append(f'<rect x="{x * 128}" y="{y * 128}" width="126" height="126" fill="{color}" />')
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">\n  ' + "\n  ".join(tiles) + "\n</svg>\n"
+    if role in ("sprite", "enemy_sprite"):
+        face = "#e8c4a7" if role == "sprite" else "#d6a0a0"
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="226" rx="58" ry="12" fill="#000" opacity="0.24" />
+  <rect x="82" y="96" width="92" height="104" rx="24" fill="{primary}" />
+  <circle cx="128" cy="78" r="48" fill="{face}" />
+  <path d="M84 76 C94 26 162 22 174 78 C150 58 108 58 84 76 Z" fill="{secondary}" />
+  <circle cx="112" cy="78" r="5" fill="#222" />
+  <circle cx="144" cy="78" r="5" fill="#222" />
+  <path d="M108 108 C124 119 138 119 152 108" fill="none" stroke="#773e3e" stroke-width="5" stroke-linecap="round" />
+</svg>
+'''
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="18" y="18" width="220" height="220" rx="32" fill="#1c211c" />
+  <rect x="38" y="38" width="180" height="180" rx="24" fill="{primary}" opacity="0.86" />
+  <circle cx="128" cy="112" r="48" fill="{accent}" opacity="0.78" />
+  <text x="128" y="188" text-anchor="middle" font-size="22" fill="#f8f1dc">{label}</text>
+</svg>
+'''
+
+
 def write_png_from_svg(svg: str, output_path: Path, source_svg_path: Path) -> list[str]:
     ensure_dir(output_path.parent)
     ensure_dir(source_svg_path.parent)
@@ -278,6 +332,47 @@ def build_portrait_prompt(character: Json, portrait: Json, manifest: Json) -> st
         f"Art style: {style.get('rendering_mode', 'visual novel illustration')}.",
         "Create one full-body visual novel character sprite, 2:3 portrait ratio, transparent background.",
     ])
+
+
+def build_rpg_asset_prompt(asset: Json, role: str, manifest: Json) -> str:
+    spec = asset.get("spec") if isinstance(asset.get("spec"), dict) else {}
+    style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
+    description = str(spec.get("description") or f"Create RPG {role} asset {asset.get('asset_id', '')}.")
+    if role == "map_asset":
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
+            "Create a detailed top-down 2D RPG map background for a playable grid scene.",
+            "Show terrain, paths, landmarks, props, and mood clearly from an overhead game-camera angle.",
+            "No UI, no labels, no readable text, no characters as the focus.",
+        ])
+    if role == "battle_background":
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
+            "Create a wide 16:9 RPG battle background with strong location identity and clear foreground/midground/depth.",
+            "No UI, no labels, no readable text, no character portraits.",
+        ])
+    if role in ("sprite", "enemy_sprite"):
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
+            "Create a single readable RPG sprite on a plain transparent or simple background.",
+            "Clean silhouette, centered full body, no readable text.",
+        ])
+    return " ".join([
+        description,
+        f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
+        "Readable at small scale, clean silhouette, no readable text unless the asset is a UI label.",
+    ])
+
+
+def remote_rpg_asset_shape(role: str) -> tuple[str, str]:
+    if role == "battle_background":
+        return "background", "16:9"
+    if role == "map_asset":
+        return "background", "4:3"
+    return "asset", "1:1"
 
 
 def generate_assets(run_root: Path, provider: str | None = "local-svg", model: str | None = None, overwrite: bool = False, remove_backgrounds: bool = True) -> Json:
@@ -438,6 +533,51 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
             "output_files": [str(output_path)],
             "notes": notes,
         })
+
+    for section, role in RPG_ASSET_SECTIONS.items():
+        for rpg_asset in as_list(asset_manifest.get(section)):
+            if not isinstance(rpg_asset, dict):
+                continue
+            output_path = output_root / str(rpg_asset["file_ref"])
+            if output_path.exists() and not overwrite:
+                warnings.append(f"Skipped RPG asset {rpg_asset['asset_id']} at {rpg_asset['file_ref']}.")
+                continue
+            prompt = build_rpg_asset_prompt(rpg_asset, role, asset_manifest)
+            prompt_path = prompt_root / f"{sanitize_file_stem(rpg_asset['asset_id'])}.txt"
+            write_text(prompt_path, prompt + "\n")
+            notes = []
+            if maybe_copy_provider_hint(run_root, rpg_asset, output_path):
+                notes.append("copied provider_hints source")
+            elif provider == "mock":
+                notes.extend(write_mock_png(output_path))
+            elif provider in REMOTE_IMAGE_PROVIDERS:
+                image_type, aspect_ratio = remote_rpg_asset_shape(role)
+                images = generate_provider_images(
+                    provider=provider,
+                    model=model,
+                    asset_id=str(rpg_asset["asset_id"]),
+                    output_root=output_root,
+                    prompt=prompt,
+                    image_type=image_type,
+                    aspect_ratio=aspect_ratio,
+                    expected_count=1,
+                )
+                if not images:
+                    raise RuntimeError(f"Provider returned no RPG asset image for {rpg_asset['asset_id']}.")
+                notes.extend(write_image_as_png(output_path, images[0]))
+            else:
+                source_svg = output_root / "generated" / "sources" / f"{sanitize_file_stem(rpg_asset['asset_id'])}.svg"
+                notes.extend(write_png_from_svg(render_rpg_svg(rpg_asset, role), output_path, source_svg))
+            entries.append({
+                "asset_id": rpg_asset["asset_id"],
+                "role": role,
+                "prompt": prompt,
+                "prompt_ref": str(prompt_path.relative_to(output_root)),
+                "provider": provider,
+                "model": model_id,
+                "output_files": [str(output_path)],
+                "notes": notes,
+            })
 
     for audio in as_list(asset_manifest.get("audio")):
         if isinstance(audio, dict):

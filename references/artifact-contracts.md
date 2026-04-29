@@ -1,5 +1,7 @@
 # Artifact Contracts
 
+For the parallel `--target web-rpg` post-design contracts, see `references/rpg-artifact-contracts.md`. The base design-layer contracts in this file remain unchanged for both VN and RPG targets.
+
 Use JSON for canonical artifacts. Subagents may draft in Markdown during reasoning, but accepted output must be JSON or Yarn text matching these contracts.
 
 ## `user_requirements.json`

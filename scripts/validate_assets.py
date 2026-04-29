@@ -10,6 +10,18 @@ from pathlib import Path
 
 from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
 
+RPG_ASSET_SECTIONS = (
+    "tilesets",
+    "sprites",
+    "enemy_sprites",
+    "item_icons",
+    "skill_icons",
+    "equipment_icons",
+    "battle_backgrounds",
+    "map_assets",
+    "rpg_ui",
+)
+
 
 def identify(path: Path) -> dict[str, str] | None:
     try:
@@ -70,6 +82,10 @@ def validate_assets(run_root: Path) -> Json:
     for ui_asset in as_list(manifest.get("ui")):
         if isinstance(ui_asset, dict):
             check_file(str(ui_asset.get("asset_id")), str(ui_asset.get("file_ref")), "ui")
+    for section in RPG_ASSET_SECTIONS:
+        for rpg_asset in as_list(manifest.get(section)):
+            if isinstance(rpg_asset, dict):
+                check_file(str(rpg_asset.get("asset_id")), str(rpg_asset.get("file_ref")), section)
     for character in as_list(manifest.get("characters")):
         if not isinstance(character, dict):
             continue

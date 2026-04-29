@@ -73,19 +73,31 @@ def make_style_bible(asset_direction: Json) -> Json:
 
 def kind_for_asset_id(asset_id: str) -> str:
     prefix = asset_id.split(".", 1)[0]
+    if asset_id.startswith("icon.item."):
+        return "item_icon"
+    if asset_id.startswith("icon.skill."):
+        return "skill_icon"
+    if asset_id.startswith("icon.equip.") or asset_id.startswith("icon.equipment."):
+        return "equipment_icon"
     return {
         "bg": "background",
         "cg": "cg",
         "portrait": "portrait",
         "bgm": "bgm",
         "sfx": "sfx",
-        "enemy": "enemy",
+        "enemy": "enemy_sprite",
         "prop": "prop",
         "hotspot": "hotspot",
         "symbol": "symbol",
         "effect": "effect",
         "icon": "icon",
-        "map": "map",
+        "map": "map_asset",
+        "tileset": "tileset",
+        "sprite": "sprite",
+        "battlebg": "battle_background",
+        "itemicon": "item_icon",
+        "skillicon": "skill_icon",
+        "equipicon": "equipment_icon",
         "ui": "ui",
     }.get(prefix, "ui")
 
@@ -118,7 +130,30 @@ def collect_required_assets(run_root: Path) -> list[Json]:
                     "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
                     "provider_hints": [],
                 })
+    rpg_manifest = load_optional_json(path_for(run_root, "rpg_manifest")) or {}
+    for asset_id in as_list(rpg_manifest.get("asset_refs")):
+        if isinstance(asset_id, str):
+            required.setdefault(asset_id, {
+                "asset_id": asset_id,
+                "kind": kind_for_asset_id(asset_id),
+                "description": "Runtime RPG asset required by rpg-manifest.json.",
+                "source_trace": {"node_ids": []},
+                "provider_hints": [],
+            })
     return list(required.values())
+
+
+RPG_SECTION_BY_KIND = {
+    "tileset": "tilesets",
+    "sprite": "sprites",
+    "enemy_sprite": "enemy_sprites",
+    "item_icon": "item_icons",
+    "skill_icon": "skill_icons",
+    "equipment_icon": "equipment_icons",
+    "battle_background": "battle_backgrounds",
+    "map_asset": "map_assets",
+    "rpg_ui": "rpg_ui",
+}
 
 
 def plan_asset_manifest(run_root: Path) -> Json:
@@ -138,12 +173,13 @@ def plan_asset_manifest(run_root: Path) -> Json:
     cgs = []
     ui = []
     audio = []
+    rpg_sections: dict[str, list[Json]] = {section: [] for section in RPG_SECTION_BY_KIND.values()}
     portrait_ids_by_character: dict[str, list[str]] = {}
     portrait_specs: dict[str, Json] = {}
 
     for asset in directions:
         asset_id = asset["asset_id"]
-        kind = asset.get("kind")
+        kind = asset.get("kind") or kind_for_asset_id(asset_id)
         trace_node = source_node_for_asset(asset, branch_graph)
         spec = {
             "description": asset.get("description", ""),
@@ -174,7 +210,16 @@ def plan_asset_manifest(run_root: Path) -> Json:
             portrait_ids_by_character.setdefault(character_id, []).append(asset_id)
             portrait_specs[asset_id] = spec
             continue
-        if kind in ("ui", "enemy", "prop", "hotspot", "symbol", "effect", "icon", "map") or asset_id.startswith(("ui.", "enemy.", "prop.", "hotspot.", "symbol.", "effect.", "icon.", "map.")):
+        section = RPG_SECTION_BY_KIND.get(str(kind))
+        if section:
+            rpg_sections[section].append({
+                "asset_id": asset_id,
+                "kind": str(kind),
+                "spec": spec,
+                "file_ref": f"generated/rpg/{section}/{sanitize_file_stem(asset_id)}.png",
+            })
+            continue
+        if kind in ("ui", "enemy", "prop", "hotspot", "symbol", "effect", "icon", "map") or asset_id.startswith(("ui.", "prop.", "hotspot.", "symbol.", "effect.", "icon.")):
             ui.append({
                 "asset_id": asset_id,
                 "kind": str(kind or asset_slug(asset_id)),
@@ -189,6 +234,7 @@ def plan_asset_manifest(run_root: Path) -> Json:
                 "mood": make_style_bible(asset_direction).get("lighting_mood", ""),
                 "file_ref": f"audio/{sanitize_file_stem(asset_id)}.ogg",
             })
+            continue
 
     characters = []
     for character_id, portrait_ids in sorted(portrait_ids_by_character.items()):
@@ -223,6 +269,7 @@ def plan_asset_manifest(run_root: Path) -> Json:
         "backgrounds": backgrounds,
         "cgs": cgs,
         "ui": ui,
+        **rpg_sections,
         "audio": audio,
         "version": "v1",
         "source_asset_direction": "workspace/asset-direction.json",

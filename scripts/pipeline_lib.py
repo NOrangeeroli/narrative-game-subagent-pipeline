@@ -24,6 +24,9 @@ STAGE_PATHS = {
     "realization_plans": "workspace/realization/node-realization-plans.json",
     "realization_manifest": "workspace/realization/realization-manifest.json",
     "gameplay_manifest": "workspace/realization/gameplay-manifest.json",
+    "rpg_campaign": "workspace/rpg/rpg-campaign.json",
+    "rpg_world_map": "workspace/rpg/world-map.json",
+    "rpg_manifest": "workspace/rpg/rpg-manifest.json",
     "asset_direction": "workspace/asset-direction.json",
     "asset_manifest": "workspace/asset-manifest.json",
     "story_yarn": "workspace/vn/story.yarn",
@@ -32,11 +35,17 @@ STAGE_PATHS = {
     "story_report": "reports/story-verification.json",
     "gameplay_validation_report": "reports/gameplay-validation.json",
     "gameplay_coverage_report": "reports/gameplay-coverage.json",
+    "rpg_validation_report": "reports/rpg-validation.json",
+    "rpg_balance_report": "reports/rpg-balance-report.json",
+    "rpg_coverage_report": "reports/rpg-coverage.json",
+    "rpg_playtest_report": "reports/rpg-playtest-report.json",
     "asset_generation_report": "reports/asset-generation-report.json",
     "asset_validation_report": "reports/asset-validation.json",
     "final_report": "reports/final-report.json",
 }
 
+DEFAULT_TARGET = "web-vn"
+VALID_TARGETS = ("web-vn", "web-rpg", "mixed-vn")
 GAMEPLAY_KINDS = ("battle", "interaction", "puzzle", "exploration")
 GAMEPLAY_KIND_DIRS = {
     "battle": ("battles", ".battle.json"),
@@ -109,10 +118,12 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/realization/interactions",
         "workspace/realization/puzzles",
         "workspace/realization/explorations",
+        "workspace/rpg/maps",
         "workspace/vn/fragments",
         "workspace/runtime",
         "workspace/generated-assets",
         "build/web-vn",
+        "build/web-rpg",
         "build/unity-project",
         "reports",
         "graph",
@@ -144,6 +155,21 @@ def load_optional_json(path: Path) -> Json | None:
     if not path.exists():
         return None
     return read_json(path)
+
+
+def normalize_target(target: str | None) -> str:
+    normalized = target or DEFAULT_TARGET
+    if normalized not in VALID_TARGETS:
+        raise ValueError(f"Unsupported target {normalized!r}; expected one of {', '.join(VALID_TARGETS)}.")
+    return normalized
+
+
+def read_run_target(run_root: Path, fallback: str = DEFAULT_TARGET) -> str:
+    state = load_optional_json(run_root / "graph" / "state.json") or {}
+    target = state.get("target")
+    if isinstance(target, str) and target in VALID_TARGETS:
+        return target
+    return fallback
 
 
 def require_json(run_root: Path, key: str, result: ValidationResult) -> Json | None:

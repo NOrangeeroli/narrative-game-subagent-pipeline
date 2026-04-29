@@ -17,8 +17,13 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | invalid interaction unit, unreachable completion, broken hotspot gate | `InteractionRealizationWriter` |
 | invalid puzzle unit, missing solution, no fail-forward or hints | `PuzzleRealizationWriter` |
 | invalid exploration unit, broken local exit, unreachable planned outcome | `ExplorationRealizationWriter` |
+| invalid RPG campaign or world map | `RPGCampaignPlanner` |
+| invalid RPG map dimensions, collision, event position, or transfer | `RPGMapBuilder` |
+| invalid RPG actors, enemies, quests, dialogue, shops, rest points, or encounter tables | `RPGContentWriter` |
+| failed RPG balance simulation | `RPGBalanceReviewer` |
 | missing asset id, wrong prefix, bad trace | `AssetDirector` |
 | gameplay adapter runtime failure | controller/runtime adapter bug first |
+| Web RPG export failure | controller/tool bug first |
 | Web export failure | controller/tool bug first |
 | Unity export failure | controller/template bug first |
 

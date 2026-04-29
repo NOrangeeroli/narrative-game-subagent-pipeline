@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playable Web RPG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <section class="stage" aria-label="RPG stage">
+      <div class="topbar">
+        <div>
+          <h1 id="title">Playable Web RPG</h1>
+          <p id="location"></p>
+        </div>
+        <div class="actions">
+          <button id="saveBtn" type="button">Save</button>
+          <button id="loadBtn" type="button">Load</button>
+        </div>
+      </div>
+      <div class="playfield">
+        <div id="map" class="map" aria-label="Map grid"></div>
+        <aside class="panel">
+          <div id="party"></div>
+          <div id="questLog"></div>
+          <div id="messageLog"></div>
+        </aside>
+      </div>
+      <div class="bottombar">
+        <span>Move: WASD / Arrow keys</span>
+        <span>Interact: Space / Enter</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="dialogue" class="overlay hidden" role="dialog" aria-modal="true">
+    <div class="dialogue-box">
+      <h2 id="dialogueSpeaker"></h2>
+      <p id="dialogueText"></p>
+      <button id="dialogueNext" type="button">Continue</button>
+    </div>
+  </div>
+
+  <div id="battle" class="overlay hidden" role="dialog" aria-modal="true">
+    <div id="battleBox" class="battle-box">
+      <div>
+        <h2 id="battleTitle"></h2>
+        <p id="battleText"></p>
+      </div>
+      <div id="battleVisual" class="battle-visual"></div>
+      <div class="battle-stats">
+        <div id="heroStats"></div>
+        <div id="enemyStats"></div>
+      </div>
+      <div class="battle-actions">
+        <button data-action="attack" type="button">Attack</button>
+        <button data-action="skill" type="button">Skill</button>
+        <button data-action="item" type="button">Item</button>
+        <button data-action="flee" type="button">Flee</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ending" class="overlay hidden" role="dialog" aria-modal="true">
+    <div class="ending-box">
+      <h2 id="endingTitle"></h2>
+      <p id="endingText"></p>
+      <button id="endingClose" type="button">Continue</button>
+    </div>
+  </div>
+
+  <script src="game-data.js"></script>
+  <script src="runtime.js"></script>
+</body>
+</html>
