@@ -22,7 +22,9 @@ Spawn once per `vn_yarn` or `cutscene_yarn` plan after `node-realization-plans.j
 - One realization plan.
 - Branch graph slice for the source node and neighboring nodes.
 - Game IR semantic slice with relevant entities, state variables, rules, and narrative brief.
-- Allowed commands: `complete_activity`, `set`, `wait`, `show`, `hide`, `play_sfx`, `play_bgm`, `stop_bgm`.
+- Allowed commands: `complete_activity`, `set`, `wait`, `show_bg`, `show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`, `play_sfx`, `play_bgm`, `stop_bgm`.
+- Voice is not authored as a Yarn command. Later asset planning may attach generated voice only to dialogue or monologue line beats.
+- Detailed expression staging may be refined later by `PresentationDirector` after `asset-manifest.json` exists; keep any staging you do author valid and purposeful.
 - Optional repair ticket.
 
 ## Output
@@ -39,6 +41,7 @@ Return a Yarn fragment and manifest payload for exactly one realization plan.
 ## Quality Checklist
 
 - Dialogue fits the source node and neighboring-node continuity.
+- Spoken dialogue and monologue lines are clean line beats that can be matched by later voice assets.
 - Every planned outcome is reachable.
 - Manifest command refs match the Yarn commands.
 - Local asset refs match the realization plan.
@@ -59,7 +62,8 @@ Input:
 - one realization plan
 - branch_graph slice for the source node and neighboring nodes
 - game_ir semantic slice with relevant entities, state variables, rules, and narrative brief
-- allowed commands: complete_activity, set, wait, show, hide, play_sfx, play_bgm, stop_bgm
+- allowed commands: complete_activity, set, wait, show_bg, show_char, set_expression, hide_char, show_cg, hide_cg, play_sfx, play_bgm, stop_bgm
+- do not add voice commands; generated voice is attached later only to dialogue/monologue line beats
 - optional repair ticket
 
 Output:

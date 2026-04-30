@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,23 @@ def make_style_bible(asset_direction: Json) -> Json:
     }
 
 
+def normalize_voice_profiles(asset_direction: Json) -> dict[str, Json]:
+    raw_profiles = asset_direction.get("voice_profiles") if isinstance(asset_direction, dict) else None
+    profiles: dict[str, Json] = {}
+    if isinstance(raw_profiles, dict):
+        for profile_id, profile in raw_profiles.items():
+            if isinstance(profile_id, str) and profile_id.strip() and isinstance(profile, dict):
+                profiles[profile_id] = profile
+    elif isinstance(raw_profiles, list):
+        for profile in raw_profiles:
+            if not isinstance(profile, dict):
+                continue
+            profile_id = profile.get("id") or profile.get("voice_id") or profile.get("profile_id")
+            if isinstance(profile_id, str) and profile_id.strip():
+                profiles[profile_id] = {key: value for key, value in profile.items() if key not in {"id", "profile_id"}}
+    return profiles
+
+
 def kind_for_asset_id(asset_id: str) -> str:
     prefix = asset_id.split(".", 1)[0]
     return {
@@ -79,6 +97,7 @@ def kind_for_asset_id(asset_id: str) -> str:
         "portrait": "portrait",
         "bgm": "bgm",
         "sfx": "sfx",
+        "voice": "voice",
         "enemy": "enemy",
         "prop": "prop",
         "hotspot": "hotspot",
@@ -88,6 +107,30 @@ def kind_for_asset_id(asset_id: str) -> str:
         "map": "map",
         "ui": "ui",
     }.get(prefix, "ui")
+
+
+def audio_kind_for_asset(asset_id: str, kind: Any) -> str:
+    if kind in ("bgm", "sfx", "voice"):
+        return str(kind)
+    prefix = asset_id.split(".", 1)[0]
+    if prefix in ("bgm", "sfx", "voice"):
+        return prefix
+    return "bgm"
+
+
+def audio_file_extension(audio_kind: str) -> str:
+    if audio_kind == "bgm":
+        return normalize_audio_extension(os.environ.get("AUDIO_BGM_FORMAT") or os.environ.get("AUDIO_MUSIC_FORMAT") or "mp3")
+    return normalize_audio_extension(os.environ.get("AUDIO_FORMAT") or "wav")
+
+
+def normalize_audio_extension(value: str) -> str:
+    cleaned = str(value or "").strip().lower().lstrip(".")
+    if cleaned in {"mp3", "wav", "ogg", "m4a", "aac", "flac", "pcm"}:
+        return cleaned
+    if cleaned in {"mpeg", "mpga"}:
+        return "mp3"
+    return "wav"
 
 
 def collect_required_assets(run_root: Path) -> list[Json]:
@@ -150,6 +193,9 @@ def plan_asset_manifest(run_root: Path) -> Json:
             "provider_hints": as_list(asset.get("provider_hints")),
             "source_trace": asset.get("source_trace", {}),
         }
+        for key in ("mood", "text", "line_text", "speaker", "line_index", "lyrics", "voice_id", "emotion", "duration"):
+            if key in asset:
+                spec[key] = asset[key]
         if kind == "background" or asset_id.startswith("bg."):
             backgrounds.append({
                 "asset_id": asset_id,
@@ -182,12 +228,14 @@ def plan_asset_manifest(run_root: Path) -> Json:
                 "file_ref": f"generated/ui/{sanitize_file_stem(asset_id)}.png",
             })
             continue
-        if kind in ("bgm", "sfx") or asset_id.startswith(("bgm.", "sfx.")):
+        if kind in ("bgm", "sfx", "voice") or asset_id.startswith(("bgm.", "sfx.", "voice.")):
+            audio_kind = audio_kind_for_asset(asset_id, kind)
             audio.append({
                 "asset_id": asset_id,
-                "kind": "bgm" if asset_id.startswith("bgm.") else "sfx",
-                "mood": make_style_bible(asset_direction).get("lighting_mood", ""),
-                "file_ref": f"audio/{sanitize_file_stem(asset_id)}.ogg",
+                "kind": audio_kind,
+                "mood": spec.get("mood") or make_style_bible(asset_direction).get("lighting_mood", ""),
+                "spec": spec,
+                "file_ref": f"audio/{sanitize_file_stem(asset_id)}.{audio_file_extension(audio_kind)}",
             })
 
     characters = []
@@ -224,6 +272,7 @@ def plan_asset_manifest(run_root: Path) -> Json:
         "cgs": cgs,
         "ui": ui,
         "audio": audio,
+        "voice_profiles": normalize_voice_profiles(asset_direction),
         "version": "v1",
         "source_asset_direction": "workspace/asset-direction.json",
     }

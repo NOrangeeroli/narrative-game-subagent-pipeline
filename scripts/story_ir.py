@@ -83,7 +83,22 @@ def verify_story_ir(story_ir: Json) -> Json:
             if target not in titles:
                 findings.append({"severity": "error", "kind": "broken_jump", "message": f"{node.get('title')} jumps to missing target {target}."})
         for command in node.get("commands", []):
-            if command.get("command") not in ("complete_activity", "set", "wait", "show", "hide", "play_sfx", "play_bgm", "stop_bgm"):
+            if command.get("command") not in (
+                "complete_activity",
+                "set",
+                "wait",
+                "show",
+                "hide",
+                "show_bg",
+                "show_char",
+                "set_expression",
+                "hide_char",
+                "show_cg",
+                "hide_cg",
+                "play_sfx",
+                "play_bgm",
+                "stop_bgm",
+            ):
                 findings.append({"severity": "warning", "kind": "unknown_command", "message": f"Unknown Yarn command: {command.get('command')}"})
             if command.get("command") == "complete_activity" and "outcome" not in command.get("args", {}):
                 findings.append({"severity": "error", "kind": "missing_outcome", "message": f"complete_activity in {node.get('title')} needs outcome arg."})
@@ -111,4 +126,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

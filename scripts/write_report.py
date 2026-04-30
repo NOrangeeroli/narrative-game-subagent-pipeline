@@ -19,6 +19,7 @@ def write_final_report(run_root: Path) -> Path:
     story_report = load_optional_json(path_for(run_root, "story_report")) or {"status": "missing", "findings": []}
     gameplay_validation = load_optional_json(path_for(run_root, "gameplay_validation_report")) or {"status": "missing", "findings": []}
     gameplay_coverage = load_optional_json(path_for(run_root, "gameplay_coverage_report")) or {"status": "missing"}
+    presentation_validation = load_optional_json(path_for(run_root, "presentation_validation_report")) or {"status": "missing", "issues": []}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
@@ -38,7 +39,14 @@ def write_final_report(run_root: Path) -> Path:
         if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".svg"}
     ) if generated_asset_root.exists() else []
     status = "succeeded"
-    if validation.get("status") == "fail" or story_report.get("status") == "fail" or gameplay_validation.get("status") == "fail" or asset_validation.get("status") == "fail" or not web_path.exists():
+    if (
+        validation.get("status") == "fail"
+        or story_report.get("status") == "fail"
+        or gameplay_validation.get("status") == "fail"
+        or presentation_validation.get("status") == "fail"
+        or asset_validation.get("status") == "fail"
+        or not web_path.exists()
+    ):
         status = "failed"
     payload = {
         "status": status,
@@ -46,6 +54,7 @@ def write_final_report(run_root: Path) -> Path:
         "validation_status": validation.get("status"),
         "story_verification_status": story_report.get("status"),
         "gameplay_validation_status": gameplay_validation.get("status"),
+        "presentation_validation_status": presentation_validation.get("status"),
         "asset_validation_status": asset_validation.get("status"),
         "playable_exports": {
             "web_vn": str(web_path) if web_path.exists() else None,
@@ -53,6 +62,8 @@ def write_final_report(run_root: Path) -> Path:
         },
         "asset_exports": {
             "asset_manifest": STAGE_PATHS["asset_manifest"] if (run_root / STAGE_PATHS["asset_manifest"]).exists() else None,
+            "presentation_plan": STAGE_PATHS["presentation_plan"] if (run_root / STAGE_PATHS["presentation_plan"]).exists() else None,
+            "presentation_validation_report": STAGE_PATHS["presentation_validation_report"] if (run_root / STAGE_PATHS["presentation_validation_report"]).exists() else None,
             "asset_generation_report": STAGE_PATHS["asset_generation_report"] if (run_root / STAGE_PATHS["asset_generation_report"]).exists() else None,
             "asset_validation_report": STAGE_PATHS["asset_validation_report"] if (run_root / STAGE_PATHS["asset_validation_report"]).exists() else None,
             "generated_asset_count": len(generated_assets),

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
 import os
 import time
 import urllib.error
@@ -51,6 +52,7 @@ def generate_provider_images(
     image_type: str,
     aspect_ratio: str,
     expected_count: int = 1,
+    reference_images: list[Path] | None = None,
 ) -> list[GeneratedImage]:
     if provider == "gemini":
         return generate_gemini_images(
@@ -60,6 +62,7 @@ def generate_provider_images(
             prompt=prompt,
             image_type=image_type,
             aspect_ratio=aspect_ratio,
+            reference_images=reference_images,
         )
     if provider == "openai-ppioImage":
         return generate_ppio_images(
@@ -82,13 +85,23 @@ def generate_gemini_images(
     prompt: str,
     image_type: str,
     aspect_ratio: str,
+    reference_images: list[Path] | None = None,
 ) -> list[GeneratedImage]:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Gemini image generation requires GEMINI_API_KEY.")
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(model)}:generateContent"
+    parts: list[dict[str, Any]] = [{"text": prompt}]
+    for reference_image in reference_images or []:
+        mime_type = mimetypes.guess_type(reference_image.name)[0] or "image/png"
+        parts.append({
+            "inlineData": {
+                "mimeType": mime_type,
+                "data": base64.b64encode(reference_image.read_bytes()).decode("ascii"),
+            },
+        })
     payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseModalities": ["IMAGE", "TEXT"],
             "imageConfig": {
@@ -106,7 +119,7 @@ def generate_gemini_images(
         "url": endpoint,
         "method": "POST",
         "headers": redact_headers(headers),
-        "payload": payload,
+        "payload": redact_image_payload(payload),
     })
     status, response_headers, response_body = request_text(endpoint, headers=headers, payload=payload)
     append_asset_log_event(output_root, asset_id, {
@@ -484,6 +497,20 @@ def redact_headers(headers: dict[str, str]) -> dict[str, str]:
     for key, value in headers.items():
         redacted[key] = "<redacted>" if key.lower() in {"authorization", "x-goog-api-key"} else value
     return redacted
+
+
+def redact_image_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        redacted: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "data" and isinstance(value, str) and len(value) > 256:
+                redacted[key] = f"<base64 image data: {len(value)} chars>"
+            else:
+                redacted[key] = redact_image_payload(value)
+        return redacted
+    if isinstance(payload, list):
+        return [redact_image_payload(item) for item in payload]
+    return payload
 
 
 def sanitize_asset_name(value: str) -> str:
