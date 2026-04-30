@@ -28,4 +28,5 @@ These agents run after the design layer. They should not reopen requirements or 
 | PuzzleRealizationWriter | `post-design/PuzzleRealizationWriter.md` | `workspace/realization/puzzles/<node-id>.puzzle.json` |
 | ExplorationRealizationWriter | `post-design/ExplorationRealizationWriter.md` | `workspace/realization/explorations/<node-id>.exploration.json` |
 | AssetDirector | `post-design/AssetDirector.md` | `workspace/asset-direction.json` |
+| PresentationDirector | `post-design/PresentationDirector.md` | `workspace/presentation/presentation-plan.json` |
 | ReviewSubagent | `post-design/ReviewSubagent.md` | Review findings only |

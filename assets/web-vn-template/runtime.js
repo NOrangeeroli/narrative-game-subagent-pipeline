@@ -3,9 +3,31 @@
   const state = Object.assign({}, story.initial_state || {});
   const nodes = new Map((story.nodes || []).map((node) => [node.id, node]));
   const assets = new Map((story.assets || []).map((asset) => [asset.asset_id, asset]));
+  const characters = new Map((story.characters || []).map((character) => [character.id, character]));
+  const displayNameToCharacterId = new Map((story.characters || []).map((character) => [normalizeKey(character.display_name), character.id]));
+  const portraitAssetToCharacterId = new Map();
+  (story.assets || []).forEach((asset) => {
+    if (asset.kind === "portrait" && asset.character_id) {
+      portraitAssetToCharacterId.set(asset.asset_id, asset.character_id);
+    }
+  });
+
   let currentNodeId = story.start_node_id;
   let beatIndex = 0;
   let activitySession = null;
+  let currentBgmId = null;
+  let currentBgm = null;
+  let currentVoice = null;
+  let lastVoiceKey = null;
+  let activeSfx = [];
+  const pendingAudio = [];
+  const activePortraits = new Map();
+  const characterAliases = new Map();
+  const BGM_VOLUME = 0.28;
+  const BGM_DUCKED_VOLUME = 0.12;
+  const SFX_VOLUME = 0.36;
+  const VOICE_VOLUME = 1.0;
+  const SFX_MAX_SECONDS = 2.2;
 
   const titleEl = document.getElementById("title");
   const nodeTitleEl = document.getElementById("node-title");
@@ -25,6 +47,52 @@
     return hash;
   }
 
+  function normalizeKey(value) {
+    return String(value || "").trim().replace(/[^a-zA-Z0-9.]+/g, "_").toLowerCase();
+  }
+
+  function inferCharacterIdFromPortrait(assetId) {
+    if (portraitAssetToCharacterId.has(assetId)) {
+      return portraitAssetToCharacterId.get(assetId);
+    }
+    const parts = String(assetId || "").split(".");
+    return parts[0] === "portrait" && parts[1] ? `char.${parts[1]}` : "char.unknown";
+  }
+
+  function resolveCharacterId(characterHint, assetId) {
+    if (characterHint) {
+      const raw = String(characterHint).trim();
+      if (characterAliases.has(raw)) return characterAliases.get(raw);
+      if (characters.has(raw)) return raw;
+      if (displayNameToCharacterId.has(normalizeKey(raw))) return displayNameToCharacterId.get(normalizeKey(raw));
+      if (assetId && portraitAssetToCharacterId.has(assetId)) return portraitAssetToCharacterId.get(assetId);
+      const charId = raw.startsWith("char.") ? raw : `char.${raw.replace(/^portrait\./, "").split(".")[0]}`;
+      if (characters.has(charId)) return charId;
+      if (charId !== "char.") return charId;
+    }
+    return inferCharacterIdFromPortrait(assetId);
+  }
+
+  function resolvePortraitAssetId(characterId, assetHint) {
+    const character = characters.get(characterId);
+    if (assetHint) {
+      const raw = String(assetHint);
+      if (assets.has(raw)) return raw;
+      const emotion = raw.split(".").pop();
+      const match = (character && character.portrait_assets || []).find((portrait) => {
+        return portrait.emotion === raw || portrait.emotion === emotion || portrait.asset_id === raw || portrait.asset_id.endsWith(`.${raw}`);
+      });
+      if (match) return match.asset_id;
+      if (!raw.startsWith("portrait.") && characterId && characterId.startsWith("char.")) {
+        const slug = characterId.slice(5);
+        const candidate = `portrait.${slug}.${raw}`;
+        if (assets.has(candidate)) return candidate;
+      }
+      return raw;
+    }
+    return character && character.base_portrait_asset_id;
+  }
+
   function setBackground(assetId) {
     const asset = assets.get(assetId);
     if (asset && asset.runtime_path) {
@@ -38,11 +106,14 @@
     stage.style.setProperty("--scene-gradient", `linear-gradient(135deg, hsl(${a} 34% 32%), hsl(${b} 28% 18%) 58%, hsl(${(a + b) % 360} 38% 28%))`);
   }
 
-  function renderPortraits(node) {
+  function renderActivePortraits() {
     portraitsEl.innerHTML = "";
-    const portraitIds = (node.portrait_ids || []).filter((id) => {
+    const seenPortraitIds = new Set();
+    const portraitIds = Array.from(activePortraits.values()).filter((id) => {
       const asset = assets.get(id);
-      return asset && asset.runtime_path;
+      if (!asset || !asset.runtime_path || seenPortraitIds.has(id)) return false;
+      seenPortraitIds.add(id);
+      return true;
     });
     portraitIds.forEach((id, index) => {
       const asset = assets.get(id);
@@ -52,6 +123,188 @@
       image.className = `portrait portrait-${index}`;
       portraitsEl.appendChild(image);
     });
+  }
+
+  function resetNodeScene(node) {
+    setBackground(node.background_id || node.id);
+    activePortraits.clear();
+    const beats = node.beats || [];
+    const hasPresentationCommands = beats.some((beat) => {
+      return beat && beat.type === "command" && ["show_char", "set_expression", "hide_char"].includes(beat.command);
+    });
+    if (!hasPresentationCommands) {
+      (node.portrait_ids || []).forEach((assetId) => {
+        const characterId = inferCharacterIdFromPortrait(assetId);
+        activePortraits.set(characterId, assetId);
+      });
+    }
+    renderActivePortraits();
+  }
+
+  function commandArg(command, key, fallbackKey) {
+    const args = command.args || {};
+    return args[key] || (fallbackKey ? args[fallbackKey] : undefined) || args["0"];
+  }
+
+  function audioPath(assetId) {
+    const asset = assets.get(assetId);
+    return asset && asset.runtime_path;
+  }
+
+  function attemptPlay(audio) {
+    const playback = audio.play();
+    if (playback && typeof playback.catch === "function") {
+      playback.catch(() => {
+        if (!audio.__pipelineStopped && !pendingAudio.includes(audio)) {
+          pendingAudio.push(audio);
+        }
+      });
+    }
+  }
+
+  function resumePendingAudio() {
+    const waiting = pendingAudio.splice(0, pendingAudio.length);
+    waiting.forEach((audio) => {
+      if (!audio.__pipelineStopped) {
+        attemptPlay(audio);
+      }
+    });
+  }
+
+  function playAudioAsset(assetId, options) {
+    const path = audioPath(assetId);
+    if (!path) return null;
+    const audio = new Audio(path);
+    audio.loop = Boolean(options && options.loop);
+    audio.volume = Number((options && options.volume) ?? 1);
+    audio.__pipelineStopped = false;
+    attemptPlay(audio);
+    return audio;
+  }
+
+  function stopAudio(audio) {
+    if (!audio) return;
+    audio.__pipelineStopped = true;
+    audio.pause();
+    try {
+      audio.currentTime = 0;
+    } catch (_error) {
+      // Some browsers disallow resetting a not-yet-loaded audio element.
+    }
+  }
+
+  function setBgmDucked(ducked) {
+    if (currentBgm) {
+      currentBgm.volume = ducked ? BGM_DUCKED_VOLUME : BGM_VOLUME;
+    }
+  }
+
+  function pruneSfx() {
+    activeSfx = activeSfx.filter((audio) => audio && !audio.ended && !audio.__pipelineStopped);
+  }
+
+  function stopAllSfx() {
+    activeSfx.forEach(stopAudio);
+    activeSfx = [];
+  }
+
+  function playBgm(assetId) {
+    if (!assetId) return;
+    if (currentBgmId === assetId && currentBgm) return;
+    stopAudio(currentBgm);
+    currentBgmId = assetId;
+    currentBgm = playAudioAsset(assetId, { loop: true, volume: currentVoice ? BGM_DUCKED_VOLUME : BGM_VOLUME });
+  }
+
+  function stopBgm() {
+    stopAudio(currentBgm);
+    currentBgm = null;
+    currentBgmId = null;
+  }
+
+  function playSfx(assetId) {
+    if (!assetId) return;
+    pruneSfx();
+    activeSfx
+      .filter((audio) => audio.__assetId === assetId)
+      .forEach(stopAudio);
+    activeSfx = activeSfx.filter((audio) => audio.__assetId !== assetId && !audio.__pipelineStopped);
+    const audio = playAudioAsset(assetId, { loop: false, volume: SFX_VOLUME });
+    if (!audio) return;
+    audio.__assetId = assetId;
+    audio.addEventListener("playing", () => {
+      window.setTimeout(() => stopAudio(audio), SFX_MAX_SECONDS * 1000);
+    }, { once: true });
+    audio.addEventListener("ended", pruneSfx, { once: true });
+    activeSfx.push(audio);
+  }
+
+  function stopVoice() {
+    stopAudio(currentVoice);
+    currentVoice = null;
+    setBgmDucked(false);
+  }
+
+  function playVoiceForBeat(beat) {
+    const assetId = beat && beat.voice_asset_id;
+    if (!assetId) {
+      stopVoice();
+      lastVoiceKey = null;
+      return;
+    }
+    const key = `${currentNodeId}:${beatIndex}:${assetId}`;
+    if (key === lastVoiceKey) return;
+    stopVoice();
+    lastVoiceKey = key;
+    currentVoice = playAudioAsset(assetId, { loop: false, volume: VOICE_VOLUME });
+    if (currentVoice) {
+      currentVoice.addEventListener("playing", () => setBgmDucked(true), { once: true });
+      currentVoice.addEventListener("ended", () => setBgmDucked(false), { once: true });
+    }
+  }
+
+  function executeCommand(command) {
+    if (!command || command.type !== "command") return;
+    const args = command.args || {};
+    if (command.command === "show_bg") {
+      const assetId = commandArg(command, "asset_id", "bg");
+      if (assetId) setBackground(assetId);
+    } else if (command.command === "show_char") {
+      const assetId = args.asset_id || args.expression_asset_id || args.portrait;
+      const characterHint = args.character_id || args.character || args.name;
+      const characterId = resolveCharacterId(characterHint, assetId);
+      const resolvedAssetId = resolvePortraitAssetId(characterId, assetId);
+      if (resolvedAssetId) {
+        if (characterHint) characterAliases.set(String(characterHint).trim(), characterId);
+        activePortraits.set(characterId, resolvedAssetId);
+        renderActivePortraits();
+      }
+    } else if (command.command === "set_expression") {
+      const currentAssetId = activePortraits.get(args.character_id);
+      const characterId = resolveCharacterId(args.character_id || args.character || args.name, currentAssetId || args.expression_asset_id);
+      const resolvedAssetId = resolvePortraitAssetId(characterId, args.expression_asset_id || args.asset_id || args.expression || args.expr || args.emotion);
+      if (resolvedAssetId) {
+        activePortraits.set(characterId, resolvedAssetId);
+        renderActivePortraits();
+      }
+    } else if (command.command === "hide_char") {
+      const characterId = resolveCharacterId(args.character_id || args.character || args.name);
+      activePortraits.delete(characterId);
+      renderActivePortraits();
+    } else if (command.command === "play_bgm") {
+      playBgm(commandArg(command, "asset_id", "track"));
+    } else if (command.command === "stop_bgm") {
+      stopBgm();
+    } else if (command.command === "play_sfx") {
+      playSfx(commandArg(command, "asset_id", "track"));
+    }
+  }
+
+  function advancePastCommands(beats) {
+    while (beatIndex < beats.length && beats[beatIndex] && beats[beatIndex].type === "command") {
+      executeCommand(beats[beatIndex]);
+      beatIndex += 1;
+    }
   }
 
   function applyWrites(writes) {
@@ -95,6 +348,11 @@
     currentNodeId = nodeId;
     beatIndex = 0;
     activitySession = null;
+    lastVoiceKey = null;
+    stopVoice();
+    stopAllSfx();
+    const node = nodes.get(currentNodeId);
+    if (node) resetNodeScene(node);
     render();
   }
 
@@ -469,17 +727,21 @@
     }
     titleEl.textContent = story.title || "Narrative Game";
     nodeTitleEl.textContent = node.title || node.id;
-    setBackground(node.background_id || node.id);
-    renderPortraits(node);
     choicesEl.innerHTML = "";
     if (node.gameplay) {
       renderGameplay(node);
       return;
     }
     const beats = node.beats && node.beats.length ? node.beats : [{ speaker: "Narrator", text: "..." }];
+    advancePastCommands(beats);
+    if (beatIndex >= beats.length) {
+      renderChoices(node);
+      return;
+    }
     const beat = beats[Math.min(beatIndex, beats.length - 1)];
     speakerEl.textContent = beat.speaker || "Narrator";
     lineEl.textContent = beat.text || "";
+    playVoiceForBeat(beat);
     if (beatIndex < beats.length - 1) {
       continueButton.hidden = false;
     } else {
@@ -496,10 +758,17 @@
     currentNodeId = story.start_node_id;
     beatIndex = 0;
     activitySession = null;
+    stopBgm();
+    stopVoice();
+    pendingAudio.length = 0;
+    activePortraits.clear();
     Object.keys(state).forEach((key) => delete state[key]);
     Object.assign(state, story.initial_state || {});
-    render();
+    enterNode(currentNodeId);
   });
 
-  render();
+  document.addEventListener("pointerdown", resumePendingAudio, true);
+  document.addEventListener("keydown", resumePendingAudio, true);
+
+  enterNode(currentNodeId);
 })();

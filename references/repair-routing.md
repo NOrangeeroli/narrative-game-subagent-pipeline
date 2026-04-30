@@ -18,6 +18,7 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | invalid puzzle unit, missing solution, no fail-forward or hints | `PuzzleRealizationWriter` |
 | invalid exploration unit, broken local exit, unreachable planned outcome | `ExplorationRealizationWriter` |
 | missing asset id, wrong prefix, bad trace | `AssetDirector` |
+| weak portrait staging, invalid presentation insertion, missing expression use for available portraits | `PresentationDirector` |
 | gameplay adapter runtime failure | controller/runtime adapter bug first |
 | Web export failure | controller/tool bug first |
 | Unity export failure | controller/template bug first |

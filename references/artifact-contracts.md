@@ -168,10 +168,15 @@ Yarn fragment requirements:
 title: StableNodeTitle
 ---
 // source_node: node.id
+<<show_bg asset_id="bg.intro">>
+<<show_char character_id="char.hero" asset_id="portrait.hero.neutral">>
 Speaker: Line text.
+<<set_expression character_id="char.hero" expression_asset_id="portrait.hero.concerned">>
 <<complete_activity outcome="continue">>
 ===
 ```
+
+Allowed VN presentation commands are `show_bg`, `show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`, `play_bgm`, `stop_bgm`, and `play_sfx`.
 
 Manifest shape:
 
@@ -181,8 +186,13 @@ Manifest shape:
   "source_node_id": "node.intro",
   "realization_unit_id": "realization.node_intro",
   "yarn_node_title": "Node_Intro",
-  "local_asset_refs": ["bg.intro"],
-  "command_refs": [{"command": "complete_activity", "args": {"outcome": "continue"}}],
+  "local_asset_refs": ["bg.intro", "portrait.hero.neutral", "portrait.hero.concerned"],
+  "command_refs": [
+    {"command": "show_bg", "args": {"asset_id": "bg.intro"}},
+    {"command": "show_char", "args": {"character_id": "char.hero", "asset_id": "portrait.hero.neutral"}},
+    {"command": "set_expression", "args": {"character_id": "char.hero", "expression_asset_id": "portrait.hero.concerned"}},
+    {"command": "complete_activity", "args": {"outcome": "continue"}}
+  ],
   "exit_bindings": [{"outcome_id": "continue", "edge_id": "edge.intro_to_choice"}],
   "state_reads": [],
   "state_writes": [],
@@ -192,6 +202,46 @@ Manifest shape:
 ```
 
 Use `complete_activity` for controller-owned outcomes. Do not invent topology or persistent state.
+
+## `presentation-plan.json`
+
+Controller-applied VN staging plan produced after `asset-manifest.json` exists. Presentation plans insert commands into accepted Yarn fragments without rewriting story text.
+
+Required shape:
+
+```json
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "PresentationDirector", "notes": []},
+  "edits": [
+    {
+      "source_node_id": "node.intro",
+      "insertions": [
+        {
+          "id": "node.intro.hero.concerned.01",
+          "line_index": 3,
+          "placement": "before",
+          "command": "set_expression",
+          "args": {
+            "character_id": "char.hero",
+            "expression_asset_id": "portrait.hero.concerned"
+          },
+          "reason": "Hero becomes visibly worried before this line."
+        }
+      ]
+    }
+  ]
+}
+```
+
+Allowed commands: `show_char`, `set_expression`, and `hide_char`.
+
+Rules:
+
+- `line_index` is a 1-based line beat index in the target Yarn fragment, counting spoken, monologue, and narration text lines but not commands, comments, headers, choices, or `complete_activity`.
+- `placement` is `before` or `after`.
+- Every referenced `character_id`, `asset_id`, and `expression_asset_id` must exist in `asset-manifest.json`.
+- The controller applies this plan through `scripts/apply_presentation_plan.py`, marks inserted commands with `// presentation_plan: ...`, updates fragment manifests, and writes `reports/presentation-validation.json`.
+- PresentationDirector must not change dialogue text, narration text, outcomes, topology, persistent state commands, BGM, SFX, or voice assets.
 
 ## Gameplay Realization Units
 
@@ -337,6 +387,13 @@ Required shape:
 {
   "metadata": {"schema_version": "0.1.0", "generated_by": "AssetDirector", "notes": []},
   "style_pack": {"summary": "...", "palette": [], "lighting": "", "rendering": ""},
+  "voice_profiles": {
+    "voice_profile.hero": {
+      "gender": "female",
+      "age": "young adult",
+      "prompt": "Create a natural voice for the hero..."
+    }
+  },
   "asset_directions": [
     {
       "asset_id": "bg.intro",
@@ -349,9 +406,16 @@ Required shape:
 }
 ```
 
-Allowed `kind`: `background`, `cg`, `portrait`, `bgm`, `sfx`, `ui`, `enemy`, `prop`, `hotspot`, `symbol`, `effect`, `icon`, `map`.
+Allowed `kind`: `background`, `cg`, `portrait`, `bgm`, `sfx`, `voice`, `ui`, `enemy`, `prop`, `hotspot`, `symbol`, `effect`, `icon`, `map`.
 
 Do not include generated image bytes, provider URLs, API calls, or Unity import paths.
+
+Asset kind rules:
+
+- `voice.*` is restricted to dialogue and monologue line beats. A voice direction must include the exact spoken line in `text` or `line_text`; include `speaker`, `line_index`, and `source_trace.node_ids` when available. Do not use `voice.*` for ambience, UI sounds, scene setting text that is not spoken/inner monologue, SFX, or BGM.
+- `voice_profiles` is optional but recommended for provider-backed TTS. It maps project-local ids such as `voice_profile.hero` to provider-neutral voice design constraints (`gender`, `age`, `persona`, `timbre`, `style`, `prompt`). Voice assets may reference these ids with `voice_id`; provider adapters must not hard-code project-specific profile names.
+- `bgm.*` describes instrumental background music only. It should specify scene mood and loop-friendly direction, not lyrics or spoken content unless the project explicitly wants a song cue. The controller plans BGM files as mp3 by default and MiniMax-backed generation uses the music endpoint.
+- `portrait.<character>.<emotion>` describes one visible expression/state for a character. Use stable character ids and explicit emotion suffixes such as `neutral`, `alert`, `sad`, `soft`, or `resolved`; the controller groups them into `expression_asset_ids` and generates one transparent sprite per expression.
 
 ## `asset-manifest.json`
 
@@ -395,7 +459,30 @@ Required shape:
   ],
   "cgs": [],
   "ui": [],
-  "audio": [],
+  "audio": [
+    {
+      "asset_id": "bgm.intro",
+      "kind": "bgm",
+      "mood": "quiet anticipation",
+      "spec": {},
+      "file_ref": "audio/bgm.intro.mp3"
+    },
+    {
+      "asset_id": "voice.node_intro.1",
+      "kind": "voice",
+      "mood": "quiet resolve",
+      "spec": {
+        "text": "I will keep walking until the signal answers.",
+        "speaker": "Hero",
+        "line_index": 1,
+        "source_trace": {"node_ids": ["node.intro"]}
+      },
+      "file_ref": "audio/voice.node_intro.1.wav"
+    }
+  ],
+  "voice_profiles": {
+    "voice_profile.hero": {"gender": "female", "prompt": "Create a natural voice for the hero..."}
+  },
   "version": "v1"
 }
 ```
@@ -409,4 +496,20 @@ Supported generation providers:
 - `gemini`: model-backed image generation using `GEMINI_API_KEY`.
 - `openai-ppioImage`: PPIO image generation using `IMAGE_API_KEY`, `IMAGE_MODEL`, optional `IMAGE_BASE_URL`, `IMAGE_RESPONSE_TYPE`, `IMAGE_EXTRA_PARAMS`, and `IMAGE_REWRITE_RULES`.
 
-Portrait post-processing attempts `rembg` background removal when available; `reports/asset-validation.json` must catch missing portrait transparency.
+Supported audio providers:
+
+- `mock`: deterministic local WAV placeholders for pipeline tests.
+- `minimax-ppio`: PPIO MiniMax music and speech generation using `AUDIO_API_KEY` or `PPIO_API_KEY`, optional `AUDIO_BASE_URL`, `AUDIO_MODEL`, `AUDIO_BGM_FORMAT`/`AUDIO_MUSIC_FORMAT`, `AUDIO_FORMAT`, and audio-specific extra parameter environment variables. BGM defaults to mp3; SFX and voice default to wav.
+
+Portrait generation details:
+
+- The deterministic planner turns every `portrait.<character>.<emotion>` direction into `characters[].portrait_assets[]`.
+- `generate_assets.py` orders each character's portraits so neutral/base is generated first when present.
+- Gemini generation passes the base portrait as a reference image for later expressions, asks for a waist-up or three-quarter VN sprite with readable face/body language, and then runs transparent cutout post-processing.
+- Portrait post-processing attempts `rembg` background removal when available; `reports/asset-validation.json` must catch missing portrait transparency.
+
+Audio generation details:
+
+- BGM prompts are instrumental, dialogue-safe, and loop-friendly. `minimax-ppio` uses MiniMax music generation and downloads the returned audio URL.
+- SFX assets are one-shot cues, not loops or ambience beds. The audio generator trims WAV SFX to a short maximum duration and asset validation fails SFX that remain too long.
+- Voice prompts are the exact dialogue or monologue text. `minimax-ppio` uses MiniMax TTS and downloads the returned audio URL. Voice assets are bound to line beats by `export_web_vn.py`; they are not Yarn commands.

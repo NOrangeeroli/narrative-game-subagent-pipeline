@@ -6,9 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import wave
 from pathlib import Path
 
 from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
+
+
+MAX_SFX_DURATION_SECONDS = 2.35
 
 
 def identify(path: Path) -> dict[str, str] | None:
@@ -37,6 +41,14 @@ def has_transparency(path: Path) -> bool:
         return False
 
 
+def wav_duration_seconds(path: Path) -> float | None:
+    try:
+        with wave.open(str(path), "rb") as audio:
+            return audio.getnframes() / float(audio.getframerate())
+    except (wave.Error, EOFError, OSError, ZeroDivisionError):
+        return None
+
+
 def validate_assets(run_root: Path) -> Json:
     manifest = load_optional_json(path_for(run_root, "asset_manifest"))
     if not manifest:
@@ -61,6 +73,40 @@ def validate_assets(run_root: Path) -> Json:
         if role == "background" and (int(info["width"]) < 640 or int(info["height"]) < 360):
             warnings.append(f"Background {asset_id} is small: {info['width']}x{info['height']}.")
 
+    def check_audio_file(asset_id: str, file_ref: str, audio: Json | None = None) -> None:
+        kind = str((audio or {}).get("kind") or "").lower()
+        spec = (audio or {}).get("spec") if isinstance((audio or {}).get("spec"), dict) else {}
+        if kind == "voice" or asset_id.startswith("voice."):
+            text = str(spec.get("text") or spec.get("line_text") or (audio or {}).get("text") or "").strip()
+            if not text:
+                issues.append({
+                    "asset_id": asset_id,
+                    "file_ref": file_ref,
+                    "code": "voice_missing_line_text",
+                    "message": "Voice assets must be tied to dialogue or monologue and include exact text in spec.text or spec.line_text.",
+                })
+        path = output_root / file_ref
+        if not path.exists():
+            issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "missing_file", "message": "Manifest audio file_ref was not generated."})
+            return
+        if not path.is_file():
+            issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "not_file", "message": "Manifest audio file_ref is not a file."})
+            return
+        if path.stat().st_size <= 0:
+            issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "empty_file", "message": "Generated audio file is empty."})
+            return
+        if kind == "sfx" or asset_id.startswith("sfx."):
+            duration = wav_duration_seconds(path)
+            if duration is None:
+                warnings.append(f"SFX {asset_id} duration could not be inspected.")
+            elif duration > MAX_SFX_DURATION_SECONDS:
+                issues.append({
+                    "asset_id": asset_id,
+                    "file_ref": file_ref,
+                    "code": "sfx_too_long",
+                    "message": f"SFX should be a short one-shot cue; duration is {duration:.2f}s, max is {MAX_SFX_DURATION_SECONDS:.2f}s.",
+                })
+
     for background in as_list(manifest.get("backgrounds")):
         if isinstance(background, dict):
             check_file(str(background.get("asset_id")), str(background.get("file_ref")), "background")
@@ -79,6 +125,9 @@ def validate_assets(run_root: Path) -> Json:
         canon_ref = character.get("canon_ref_file_ref")
         if isinstance(canon_ref, str):
             check_file(str(character.get("canon_ref_asset_id")), canon_ref, "canon", require_transparency=True)
+    for audio in as_list(manifest.get("audio")):
+        if isinstance(audio, dict):
+            check_audio_file(str(audio.get("asset_id")), str(audio.get("file_ref")), audio)
 
     report = {
         "status": "pass" if not issues else "fail",

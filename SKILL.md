@@ -55,6 +55,7 @@ workspace/realization/interactions/*.interaction.json
 workspace/realization/puzzles/*.puzzle.json
 workspace/realization/explorations/*.exploration.json
 workspace/realization/stubs/*.not-implemented.json
+workspace/presentation/presentation-plan.json
 workspace/vn/fragments/*.yarn
 workspace/vn/fragments/*.manifest.json
 workspace/vn/story.yarn
@@ -85,10 +86,14 @@ Large generated payloads stay on disk. Keep summaries in chat concise and point 
 7. Spawn gameplay realization writers for supported non-VN plans:
    `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
 8. Save accepted Yarn fragments under `workspace/vn/fragments/` and accepted gameplay units under their `workspace/realization/<kind>/` directories.
-9. Spawn `AssetDirector` after story and gameplay verification when visual direction is needed. It returns art direction only.
-10. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Use `--skip-assets` only for intentionally text-only exports.
-11. Run `scripts/run_pipeline.py build --run-root <run>`.
-12. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
+9. Spawn `AssetDirector` after story and gameplay verification when visual direction is needed. It returns direction only. Voice assets are allowed only for dialogue or monologue line beats; each `voice.*` item must carry the exact spoken text in `text` or `line_text`, plus speaker/line trace when available. Do not use `voice.*` for ambience, UI prompts, scene descriptions that are not spoken/inner monologue, SFX, or BGM.
+10. Optionally spawn `PresentationDirector` after `workspace/asset-manifest.json` exists when VN staging needs richer portrait expression and entrance/exit direction. It returns `workspace/presentation/presentation-plan.json` only. The controller applies it with `scripts/apply_presentation_plan.py`, inserting safe `show_char`, `set_expression`, and `hide_char` commands into accepted Yarn fragments without changing text, state, outcomes, voice, SFX, or BGM.
+11. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, plans `workspace/asset-manifest.json`, applies `workspace/presentation/presentation-plan.json` when present, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Default image asset provider is `local-svg`; use `--asset-provider gemini` with `GEMINI_API_KEY` or `--asset-provider openai-ppioImage` with `IMAGE_API_KEY` for model-backed image generation. Default audio provider is `mock`; use `--audio-provider minimax-ppio` with `AUDIO_API_KEY` or `PPIO_API_KEY` for PPIO MiniMax audio generation. Use `--skip-assets` only for intentionally text-only exports.
+    - BGM assets use `bgm.*`, are generated as instrumental loop-friendly music cues, and default to mp3 in `asset-manifest.json`; `minimax-ppio` maps them to MiniMax music generation.
+    - Multi-expression portraits use `portrait.<character>.<emotion>` asset ids. The planner groups them per character, stores `expression_asset_ids`, and writes one transparent PNG per expression plus a canonical `charref.*.core` reference. With Gemini, the generator creates a base/neutral portrait first and passes it as a reference image for later expressions so identity and costume stay stable.
+    - Voice assets use `voice.*`, are generated through MiniMax TTS when `minimax-ppio` is selected, and are attached only to dialogue/monologue line beats during export.
+12. Run `scripts/run_pipeline.py build --run-root <run>`.
+13. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/presentation-validation.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
 ## Boundaries
 
@@ -115,8 +120,11 @@ Subagents do not write runtime code for these adapters.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
 - `scripts/story_ir.py`: lower Yarn to a simple StoryIR and verify titles, jumps, and outcomes.
 - `scripts/plan_assets.py`: convert `asset-direction.json` into a deterministic runtime `asset-manifest.json`.
-- `scripts/generate_assets.py`: generate or reuse visual assets from `asset-manifest.json` through `local-svg`, `mock`, `gemini`, or `openai-ppioImage` providers.
+- `scripts/apply_presentation_plan.py`: apply `PresentationDirector` command insertions to accepted Yarn fragments and refresh fragment manifests.
+- `scripts/generate_assets.py`: generate or reuse visual and audio assets from `asset-manifest.json`; images use `local-svg`, `mock`, `gemini`, or `openai-ppioImage`, while audio uses `mock` or `minimax-ppio`.
 - `scripts/asset_image_providers.py`: provider adapters, request/response logging, PPIO response parsing, and Gemini image requests.
+- `scripts/asset_audio_providers.py`: provider adapters, request/response logging, MiniMax music/TTS parsing, and deterministic local/procedural WAV generation.
+- `scripts/generate_audio_asset.py`: generate one BGM, SFX, or voice asset without running the full pipeline.
 - `scripts/validate_assets.py`: verify generated asset files and portrait transparency.
 - `scripts/export_web_vn.py`: export a self-contained browser-playable VN.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.

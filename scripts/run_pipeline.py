@@ -10,6 +10,7 @@ from pathlib import Path
 from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
+from apply_presentation_plan import apply_presentation_plan
 from pipeline_lib import (
     build_gameplay_manifest,
     build_realization_manifest,
@@ -26,6 +27,25 @@ from plan_assets import plan_asset_manifest
 from story_ir import parse_yarn, verify_story_ir
 from validate_assets import validate_assets
 from write_report import write_final_report
+
+
+def refresh_story_outputs(run_root: Path) -> dict:
+    from pipeline_lib import assemble_yarn_text, load_yarn_fragments
+
+    fragments = load_yarn_fragments(run_root)
+    if not fragments:
+        raise SystemExit("Missing VN fragments under workspace/vn/fragments/.")
+    story_yarn = assemble_yarn_text(fragments)
+    write_text(path_for(run_root, "story_yarn"), story_yarn)
+    story_ir = parse_yarn(story_yarn)
+    story_report = verify_story_ir(story_ir)
+    story_ir["verification"] = story_report
+    write_json(path_for(run_root, "story_ir"), story_ir)
+    write_json(path_for(run_root, "story_report"), story_report)
+    if story_report["status"] == "fail":
+        print(json.dumps(story_report, indent=2))
+        raise SystemExit(1)
+    return story_report
 
 
 def init_run(args: argparse.Namespace) -> None:
@@ -57,7 +77,9 @@ def init_run(args: argparse.Namespace) -> None:
         "asset_pipeline_artifacts": [
             "workspace/asset-direction.json",
             "workspace/asset-manifest.json",
+            "workspace/presentation/presentation-plan.json",
             "workspace/generated-assets/",
+            "reports/presentation-validation.json",
             "reports/asset-generation-report.json",
             "reports/asset-validation.json",
         ],
@@ -100,35 +122,40 @@ def build_run(args: argparse.Namespace) -> None:
         "stubs": [stub["source_node_id"] for stub in stubs],
     })
 
-    from pipeline_lib import assemble_yarn_text, load_yarn_fragments
-
-    fragments = load_yarn_fragments(run_root)
-    if not fragments:
-        raise SystemExit("Missing VN fragments under workspace/vn/fragments/.")
-    story_yarn = assemble_yarn_text(fragments)
-    write_text(path_for(run_root, "story_yarn"), story_yarn)
-    story_ir = parse_yarn(story_yarn)
-    story_report = verify_story_ir(story_ir)
-    story_ir["verification"] = story_report
-    write_json(path_for(run_root, "story_ir"), story_ir)
-    write_json(path_for(run_root, "story_report"), story_report)
-    if story_report["status"] == "fail":
-        print(json.dumps(story_report, indent=2))
-        raise SystemExit(1)
+    refresh_story_outputs(run_root)
 
     if not args.skip_assets and path_for(run_root, "asset_direction").exists():
         plan_asset_manifest(run_root)
+        if path_for(run_root, "presentation_plan").exists():
+            presentation_report = apply_presentation_plan(run_root)
+            if presentation_report["status"] == "fail":
+                print(json.dumps(presentation_report, indent=2))
+                raise SystemExit(1)
+            refresh_story_outputs(run_root)
         generate_assets(
             run_root,
             provider=args.asset_provider,
             model=args.asset_model,
             overwrite=args.asset_overwrite,
             remove_backgrounds=args.asset_remove_backgrounds,
+            audio_provider=args.audio_provider,
+            audio_model=args.audio_model,
+            audio_fallback_provider=args.audio_fallback_provider,
+            bgm_provider=args.bgm_provider,
+            sfx_provider=args.sfx_provider,
+            voice_provider=args.voice_provider,
+            audio_concurrency=args.audio_concurrency,
         )
         asset_report = validate_assets(run_root)
         if asset_report["status"] == "fail":
             print(json.dumps(asset_report, indent=2))
             raise SystemExit(1)
+    elif path_for(run_root, "presentation_plan").exists() and path_for(run_root, "asset_manifest").exists():
+        presentation_report = apply_presentation_plan(run_root)
+        if presentation_report["status"] == "fail":
+            print(json.dumps(presentation_report, indent=2))
+            raise SystemExit(1)
+        refresh_story_outputs(run_root)
 
     web_path = None
     if not args.skip_web:
@@ -160,6 +187,13 @@ def main() -> None:
     build_parser.add_argument("--skip-assets", action="store_true")
     build_parser.add_argument("--asset-provider", default=None)
     build_parser.add_argument("--asset-model", default=None)
+    build_parser.add_argument("--audio-provider", default=None)
+    build_parser.add_argument("--audio-model", default=None)
+    build_parser.add_argument("--audio-fallback-provider", default=None)
+    build_parser.add_argument("--bgm-provider", default=None)
+    build_parser.add_argument("--sfx-provider", default=None)
+    build_parser.add_argument("--voice-provider", default=None)
+    build_parser.add_argument("--audio-concurrency", type=int, default=None)
     build_parser.add_argument("--asset-overwrite", action="store_true")
     build_parser.add_argument("--no-asset-remove-backgrounds", action="store_false", dest="asset_remove_backgrounds")
     build_parser.set_defaults(asset_remove_backgrounds=True)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import datetime as dt
 import hashlib
 import json
@@ -18,8 +19,10 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape
 
+from asset_audio_providers import generate_audio_file, resolve_audio_provider_model
 from asset_image_providers import GeneratedImage, generate_provider_images, resolve_provider_model
 from pipeline_lib import Json, as_list, ensure_dir, load_optional_json, path_for, read_json, write_json, write_text
 
@@ -205,6 +208,34 @@ def extension_for_mime(mime_type: str) -> str:
     return ".png"
 
 
+def audio_format_for_file_ref(file_ref: str) -> str:
+    suffix = Path(file_ref).suffix.lower().lstrip(".")
+    if suffix in ("mp3", "wav", "ogg", "m4a", "aac", "flac", "pcm"):
+        return suffix
+    return os.environ.get("AUDIO_FORMAT") or "wav"
+
+
+def audio_provider_for_kind(default_provider: str, kind: str, overrides: dict[str, str | None]) -> str:
+    normalized = kind.strip().lower()
+    env_name = {
+        "bgm": "AUDIO_BGM_PROVIDER",
+        "sfx": "AUDIO_SFX_PROVIDER",
+        "voice": "AUDIO_VOICE_PROVIDER",
+    }.get(normalized)
+    return overrides.get(normalized) or (os.environ.get(env_name) if env_name else None) or default_provider
+
+
+def resolve_audio_concurrency(value: int | None = None) -> int:
+    if value is None:
+        raw = os.environ.get("AUDIO_CONCURRENCY")
+        if raw and raw.strip():
+            try:
+                value = int(raw)
+            except ValueError:
+                value = 1
+    return max(1, int(value or 1))
+
+
 def write_image_as_png(output_path: Path, image: GeneratedImage, raw_path: Path | None = None) -> list[str]:
     ensure_dir(output_path.parent)
     notes: list[str] = []
@@ -225,6 +256,15 @@ def write_image_as_png(output_path: Path, image: GeneratedImage, raw_path: Path 
     except Exception as exc:  # noqa: BLE001
         shutil.copy2(source_path, output_path)
         notes.append(f"ImageMagick conversion failed; copied provider image bytes: {exc}")
+    return notes
+
+
+def write_audio_file(output_path: Path, audio: Any) -> list[str]:
+    ensure_dir(output_path.parent)
+    output_path.write_bytes(audio.bytes)
+    notes = [f"wrote provider audio ({audio.mime_type}, {len(audio.bytes)} bytes)"]
+    if audio.source_url:
+        notes.append("downloaded provider audio URL")
     return notes
 
 
@@ -270,18 +310,125 @@ def build_background_prompt(background: Json, manifest: Json) -> str:
     ])
 
 
-def build_portrait_prompt(character: Json, portrait: Json, manifest: Json) -> str:
+def build_portrait_prompt(character: Json, portrait: Json, manifest: Json, reference_image: bool = False) -> str:
+    spec = portrait.get("spec") if isinstance(portrait.get("spec"), dict) else {}
     style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
+    emotion = str(portrait.get("emotion") or "neutral")
+    expression_notes = {
+        "neutral": "neutral expression with relaxed mouth, attentive eyes, calm upright posture",
+        "alert": "clearly alert expression: widened focused eyes, raised brows, tense shoulders, body angled as if reacting to a signal",
+        "soft": "clearly soft expression: gentle smile, relaxed eyelids, open shoulders, warm approachable posture",
+        "sad": "clearly sad expression: downcast eyes, lowered brows, small tense mouth, slightly bowed head, protective hand posture",
+        "resolved": "clearly resolved expression: steady direct gaze, lifted chin, firm mouth, squared shoulders, decisive stance",
+        "guarded": "clearly guarded expression: narrowed cautious eyes, closed mouth, body turned slightly away, arms or hands held protectively close",
+        "curious": "clearly curious expression: bright widened eyes, slightly parted mouth, head tilted, hand or prop extended toward the unknown",
+        "fragile": "clearly fragile expression: trembling vulnerable eyes, worried brows, small parted mouth, shoulders drawn inward, protective posture",
+    }.get(emotion, f"clearly readable {emotion} facial expression and matching body language")
+    reference_direction = (
+        "Use the attached reference image as a strict identity and costume reference; keep the same hair, outfit, colors, accessories, age, and proportions while changing only expression and body language."
+        if reference_image
+        else "Establish a clean canonical design that can be reused as the identity reference for this character's later expressions."
+    )
     return " ".join([
         f"Character name: {character.get('display_name', character.get('id', 'character'))}.",
-        f"Emotion: {portrait.get('emotion', 'neutral')}.",
+        f"Required expression: {emotion}.",
+        f"Expression direction: {expression_notes}.",
+        f"Character and costume direction: {spec.get('description', '')}.",
+        f"Mood: {spec.get('mood', '')}.",
         f"Art style: {style.get('rendering_mode', 'visual novel illustration')}.",
-        "Create one full-body visual novel character sprite, 2:3 portrait ratio, transparent background.",
+        reference_direction,
+        "Create one waist-up or three-quarter-body visual novel character sprite, 2:3 portrait ratio, transparent background.",
+        "The face should occupy roughly 28 to 40 percent of the image height; do not render a tiny full-body sprite.",
+        "The expression must be obvious at small visual novel sprite size through eyes, brows, mouth shape, head angle, shoulders, and hands.",
+        "Avoid subtle micro-expressions; make the emotional contrast clear while preserving the character design.",
+        "No background, no text, no speech bubbles.",
     ])
 
 
-def generate_assets(run_root: Path, provider: str | None = "local-svg", model: str | None = None, overwrite: bool = False, remove_backgrounds: bool = True) -> Json:
+def ordered_portrait_assets(character: Json) -> list[Json]:
+    portraits = [portrait for portrait in as_list(character.get("portrait_assets")) if isinstance(portrait, dict)]
+    if len(portraits) < 2:
+        return portraits
+    base_id = str(character.get("base_portrait_asset_id") or "")
+
+    def priority(portrait: Json) -> tuple[int, str]:
+        emotion = str(portrait.get("emotion") or "").lower()
+        asset_id = str(portrait.get("asset_id") or "")
+        if emotion == "neutral":
+            return (0, asset_id)
+        if asset_id == base_id:
+            return (1, asset_id)
+        return (2, asset_id)
+
+    return sorted(portraits, key=priority)
+
+
+def build_audio_prompt(audio: Json, manifest: Json) -> str:
+    spec = audio.get("spec") if isinstance(audio.get("spec"), dict) else {}
+    style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
+    kind = str(audio.get("kind") or "").lower()
+    description = str(spec.get("description") or audio.get("description") or audio.get("asset_id") or "audio cue")
+    mood = str(spec.get("mood") or audio.get("mood") or style.get("lighting_mood") or "")
+    if kind == "voice":
+        text = str(spec.get("text") or spec.get("line_text") or audio.get("text") or "").strip()
+        if not text:
+            raise RuntimeError(
+                f"Voice asset {audio.get('asset_id', '<unknown>')} requires exact dialogue or monologue text "
+                "in spec.text or spec.line_text."
+            )
+        return text
+    if kind == "sfx":
+        return " ".join([
+            f"Short visual novel sound effect: {description}.",
+            f"Mood: {mood}." if mood else "",
+            "Keep it concise, non-musical, and suitable for a single interaction cue.",
+        ]).strip()
+    return " ".join([
+        f"Instrumental visual novel background music cue: {description}.",
+        f"Mood: {mood}." if mood else "",
+        "Loop-friendly arrangement, no vocals, no lyrics, supports dialogue readability.",
+    ]).strip()
+
+
+def audio_with_manifest_voice_profile(audio: Json, manifest: Json) -> Json:
+    if str(audio.get("kind") or "").lower() != "voice":
+        return audio
+    spec = audio.get("spec") if isinstance(audio.get("spec"), dict) else {}
+    voice_profile_id = spec.get("voice_id") or audio.get("voice_id")
+    if not isinstance(voice_profile_id, str) or not voice_profile_id.startswith("voice_profile."):
+        return audio
+    profiles = manifest.get("voice_profiles") if isinstance(manifest.get("voice_profiles"), dict) else {}
+    profile = profiles.get(voice_profile_id)
+    if not isinstance(profile, dict):
+        return audio
+    merged_spec = dict(spec)
+    merged_spec["voice_design"] = profile
+    if "gender" in profile:
+        merged_spec.setdefault("voice_gender", profile["gender"])
+    updated = dict(audio)
+    updated["spec"] = merged_spec
+    return updated
+
+
+def generate_assets(
+    run_root: Path,
+    provider: str | None = "local-svg",
+    model: str | None = None,
+    overwrite: bool = False,
+    remove_backgrounds: bool = True,
+    audio_provider: str | None = None,
+    audio_model: str | None = None,
+    audio_fallback_provider: str | None = None,
+    bgm_provider: str | None = None,
+    sfx_provider: str | None = None,
+    voice_provider: str | None = None,
+    audio_concurrency: int | None = None,
+) -> Json:
     provider = provider or os.environ.get("IMAGE_ASSET_PROVIDER") or "local-svg"
+    audio_provider_id = audio_provider or os.environ.get("AUDIO_ASSET_PROVIDER") or os.environ.get("AUDIO_PROVIDER") or "mock"
+    audio_fallback_provider = audio_fallback_provider or os.environ.get("AUDIO_FALLBACK_PROVIDER")
+    audio_provider_overrides = {"bgm": bgm_provider, "sfx": sfx_provider, "voice": voice_provider}
+    audio_concurrency_value = resolve_audio_concurrency(audio_concurrency)
     asset_manifest = load_optional_json(path_for(run_root, "asset_manifest"))
     if not asset_manifest:
         raise SystemExit("Missing workspace/asset-manifest.json. Run plan_assets.py first.")
@@ -340,9 +487,7 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
         if not isinstance(character, dict):
             continue
         first_portrait_path: Path | None = None
-        for portrait in as_list(character.get("portrait_assets")):
-            if not isinstance(portrait, dict):
-                continue
+        for portrait in ordered_portrait_assets(character):
             output_path = output_root / str(portrait["file_ref"])
             source_path = output_root / str(portrait.get("source_file_ref") or portrait["file_ref"])
             if output_path.exists() and not overwrite:
@@ -350,10 +495,15 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
                 if first_portrait_path is None:
                     first_portrait_path = output_path
                 continue
-            prompt = build_portrait_prompt(character, portrait, asset_manifest)
+            reference_images = []
+            if provider == "gemini" and first_portrait_path and first_portrait_path.exists() and first_portrait_path != output_path:
+                reference_images.append(first_portrait_path)
+            prompt = build_portrait_prompt(character, portrait, asset_manifest, reference_image=bool(reference_images))
             prompt_path = prompt_root / f"{sanitize_file_stem(portrait['asset_id'])}.txt"
             write_text(prompt_path, prompt + "\n")
             notes = []
+            if reference_images:
+                notes.append(f"used reference portrait {reference_images[0].relative_to(output_root)}")
             if maybe_copy_provider_hint(run_root, portrait, output_path):
                 ensure_dir(source_path.parent)
                 shutil.copy2(output_path, source_path)
@@ -372,6 +522,7 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
                     image_type="character",
                     aspect_ratio="2:3",
                     expected_count=1,
+                    reference_images=reference_images,
                 )
                 if not images:
                     raise RuntimeError(f"Provider returned no portrait image for {portrait['asset_id']}.")
@@ -439,14 +590,88 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
             "notes": notes,
         })
 
-    for audio in as_list(asset_manifest.get("audio")):
-        if isinstance(audio, dict):
-            warnings.append(f"Audio asset planned but not generated by v1 generator: {audio.get('asset_id')}")
+    def process_audio_asset(audio: Json) -> tuple[Json | None, list[str]]:
+        local_warnings: list[str] = []
+        if not isinstance(audio, dict):
+            return None, local_warnings
+        audio = audio_with_manifest_voice_profile(audio, asset_manifest)
+        asset_id = str(audio.get("asset_id") or "audio")
+        file_ref = audio.get("file_ref")
+        if not isinstance(file_ref, str) or not file_ref.strip():
+            local_warnings.append(f"Skipped audio asset without file_ref: {asset_id}.")
+            return None, local_warnings
+        output_path = output_root / file_ref
+        if output_path.exists() and not overwrite:
+            local_warnings.append(f"Skipped existing audio asset {asset_id} at {file_ref}.")
+            return None, local_warnings
+        prompt = build_audio_prompt(audio, asset_manifest)
+        prompt_path = prompt_root / f"{sanitize_file_stem(asset_id)}.txt"
+        write_text(prompt_path, prompt + "\n")
+        notes = []
+        if maybe_copy_provider_hint(run_root, audio, output_path):
+            notes.append("copied provider_hints source")
+            provider_used = "provider_hint"
+        elif audio_provider_id in ("none", "skip"):
+            local_warnings.append(f"Audio asset planned but skipped by audio provider setting: {asset_id}.")
+            return None, local_warnings
+        else:
+            audio_kind = str(audio.get("kind") or asset_id.split(".", 1)[0] or "bgm")
+            provider_for_asset = audio_provider_for_kind(audio_provider_id, audio_kind, audio_provider_overrides)
+            generation = generate_audio_file(
+                provider=provider_for_asset,
+                asset=audio,
+                prompt=prompt,
+                output_path=output_path,
+                audio_kind=audio_kind,
+                model=audio_model,
+                expected_format=audio_format_for_file_ref(file_ref),
+                output_root=output_root,
+                fallback_provider=audio_fallback_provider,
+            )
+            provider_used = str(generation["provider"])
+            notes.append(f"wrote audio ({generation['mime_type']}, {generation['bytes']} bytes)")
+            if generation.get("source_url_present"):
+                notes.append("downloaded provider audio URL")
+            if generation.get("fallback_from"):
+                local_warnings.append(
+                    f"Audio provider {generation['fallback_from']} failed for {asset_id}; "
+                    f"fell back to {provider_used}: {generation.get('primary_error')}"
+                )
+        audio_model_id = resolve_audio_provider_model(provider_used, audio_model, str(audio.get("kind") or "bgm"))
+        return {
+            "asset_id": asset_id,
+            "role": str(audio.get("kind") or "audio"),
+            "prompt": prompt,
+            "prompt_ref": str(prompt_path.relative_to(output_root)),
+            "provider": provider_used,
+            "model": audio_model_id,
+            "output_files": [str(output_path)],
+            "notes": notes,
+        }, local_warnings
+
+    audio_assets = [audio for audio in as_list(asset_manifest.get("audio")) if isinstance(audio, dict)]
+    if audio_concurrency_value > 1 and len(audio_assets) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=audio_concurrency_value) as executor:
+            futures = [executor.submit(process_audio_asset, audio) for audio in audio_assets]
+            for future in futures:
+                entry, local_warnings = future.result()
+                warnings.extend(local_warnings)
+                if entry:
+                    entries.append(entry)
+    else:
+        for audio in audio_assets:
+            entry, local_warnings = process_audio_asset(audio)
+            warnings.extend(local_warnings)
+            if entry:
+                entries.append(entry)
 
     report = {
         "project_id": asset_manifest.get("project_id", "generated"),
         "provider": provider,
         "model": model_id,
+        "audio_provider": audio_provider_id,
+        "audio_model": audio_model,
+        "audio_concurrency": audio_concurrency_value,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "output_root": str(output_root),
         "entries": entries,
@@ -462,6 +687,13 @@ def main() -> None:
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--provider", default=None)
     parser.add_argument("--model", default=None)
+    parser.add_argument("--audio-provider", default=None)
+    parser.add_argument("--audio-model", default=None)
+    parser.add_argument("--audio-fallback-provider", default=None)
+    parser.add_argument("--bgm-provider", default=None)
+    parser.add_argument("--sfx-provider", default=None)
+    parser.add_argument("--voice-provider", default=None)
+    parser.add_argument("--audio-concurrency", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-remove-backgrounds", action="store_false", dest="remove_backgrounds")
     parser.set_defaults(remove_backgrounds=True)
@@ -473,6 +705,13 @@ def main() -> None:
         model=args.model,
         overwrite=args.overwrite,
         remove_backgrounds=args.remove_backgrounds,
+        audio_provider=args.audio_provider,
+        audio_model=args.audio_model,
+        audio_fallback_provider=args.audio_fallback_provider,
+        bgm_provider=args.bgm_provider,
+        sfx_provider=args.sfx_provider,
+        voice_provider=args.voice_provider,
+        audio_concurrency=args.audio_concurrency,
     )
     print(json.dumps({"report": str(path_for(Path(args.run_root).resolve(), "asset_generation_report")), "entries": len(report["entries"])}, indent=2))
 
