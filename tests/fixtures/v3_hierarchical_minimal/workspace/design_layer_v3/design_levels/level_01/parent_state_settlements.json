@@ -1,0 +1,24 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "parent_level": 2,
+  "settlements": [
+    {
+      "id": "settlement.l1.ledger_open.to.l2.archive_arc",
+      "source_graph_node_id": "v3.l1.ch02.resolve",
+      "parent_graph_node_id": "v3.l2.archive_arc",
+      "trigger": "on_node_complete",
+      "conditions": [
+        {"state_variable_id": "state.l1.key_found", "operator": "==", "value": true}
+      ],
+      "effects_on_parent_state": [
+        {"state_variable_id": "state.l2.truth_pressure", "operation": "increment", "value": 1}
+      ],
+      "evidence": {
+        "story_unit_ids": ["story.l1.ch02"],
+        "fact_ids": ["fact.ledger_opens"]
+      },
+      "reason": "Opening the ledger increases the arc-level truth pressure."
+    }
+  ]
+}

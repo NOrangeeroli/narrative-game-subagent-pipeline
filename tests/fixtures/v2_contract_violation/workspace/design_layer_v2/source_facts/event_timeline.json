@@ -1,1 +1,12 @@
-{"events":[{"id":"event.arrival","summary":"Arrival.","purpose":"setup"}]}
+{
+  "events": [
+    {
+      "id": "event.closed",
+      "order": 1,
+      "summary": "Ara leaves the oath sealed.",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    }
+  ]
+}

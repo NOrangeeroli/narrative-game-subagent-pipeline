@@ -17,10 +17,11 @@ represented by state reads and writes instead of repeated local choice patterns.
 
 ## When To Spawn
 
-Spawn after `source_facts/*` and `adaptation/*` payloads are accepted.
+Spawn after `source_intake/*`, `source_facts/*`, and `adaptation/*` payloads are accepted.
 
 ## Inputs
 
+- Accepted `source_intake/*` payloads.
 - Accepted `source_facts/*` payloads.
 - Accepted `adaptation/*` payloads.
 - Optional repair ticket.
@@ -37,6 +38,14 @@ Return JSON payloads for:
 
 - Every state variable must have an explicit consequence path: likely write point, later read point, and narrative payoff.
 - Do not create variables that only function as invisible score counters.
+- In `source_adaptation` mode, state variables should be justified by
+  adaptation policy and source segment tensions rather than generic stance
+  scores.
+- For novel adaptation, include a small number of canon-safe soft-state
+  variables when the source supports them: trust, suspicion, interpretive
+  stance, attention focus, knowledge timing, or relationship temperature. These
+  variables should alter later route availability or wording/payoffs without
+  forcing source-breaking plot divergence.
 - If a variable affects an ending, plan at least one mid-run payoff when story scale allows it.
 - Every variable needs `id`, `scope`, `type`, `initial_value`, `allowed_values`, `readable_by`, `writable_by`, `affects`, `invariants`, and `description`.
 - Do not create branch topology, macro exits, subgraphs, dialogue, or runtime implementation details.
@@ -72,6 +81,14 @@ Do not create variables that only function as invisible score counters. If a
 variable affects an ending, also plan at least one mid-run payoff whenever the
 story scale allows it.
 
+For novel adaptation, prefer soft state that lets early choices matter while
+keeping canon intact:
+- trust/suspicion toward a character or institution
+- attention focus such as body, object, law, relationship, or anomaly
+- knowledge timing: what the player has chosen to ask, inspect, or believe
+- tone or self-protection stance that later changes dialogue texture
+Each soft state still needs a concrete write point, read point, and payoff.
+
 Every variable needs:
 - id
 - scope
@@ -88,6 +105,7 @@ Do not create branch topology, macro exits, subgraphs, dialogue, or runtime
 implementation details.
 
 Input:
+- accepted source_intake/*
 - accepted source_facts/*
 - accepted adaptation/*
 - optional repair ticket

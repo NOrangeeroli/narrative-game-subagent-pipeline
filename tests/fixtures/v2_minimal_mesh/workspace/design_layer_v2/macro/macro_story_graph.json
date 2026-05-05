@@ -10,6 +10,11 @@
       "allowed_exits": [
         "exit.search",
         "exit.leave"
+      ],
+      "source_segment_ids": [
+        "seg.arrival",
+        "seg.key",
+        "seg.oath"
       ]
     },
     {
@@ -18,7 +23,10 @@
       "summary": "Ara and Niko face the revealed oath.",
       "allowed_exits": [],
       "is_terminal": true,
-      "ending_id": "ending.open"
+      "ending_id": "ending.open",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     },
     {
       "id": "macro.closed",
@@ -26,7 +34,10 @@
       "summary": "Ara leaves the oath sealed.",
       "allowed_exits": [],
       "is_terminal": true,
-      "ending_id": "ending.closed"
+      "ending_id": "ending.closed",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     }
   ],
   "edges": [
@@ -36,7 +47,11 @@
       "to": "macro.open",
       "exit_id": "exit.search",
       "label": "Reveal the oath",
-      "condition_type": "player_choice"
+      "condition_type": "player_choice",
+      "source_segment_ids": [
+        "seg.key",
+        "seg.oath"
+      ]
     },
     {
       "id": "edge.macro.intro.closed",
@@ -44,7 +59,10 @@
       "to": "macro.closed",
       "exit_id": "exit.leave",
       "label": "Leave it sealed",
-      "condition_type": "player_choice"
+      "condition_type": "player_choice",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     }
   ]
 }

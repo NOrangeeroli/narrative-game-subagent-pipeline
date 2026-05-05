@@ -1,1 +1,74 @@
-{"id":"subgraph.macro.intro","expansion_depth":1,"root_macro_node_id":"macro.intro","parent_macro_node_id":"macro.intro","parent_ref_id":"macro.intro","parent_ref_kind":"macro_node","entry_node_id":"node.intro.entry","nodes":[{"id":"node.intro.entry","title":"Entry","summary":"Entry.","participants":["char.ara"],"location_constraints":["fact.archive"],"state_reads":["state.key_found"],"state_writes":[],"source_fact_ids":["fact.oath"]},{"id":"node.intro.exit","title":"Exit","summary":"Exit.","participants":["char.ara"],"location_constraints":["fact.archive"],"state_reads":["state.key_found"],"state_writes":[],"source_fact_ids":["fact.oath"]}],"edges":[{"id":"edge.intro.entry.exit","from":"node.intro.entry","to":"node.intro.exit","label":"Leave","condition_type":"player_choice"}],"exit_mappings":[{"local_exit_id":"node.intro.exit","macro_exit_id":"exit.leave"}]}
+{
+  "id": "subgraph.macro.intro",
+  "expansion_depth": 1,
+  "root_macro_node_id": "macro.intro",
+  "parent_macro_node_id": "macro.intro",
+  "parent_ref_id": "macro.intro",
+  "parent_ref_kind": "macro_node",
+  "entry_node_id": "node.intro.entry",
+  "source_segment_ids": [
+    "seg.oath"
+  ],
+  "nodes": [
+    {
+      "id": "node.intro.entry",
+      "title": "Entry",
+      "summary": "Entry.",
+      "participants": [
+        "char.ara"
+      ],
+      "location_constraints": [
+        "fact.archive"
+      ],
+      "state_reads": [
+        "state.key_found"
+      ],
+      "state_writes": [],
+      "source_fact_ids": [
+        "fact.oath"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    },
+    {
+      "id": "node.intro.exit",
+      "title": "Exit",
+      "summary": "Exit.",
+      "participants": [
+        "char.ara"
+      ],
+      "location_constraints": [
+        "fact.archive"
+      ],
+      "state_reads": [
+        "state.key_found"
+      ],
+      "state_writes": [],
+      "source_fact_ids": [
+        "fact.oath"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge.intro.entry.exit",
+      "from": "node.intro.entry",
+      "to": "node.intro.exit",
+      "label": "Leave",
+      "condition_type": "player_choice",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    }
+  ],
+  "exit_mappings": [
+    {
+      "local_exit_id": "node.intro.exit",
+      "macro_exit_id": "exit.leave"
+    }
+  ]
+}

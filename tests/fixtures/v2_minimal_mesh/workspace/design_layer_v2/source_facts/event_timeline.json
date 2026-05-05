@@ -4,13 +4,20 @@
       "id": "event.arrival",
       "order": 1,
       "summary": "Ara enters the archive before dawn.",
-      "purpose": "establish stakes"
+      "purpose": "establish stakes",
+      "source_segment_ids": [
+        "seg.arrival"
+      ]
     },
     {
       "id": "event.ledger",
       "order": 2,
       "summary": "The oath ledger can be opened or left sealed.",
-      "purpose": "choice pressure"
+      "purpose": "choice pressure",
+      "source_segment_ids": [
+        "seg.key",
+        "seg.oath"
+      ]
     }
   ]
 }

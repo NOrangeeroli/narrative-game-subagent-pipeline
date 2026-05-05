@@ -1,0 +1,17 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 2,
+  "variables": [
+    {
+      "id": "state.l2.truth_pressure",
+      "scope": "level",
+      "type": "integer",
+      "initial_value": 0,
+      "allowed_values": [],
+      "description": "How strongly the archive oath has surfaced at the arc level.",
+      "owner_story_unit_id": "story.l2.archive_arc",
+      "readable_by": ["level_02.*", "level_01.*"],
+      "writable_by": ["level_02.*", "level_01.*"]
+    }
+  ]
+}

@@ -9,6 +9,9 @@
       ],
       "state_requirements": [
         "state.key_found == true"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
       ]
     },
     {
@@ -20,6 +23,9 @@
       ],
       "state_requirements": [
         "state.key_found == false"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
       ]
     }
   ]

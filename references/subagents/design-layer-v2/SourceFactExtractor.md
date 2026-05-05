@@ -20,11 +20,12 @@ adaptation, state model, graph topology, or route expansion is designed.
 
 ## When To Spawn
 
-Spawn first in a V2 design-layer run, immediately after run initialization.
+Spawn after `source_intake/*` payloads are accepted.
 
 ## Inputs
 
-- Raw prompt or source material.
+- Accepted `source_intake/*` payloads.
+- Raw prompt or source material, limited to the controller-provided packet.
 - Target language, tone, scale, and adaptation notes if provided.
 - Optional extraction constraints from the controller.
 
@@ -42,6 +43,11 @@ Return JSON payloads for:
 ## Required Constraints
 
 - Extract stable canon facts only.
+- In `source_adaptation` mode, every fact/event/theme item that comes from the
+  source should cite relevant `source_segment_ids`; locked facts must cite a
+  source segment.
+- In `idea` mode, use the synthetic source segment as a weak provenance anchor
+  where useful, but do not over-constrain invention.
 - Every fact, character, event, world rule, theme, and foreshadowing item needs a stable dotted id.
 - Mark canon-locked facts with `locked: true`.
 - Do not create branch topology, adaptation policy, state effects, dialogue, assets, Yarn, Unity paths, or runtime implementation details.
@@ -76,7 +82,8 @@ Every fact, character, event, world rule, theme, and foreshadowing item needs a
 stable dotted id. Mark canon-locked facts with locked: true.
 
 Input:
-- raw prompt or source material
+- accepted source_intake/*
+- raw prompt or source material, limited to the controller-provided packet
 - target language, tone, scale, and adaptation notes if provided
 - optional extraction constraints
 

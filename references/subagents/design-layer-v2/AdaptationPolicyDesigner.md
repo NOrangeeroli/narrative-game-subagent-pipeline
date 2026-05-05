@@ -18,10 +18,11 @@ generated.
 
 ## When To Spawn
 
-Spawn after all `source_facts/*` payloads are accepted.
+Spawn after `source_intake/*` and all `source_facts/*` payloads are accepted.
 
 ## Inputs
 
+- Accepted `source_intake/*` payloads.
 - Accepted `source_facts/*` payloads.
 - Raw prompt or adaptation brief.
 - Optional repair ticket.
@@ -38,9 +39,16 @@ Return JSON payloads for:
 ## Required Constraints
 
 - Classify fixed facts, variable processes, variable endings, forbidden changes, and canon locks.
+- In `source_adaptation` mode, cite `source_segment_ids` for variable
+  processes and endings. Variable processes must be grounded in an expandable or
+  reinterpret-allowed segment.
 - Preserve source-fact ids rather than restating canon freely.
 - Treat `ending_space.json` as a candidate library for state-driven payoffs, not
   as permission to show every ending as a final menu button.
+- For novel adaptation, define canon-safe agency: player choices may change
+  viewpoint emphasis, trust, suspicion, tone, investigation order, and later
+  textual payoff, while locked source events and relationship turns remain
+  protected unless the source segment is explicitly reinterpret_allowed.
 - Do not add new source facts, state variables, macro nodes, dialogue, runtime implementation details, or asset prompts.
 - Use only the input packet passed by the controller; do not read the run directory.
 
@@ -80,10 +88,19 @@ button. Each enabled ending should state the conditions that later graph stages
 can resolve through `state_gate` or, only when intentionally authored,
 conditioned low-pressure `player_choice` routes.
 
+For novel adaptation, identify canon-safe variable processes that can make the
+playable version feel less linear without breaking the source:
+- attention or investigation order inside a source beat
+- dialogue tone or trust shifts between existing characters
+- interpretation of an ambiguous event
+- knowledge gained early versus withheld until a later beat
+- later wording/payoff changes caused by earlier stance
+
 Do not add new source facts, state variables, macro nodes, dialogue, runtime
 implementation details, or asset prompts.
 
 Input:
+- accepted source_intake/*
 - accepted source_facts/*
 - raw prompt or adaptation brief
 - optional repair ticket

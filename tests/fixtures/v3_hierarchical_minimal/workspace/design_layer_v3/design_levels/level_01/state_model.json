@@ -1,0 +1,17 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "variables": [
+    {
+      "id": "state.l1.key_found",
+      "scope": "level",
+      "type": "boolean",
+      "initial_value": false,
+      "allowed_values": [],
+      "description": "Whether Ara found the glass key in the chapter-level sequence.",
+      "owner_story_unit_id": "story.l1.ch01",
+      "readable_by": ["level_01.*"],
+      "writable_by": ["level_01.*"]
+    }
+  ]
+}

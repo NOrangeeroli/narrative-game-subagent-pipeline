@@ -8,17 +8,26 @@
       "description": "Trust changes through how deeply Ara explores the archive mesh.",
       "allowed_fact_ids": [
         "fact.key"
+      ],
+      "source_segment_ids": [
+        "seg.key"
       ]
     }
   ],
   "variable_endings": [
     {
       "id": "ending.open",
-      "title": "The Ledger Opens"
+      "title": "The Ledger Opens",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     },
     {
       "id": "ending.closed",
-      "title": "The Oath Remains Sealed"
+      "title": "The Oath Remains Sealed",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     }
   ],
   "forbidden_changes": []

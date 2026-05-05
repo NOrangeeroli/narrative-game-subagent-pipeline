@@ -93,7 +93,7 @@ def write_realization_artifacts(run_root: Path) -> None:
             f"title: {title}",
             "---",
             f"// source_node: {node_id}",
-            f"Narrator: {node.get('summary') or node.get('title') or 'The scene continues.'}",
+            f"Narrator: The archive light shifts around {node.get('title') or node_id}.",
         ]
         if exit_bindings:
             yarn_lines.append(f"<<complete_activity outcome=\"{exit_bindings[0]['outcome_id']}\">>")
@@ -146,6 +146,7 @@ def add_ending_menu_overload(run_root: Path) -> None:
             "allowed_exits": [],
             "is_terminal": True,
             "ending_id": ending_id,
+            "source_segment_ids": ["seg.oath"],
         })
         macro_graph["edges"].append({
             "id": f"edge.macro.intro.menu_{index}",
@@ -154,6 +155,7 @@ def add_ending_menu_overload(run_root: Path) -> None:
             "exit_id": exit_id,
             "label": f"Choose ending {index}",
             "condition_type": "player_choice",
+            "source_segment_ids": ["seg.oath"],
         })
         intro_contract["exits"].append({"id": exit_id, "summary": f"Choose ending {index}.", "effects": []})
         contract_payload["contracts"].append({
@@ -164,6 +166,7 @@ def add_ending_menu_overload(run_root: Path) -> None:
             "allowed_state_reads": ["state.key_found"],
             "allowed_state_writes": [],
             "source_fact_ids": ["fact.oath"],
+            "source_segment_ids": ["seg.oath"],
             "exits": [],
         })
         ending_space["endings"].append({
@@ -172,6 +175,7 @@ def add_ending_menu_overload(run_root: Path) -> None:
             "status": "available",
             "theme_ids": ["theme.trust"],
             "state_requirements": ["state.key_found == true"],
+            "source_segment_ids": ["seg.oath"],
         })
 
     write_json(macro_path, macro_graph)
@@ -179,10 +183,71 @@ def add_ending_menu_overload(run_root: Path) -> None:
     write_json(ending_path, ending_space)
 
 
+def strip_internal_source_trace(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: strip_internal_source_trace(item)
+            for key, item in value.items()
+            if key not in {"source_segment_ids", "covered_source_segment_ids", "assigned_source_segment_ids", "coverage_row_ids"}
+        }
+    if isinstance(value, list):
+        return [strip_internal_source_trace(item) for item in value]
+    return value
+
+
+def prepare_idea_mode_fixture(run_root: Path) -> None:
+    v2_root = run_root / "workspace" / "design_layer_v2"
+    for path in v2_root.rglob("*.json"):
+        if "source_intake" in path.parts:
+            continue
+        write_json(path, strip_internal_source_trace(read_json(path)))
+
+    write_json(v2_root / "source_intake" / "input_profile.json", {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "InputProfiler", "notes": []},
+        "input_mode": "idea",
+        "source_kind": "one_line_idea",
+        "coverage_policy": "inventive",
+    })
+    write_json(v2_root / "source_intake" / "source_segments.json", {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "SourceSegmenter", "notes": []},
+        "segments": [
+            {
+                "id": "idea.root",
+                "summary": "A one-line idea about an archive oath and a glass key.",
+                "source_span": {"source_id": "prompt", "start": 0, "end": 0},
+                "events": [],
+                "characters": [],
+                "importance": "must_cover",
+                "adaptation_freedom": "expandable",
+            }
+        ],
+    })
+    write_json(v2_root / "source_intake" / "source_beat_table.json", {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "SourceSegmenter", "notes": []},
+        "beats": [{"id": "beat.idea", "summary": "Synthetic root idea beat.", "source_segment_ids": ["idea.root"]}],
+    })
+    write_json(v2_root / "source_intake" / "adaptation_coverage_matrix.json", {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "SourceSegmenter", "notes": []},
+        "coverage": [
+            {
+                "id": "coverage.idea",
+                "segment_id": "idea.root",
+                "coverage_status": "covered",
+                "covered_by": {"macro_node_ids": ["macro.intro"], "contract_ids": ["contract.intro"]},
+                "reason": "Idea-mode synthetic root is represented by the opening macro node.",
+            }
+        ],
+    })
+
+
 def assert_no_raw_v2_path(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     if "workspace/design_layer_v2" in text or "design_layer_v2/" in text:
         raise SystemExit(f"Raw V2 path leaked into {path}")
+    if "source_segment_ids" in text and "agent_context" not in path.parts:
+        raise SystemExit(f"Internal source intake trace leaked into {path}")
+    if "adaptation_coverage_matrix" in text:
+        raise SystemExit(f"Internal source intake trace leaked into {path}")
 
 
 def main() -> None:
@@ -196,6 +261,13 @@ def main() -> None:
         run([sys.executable, "scripts/design_v2_compile.py", "--run-root", str(minimal)])
         run([sys.executable, "scripts/validate_artifacts.py", "--run-root", str(minimal), "--write-projections"])
         for public_file in (minimal / "workspace" / "design_layer").glob("*.json"):
+            assert_no_raw_v2_path(public_file)
+
+        idea_mode = copy_fixture("v2_minimal_mesh", temp_root / "idea_mode_parent")
+        prepare_idea_mode_fixture(idea_mode)
+        run([sys.executable, "scripts/design_v2_validate.py", "--run-root", str(idea_mode)])
+        run([sys.executable, "scripts/design_v2_compile.py", "--run-root", str(idea_mode)])
+        for public_file in (idea_mode / "workspace" / "design_layer").glob("*.json"):
             assert_no_raw_v2_path(public_file)
 
         write_realization_artifacts(minimal)

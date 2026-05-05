@@ -10,12 +10,12 @@ from pathlib import Path
 from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
-from apply_presentation_plan import apply_presentation_plan
 from design_v2_lib import (
     REQUIRED_V2_FILES,
     compile_design_v2,
     ensure_design_v2_layout,
 )
+from design_v3_lib import compile_design_v3, ensure_design_v3_layout
 from pipeline_lib import (
     build_gameplay_manifest,
     build_realization_manifest,
@@ -29,12 +29,14 @@ from pipeline_lib import (
     write_text,
 )
 from plan_assets import plan_asset_manifest
-from story_ir import parse_yarn, verify_story_ir
+from story_ir import collect_private_authoring_phrases, parse_yarn, verify_story_ir
 from validate_assets import validate_assets
 from write_report import write_final_report
 
 
 V2_AUTHORING_ROLES = [
+    "InputProfiler",
+    "SourceSegmenter",
     "SourceFactExtractor",
     "AdaptationPolicyDesigner",
     "StateModelDesigner",
@@ -43,6 +45,13 @@ V2_AUTHORING_ROLES = [
     "MeshExpansionPlanner",
     "MeshLayerDesigner",
     "DesignV2CompilerReviewer",
+]
+
+V3_AUTHORING_ROLES = [
+    "StoryLevelExtractor",
+    "AdaptationPolicyDesigner",
+    "LevelStateGraphDesigner",
+    "DesignV3CompilerReviewer",
 ]
 
 
@@ -55,7 +64,7 @@ def refresh_story_outputs(run_root: Path) -> dict:
     story_yarn = assemble_yarn_text(fragments)
     write_text(path_for(run_root, "story_yarn"), story_yarn)
     story_ir = parse_yarn(story_yarn)
-    story_report = verify_story_ir(story_ir)
+    story_report = verify_story_ir(story_ir, collect_private_authoring_phrases(run_root))
     story_ir["verification"] = story_report
     write_json(path_for(run_root, "story_ir"), story_ir)
     write_json(path_for(run_root, "story_report"), story_report)
@@ -71,57 +80,135 @@ def init_run(args: argparse.Namespace) -> None:
     design_layer = getattr(args, "design_layer", "v1")
     if design_layer == "v2":
         ensure_design_v2_layout(run_root)
+    if design_layer == "v3":
+        ensure_design_v3_layout(run_root)
     write_text(path_for(run_root, "prompt"), args.prompt.strip() + "\n")
     write_json(run_root / "graph" / "state.json", {
         "run_root": str(run_root),
-        "current_stage": "initialized_v2_design_layer" if design_layer == "v2" else "initialized",
+        "current_stage": f"initialized_{design_layer}_design_layer" if design_layer in ("v2", "v3") else "initialized",
         "design_layer": design_layer,
         "next_actions": (
             [
+                "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
+                "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
+                "For long sources, shard SourceSegmenter packets under workspace/controller-packets/source_segmenter/, run shard workers in parallel, wait for all shards, then controller-merge accepted returns into canonical source_intake artifacts.",
                 "Spawn V2 authoring agents using references/subagents/design-layer-v2/ in order: " + " -> ".join(V2_AUTHORING_ROLES) + ".",
+                "Reuse MeshLayerDesigner recursively per mesh_expansion_policy: depth 1 expands macro nodes; depth 2+ expands selected subgraph_node parents.",
                 "Write accepted payloads to workspace/design_layer_v2/.",
                 "Run run_pipeline.py compile-design --design-layer v2.",
                 "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
             ]
             if design_layer == "v2"
-            else [
+            else (
+                [
+                    "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
+                    "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
+                    "Author V3 story levels from fine to coarse. Each story level may be sharded and merged deterministically, and story extraction should capture facts for controller persistence under facts/*.",
+                    "Write adaptation/global_policy.json from the coarsest story view plus canonical facts; keep policy broad and leave concrete state/topology decisions to level design.",
+                    "Author V3 graph/state design from coarse to fine. Each design level may be sharded by parent graph node; workers receive global adaptation direction plus relevant controller excerpts, then design state first, then state-dependent routes, behavior-first player choices, effects, contracts, and parent settlements. For branch-permitted runs, task prompts must require visibly networked topology: different node orders/access, state gates, optional/revisit/delayed routes, convergence with route memory, player choices framed as external actions rather than only internal attitudes, and no cosmetic final-line branching.",
+                    "For every non-coarsest design level, write parent_state_settlements.json describing how this level affects immediate parent state.",
+                    "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
+                    "Run run_pipeline.py compile-design --design-layer v3.",
+                    "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
+                    "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
+                ]
+                if design_layer == "v3"
+                else [
+                "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
+                "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
                 "Spawn PromptAnalyst, LinearSynopsisDesigner, BranchGraphDesigner, and BaseGameIRDesigner.",
                 "Write accepted payloads to workspace/design_layer/.",
                 "Run validate_artifacts.py --write-projections.",
-            ]
+                ]
+            )
         ),
     })
     write_json(run_root / "reports" / "controller-todo.json", {
         "status": "initialized",
         "design_layer": design_layer,
-        "authoring_roles": V2_AUTHORING_ROLES if design_layer == "v2" else [
-            "PromptAnalyst",
-            "LinearSynopsisDesigner",
-            "BranchGraphDesigner",
-            "BaseGameIRDesigner",
-        ],
+        "authoring_roles": (
+            V2_AUTHORING_ROLES if design_layer == "v2"
+            else V3_AUTHORING_ROLES if design_layer == "v3"
+            else [
+                "PromptAnalyst",
+                "LinearSynopsisDesigner",
+                "BranchGraphDesigner",
+                "BaseGameIRDesigner",
+            ]
+        ),
         "prompt_path": "inputs/prompt.txt",
         "required_design_artifacts": (
             [str(Path("workspace/design_layer_v2") / relative) for relative in REQUIRED_V2_FILES]
             + ["workspace/design_layer_v2/subgraphs/subgraph.<parent_ref_id>.json"]
             if design_layer == "v2"
-            else [
-                "workspace/design_layer/user_requirements.json",
-                "workspace/design_layer/chapter_linear_synopsis.json",
-                "workspace/design_layer/branch_graph.json",
-                "workspace/design_layer/game_ir.json",
-            ]
+            else (
+                [
+                    "workspace/design_layer_v3/hierarchy_policy.json",
+                    "workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json",
+                    "workspace/design_layer_v3/facts/canonical_fact_graph.json",
+                    "workspace/design_layer_v3/adaptation/global_policy.json",
+                    "workspace/design_layer_v3/design_levels/level_<NN>/state_model.json",
+                    "workspace/design_layer_v3/design_levels/level_<NN>/story_graph.json",
+                    "workspace/design_layer_v3/design_levels/level_<NN>/contracts.json",
+                    "workspace/design_layer_v3/design_levels/level_<NN>/parent_state_settlements.json",
+                ]
+                if design_layer == "v3"
+                else [
+                    "workspace/design_layer/user_requirements.json",
+                    "workspace/design_layer/chapter_linear_synopsis.json",
+                    "workspace/design_layer/branch_graph.json",
+                    "workspace/design_layer/game_ir.json",
+                ]
+            )
         ),
         "runtime_design_artifacts": [
             "workspace/design_layer/branch_graph.json",
             "workspace/design_layer/game_ir.json",
         ],
+        "source_material_paths": {
+            "original": "inputs/source_material/original/",
+            "full_text": "inputs/source_material/full_text.txt",
+            "source_index": "inputs/source_material/source_index.json",
+            "chunks": "inputs/source_material/chunks/*.txt",
+            "extraction_report": "inputs/source_material/extraction_report.json",
+        },
+        "subagent_input_policy": {
+            "packet_root": "workspace/controller-packets/",
+            "source_segmenter_shards": {
+                "packet_glob": "workspace/controller-packets/source_segmenter/*.md",
+                "raw_return_glob": "workspace/controller-packets/source_segmenter_returns/*.raw.json",
+                "merge_owner": "controller",
+                "canonical_outputs": [
+                    "workspace/design_layer_v2/source_intake/source_segments.json",
+                    "workspace/design_layer_v2/source_intake/source_beat_table.json",
+                    "workspace/design_layer_v2/source_intake/adaptation_coverage_matrix.json",
+                ],
+            },
+            "v3_parallel_level_policy": {
+                "story_level_shards": "workspace/design_layer_v3/story_levels/level_<NN>/shards/*.json",
+                "story_level_returns": "workspace/design_layer_v3/story_levels/level_<NN>/shard_returns/*.json",
+                "design_level_shards": "workspace/design_layer_v3/design_levels/level_<NN>/shards/*.json",
+                "design_level_returns": "workspace/design_layer_v3/design_levels/level_<NN>/shard_returns/*.json",
+                "merge_owner": "controller",
+                "public_branch_graph_source": "finest_enabled_design_level_only",
+            },
+            "normal_authoring_inputs": "exact role card plus role-specific controller packet only",
+                "controller_only_context": [
+                    "references/design-layer-v2-contracts.md",
+                    "validation scripts",
+                    "full run directory traversal",
+                    "full extracted source text unless a role packet explicitly includes it",
+            ],
+            "contract_exceptions": [
+                "DesignV2CompilerReviewer",
+                "targeted repair workers that receive explicit validation or contract excerpts",
+            ],
+            "v3_scene_choice_label_check": "run_pipeline.py check-v3-scene-choice-labels --run-root <run-root>",
+        },
         "asset_pipeline_artifacts": [
             "workspace/asset-direction.json",
             "workspace/asset-manifest.json",
-            "workspace/presentation/presentation-plan.json",
             "workspace/generated-assets/",
-            "reports/presentation-validation.json",
             "reports/asset-generation-report.json",
             "reports/asset-validation.json",
         ],
@@ -141,10 +228,14 @@ def init_run(args: argparse.Namespace) -> None:
 def compile_design_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
-    if args.design_layer != "v2":
-        raise SystemExit("compile-design currently supports --design-layer v2.")
-    result = compile_design_v2(run_root)
-    report_path = run_root / "workspace" / "design_layer_v2" / "compile_report.json"
+    if args.design_layer == "v2":
+        result = compile_design_v2(run_root)
+        report_path = run_root / "workspace" / "design_layer_v2" / "compile_report.json"
+    elif args.design_layer == "v3":
+        result = compile_design_v3(run_root)
+        report_path = run_root / "workspace" / "design_layer_v3" / "compile_report.json"
+    else:
+        raise SystemExit("compile-design currently supports --design-layer v2 or v3.")
     payload = load_optional_json(report_path) or result.to_json()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     if result.status == "fail":
@@ -179,14 +270,8 @@ def build_run(args: argparse.Namespace) -> None:
 
     refresh_story_outputs(run_root)
 
-    if not args.skip_assets and path_for(run_root, "asset_direction").exists():
+    if not args.skip_assets:
         plan_asset_manifest(run_root)
-        if path_for(run_root, "presentation_plan").exists():
-            presentation_report = apply_presentation_plan(run_root)
-            if presentation_report["status"] == "fail":
-                print(json.dumps(presentation_report, indent=2))
-                raise SystemExit(1)
-            refresh_story_outputs(run_root)
         generate_assets(
             run_root,
             provider=args.asset_provider,
@@ -200,17 +285,12 @@ def build_run(args: argparse.Namespace) -> None:
             sfx_provider=args.sfx_provider,
             voice_provider=args.voice_provider,
             audio_concurrency=args.audio_concurrency,
+            image_concurrency=args.image_concurrency,
         )
         asset_report = validate_assets(run_root)
         if asset_report["status"] == "fail":
             print(json.dumps(asset_report, indent=2))
             raise SystemExit(1)
-    elif path_for(run_root, "presentation_plan").exists() and path_for(run_root, "asset_manifest").exists():
-        presentation_report = apply_presentation_plan(run_root)
-        if presentation_report["status"] == "fail":
-            print(json.dumps(presentation_report, indent=2))
-            raise SystemExit(1)
-        refresh_story_outputs(run_root)
 
     web_path = None
     if not args.skip_web:
@@ -227,6 +307,20 @@ def build_run(args: argparse.Namespace) -> None:
     }, indent=2))
 
 
+def check_v3_scene_choice_labels_run(args: argparse.Namespace) -> None:
+    from check_v3_scene_choice_labels import check_scene_choice_labels, is_v3_run
+
+    run_root = Path(args.run_root).resolve()
+    if not is_v3_run(run_root):
+        raise SystemExit("check-v3-scene-choice-labels expects a compiled V3 run.")
+    report = check_scene_choice_labels(run_root)
+    report_path = run_root / "reports" / "v3-scene-choice-labels.json"
+    write_json(report_path, report)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if report["status"] == "fail":
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -234,12 +328,12 @@ def main() -> None:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--prompt", required=True)
     init_parser.add_argument("--run-root", required=True)
-    init_parser.add_argument("--design-layer", choices=["v1", "v2"], default="v1")
+    init_parser.add_argument("--design-layer", choices=["v1", "v2", "v3"], default="v1")
     init_parser.set_defaults(func=init_run)
 
     compile_design_parser = subparsers.add_parser("compile-design")
     compile_design_parser.add_argument("--run-root", required=True)
-    compile_design_parser.add_argument("--design-layer", choices=["v2"], default="v2")
+    compile_design_parser.add_argument("--design-layer", choices=["v2", "v3"], default="v2")
     compile_design_parser.set_defaults(func=compile_design_run)
 
     build_parser = subparsers.add_parser("build")
@@ -255,11 +349,16 @@ def main() -> None:
     build_parser.add_argument("--sfx-provider", default=None)
     build_parser.add_argument("--voice-provider", default=None)
     build_parser.add_argument("--audio-concurrency", type=int, default=None)
+    build_parser.add_argument("--image-concurrency", type=int, default=None)
     build_parser.add_argument("--asset-overwrite", action="store_true")
     build_parser.add_argument("--no-asset-remove-backgrounds", action="store_false", dest="asset_remove_backgrounds")
     build_parser.set_defaults(asset_remove_backgrounds=True)
     build_parser.add_argument("--export-unity", action="store_true")
     build_parser.set_defaults(func=build_run)
+
+    check_v3_choices_parser = subparsers.add_parser("check-v3-scene-choice-labels")
+    check_v3_choices_parser.add_argument("--run-root", required=True)
+    check_v3_choices_parser.set_defaults(func=check_v3_scene_choice_labels_run)
 
     args = parser.parse_args()
     args.func(args)

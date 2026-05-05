@@ -1,1 +1,21 @@
-{"facts":[{"id":"fact.archive","kind":"location","summary":"Archive."},{"id":"fact.oath","kind":"lore","summary":"Oath."}]}
+{
+  "facts": [
+    {
+      "id": "fact.archive",
+      "kind": "location",
+      "summary": "Archive.",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    },
+    {
+      "id": "fact.oath",
+      "kind": "lore",
+      "summary": "Oath.",
+      "source_segment_ids": [
+        "seg.oath"
+      ],
+      "locked": true
+    }
+  ]
+}

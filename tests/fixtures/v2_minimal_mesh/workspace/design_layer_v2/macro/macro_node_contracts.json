@@ -22,6 +22,11 @@
         "fact.archive",
         "fact.oath"
       ],
+      "source_segment_ids": [
+        "seg.arrival",
+        "seg.key",
+        "seg.oath"
+      ],
       "exits": [
         {
           "id": "exit.search",
@@ -64,6 +69,9 @@
       "source_fact_ids": [
         "fact.oath"
       ],
+      "source_segment_ids": [
+        "seg.oath"
+      ],
       "exits": []
     },
     {
@@ -82,6 +90,9 @@
       "allowed_state_writes": [],
       "source_fact_ids": [
         "fact.oath"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
       ],
       "exits": []
     }

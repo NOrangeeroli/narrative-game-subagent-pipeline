@@ -1,0 +1,29 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "title": "Archive Oath V3",
+  "facts": [
+    {"id": "fact.key_hidden", "kind": "object", "summary": "The glass key is hidden below the archive index desk.", "story_unit_ids": ["story.l1.ch01"]},
+    {"id": "fact.ledger_opens", "kind": "event", "summary": "The glass key opens the oath ledger.", "story_unit_ids": ["story.l1.ch02"]},
+    {"id": "fact.archive_oath_arc", "kind": "arc_fact", "summary": "The archive arc reveals a hidden oath through the glass key.", "story_unit_ids": ["story.l2.archive_arc"]}
+  ],
+  "characters": [
+    {"id": "char.ara", "name": "Ara", "summary": "The viewpoint archivist."},
+    {"id": "char.niko", "name": "Niko", "summary": "Ara's cautious helper."}
+  ],
+  "locations": [
+    {"id": "loc.archive", "name": "Archive", "summary": "A quiet archive with a hidden oath ledger."}
+  ],
+  "objects": [
+    {"id": "obj.glass_key", "name": "Glass Key", "summary": "A key that opens the oath ledger."}
+  ],
+  "events": [
+    {"id": "event.arrival", "summary": "Ara enters the archive.", "order": 1},
+    {"id": "event.key_found", "summary": "Ara finds the glass key.", "order": 2},
+    {"id": "event.ledger_open", "summary": "The oath ledger opens.", "order": 3}
+  ],
+  "relationships": [],
+  "world_rules": [
+    {"id": "rule.oath_records_remain", "summary": "Oath records cannot be erased once the ledger is opened."}
+  ],
+  "themes": ["theme.hidden_oaths"]
+}

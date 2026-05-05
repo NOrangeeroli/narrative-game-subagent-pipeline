@@ -5,68 +5,28 @@ canonical_output:
   - workspace/vn/fragments/<node-id>.yarn
   - workspace/vn/fragments/<node-id>.manifest.json
 contract: references/artifact-contracts.md#yarn-fragment-pair
+deprecated_by: NodeSceneWriter
 ---
 
 # NodeDialogueWriter
 
-## Mission
-
-Write one VN or cutscene realization as a Yarn fragment plus a sidecar manifest.
-
-## When To Spawn
-
-Spawn once per `vn_yarn` or `cutscene_yarn` plan after `node-realization-plans.json` is accepted.
-
-## Inputs
-
-- One realization plan.
-- Branch graph slice for the source node and neighboring nodes.
-- Game IR semantic slice with relevant entities, state variables, rules, and narrative brief.
-- Allowed commands: `complete_activity`, `set`, `wait`, `show_bg`, `show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`, `play_sfx`, `play_bgm`, `stop_bgm`.
-- Voice is not authored as a Yarn command. Later asset planning may attach generated voice only to dialogue or monologue line beats.
-- Detailed expression staging may be refined later by `PresentationDirector` after `asset-manifest.json` exists; keep any staging you do author valid and purposeful.
-- Optional repair ticket.
-
-## Output
-
-Return a Yarn fragment and manifest payload for exactly one realization plan.
-
-## Required Constraints
-
-- Use the plan `entry_binding.node_title` exactly.
-- Use `<<complete_activity outcome="...">>` for each planned outcome.
-- Preserve plan exit bindings, state reads, and state writes in the manifest.
-- Do not change topology, invent state variables, add persistent effects, or implement non-VN gameplay.
-
-## Quality Checklist
-
-- Dialogue fits the source node and neighboring-node continuity.
-- Spoken dialogue and monologue lines are clean line beats that can be matched by later voice assets.
-- Every planned outcome is reachable.
-- Manifest command refs match the Yarn commands.
-- Local asset refs match the realization plan.
-
-## Spawn Prompt Template
+`NodeDialogueWriter` is a legacy compatibility name. New runs should spawn
+`NodeSceneWriter` instead:
 
 ```text
-You are NodeDialogueWriter for a self-contained narrative game pipeline.
-
-Return a Yarn fragment and manifest payload for exactly one `vn_yarn` or `cutscene_yarn` realization plan.
-Do not change topology, invent state variables, add persistent effects, or implement non-VN gameplay.
-
-Use the plan entry_binding node title exactly.
-Use `<<complete_activity outcome="...">>` for each planned outcome.
-Preserve plan exit bindings, state reads, and state writes in the manifest.
-
-Input:
-- one realization plan
-- branch_graph slice for the source node and neighboring nodes
-- game_ir semantic slice with relevant entities, state variables, rules, and narrative brief
-- allowed commands: complete_activity, set, wait, show_bg, show_char, set_expression, hide_char, show_cg, hide_cg, play_sfx, play_bgm, stop_bgm
-- do not add voice commands; generated voice is attached later only to dialogue/monologue line beats
-- optional repair ticket
-
-Output:
-- `<node-id>.yarn` text
-- `<node-id>.manifest.json`
+references/subagents/post-design/NodeSceneWriter.md
 ```
+
+If an existing controller or repair ticket still asks for `NodeDialogueWriter`,
+follow the `NodeSceneWriter` role card exactly. The expected output paths remain
+the same:
+
+```text
+workspace/vn/fragments/<node-id>.yarn
+workspace/vn/fragments/<node-id>.manifest.json
+```
+
+The role is no longer limited to dialogue. It must author the complete playable
+scene: narration, dialogue, scene staging, background commands, character and
+expression commands, BGM/SFX commands, and manifest `line_performance` notes for
+line-attached voice generation.

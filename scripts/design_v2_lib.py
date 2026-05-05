@@ -31,8 +31,13 @@ DESIGN_V2_ROOT = Path("workspace/design_layer_v2")
 DESIGN_V2_COMPILE_REPORT = DESIGN_V2_ROOT / "compile_report.json"
 DESIGN_V2_VALIDATION_REPORT = DESIGN_V2_ROOT / "validation/validation_report.json"
 DESIGN_V2_SIMULATION_PROFILES = DESIGN_V2_ROOT / "validation/simulation_profiles.json"
+DESIGN_V2_SOURCE_COVERAGE_REPORT = DESIGN_V2_ROOT / "validation/source_coverage_report.json"
 
 REQUIRED_V2_FILES = [
+    "source_intake/input_profile.json",
+    "source_intake/source_segments.json",
+    "source_intake/source_beat_table.json",
+    "source_intake/adaptation_coverage_matrix.json",
     "source_facts/fact_book.json",
     "source_facts/character_graph.json",
     "source_facts/event_timeline.json",
@@ -53,6 +58,7 @@ REQUIRED_V2_FILES = [
 ]
 
 V2_DIRECTORIES = [
+    "source_intake",
     "source_facts",
     "adaptation",
     "state",
@@ -64,6 +70,37 @@ V2_DIRECTORIES = [
 ]
 
 STATE_REF_RE = re.compile(r"\b(?:state|relationship|knowledge|quest|local|hidden)\.[A-Za-z0-9_.-]+\b")
+SOURCE_DETAIL_TYPES = {
+    "plot",
+    "setting",
+    "object",
+    "gesture",
+    "inner_state",
+    "relationship",
+    "world_rule",
+    "motif",
+}
+SOURCE_PRESERVATION_PRIORITIES = {"must_keep", "should_keep", "nice_to_keep"}
+INTERNAL_TRACE_KEYS = {
+    "source_segment_ids",
+    "covered_source_segment_ids",
+    "assigned_source_segment_ids",
+    "coverage_row_ids",
+    "source_intake_notes",
+}
+GENERIC_CONTINUE_LABELS = {
+    "",
+    "continue",
+    "go on",
+    "next",
+    "proceed",
+    "继续",
+    "继续前进",
+    "下一步",
+    "前进",
+    "往前",
+    "往前走",
+}
 
 
 def design_v2_root(run_root: Path) -> Path:
@@ -143,6 +180,51 @@ def normalize_string_items(items: list[Any]) -> list[str]:
         elif isinstance(item, dict) and isinstance(item.get("id"), str):
             values.append(item["id"])
     return values
+
+
+def source_segment_ids_from(item: Any) -> set[str]:
+    if not isinstance(item, dict):
+        return set()
+    refs: set[str] = set()
+    for key in ("source_segment_ids", "covered_source_segment_ids", "assigned_source_segment_ids"):
+        refs.update(str(value) for value in as_list(item.get(key)) if isinstance(value, str))
+    source_trace = item.get("source_trace")
+    if isinstance(source_trace, dict):
+        refs.update(str(value) for value in as_list(source_trace.get("source_segment_ids")) if isinstance(value, str))
+    return refs
+
+
+def add_segment_reference_findings(
+    result: ValidationResult,
+    refs: set[str],
+    segment_ids: set[str],
+    path: str,
+) -> None:
+    for segment_id in sorted(refs):
+        if segment_id not in segment_ids:
+            result.add("error", "invalid_reference", f"References missing source segment: {segment_id}", path)
+
+
+def source_span_segment_id(item: Any) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    source_span = item.get("source_span")
+    if not isinstance(source_span, dict):
+        return None
+    source_id = source_span.get("source_id")
+    return source_id if isinstance(source_id, str) else None
+
+
+def strip_internal_trace(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: strip_internal_trace(item)
+            for key, item in value.items()
+            if key not in INTERNAL_TRACE_KEYS
+        }
+    if isinstance(value, list):
+        return [strip_internal_trace(item) for item in value]
+    return value
 
 
 def state_ref_from_value(value: Any) -> str | None:
@@ -331,6 +413,90 @@ def branch_edge_root_macro_id(edge: Json, nodes_by_id: dict[str, Json]) -> str |
     return None
 
 
+def normalized_continue_label(label: Any) -> str:
+    text = str(label or "").strip().lower()
+    return re.sub(r"[\s\-_:：。.!！?？…]+", " ", text).strip()
+
+
+def edge_state_effects(edge: Json) -> list[Json]:
+    effects = as_list(edge.get("effects"))
+    if not effects:
+        effects = as_list(edge.get("state_writes"))
+    return [effect for effect in effects if isinstance(effect, dict)]
+
+
+def is_plain_continue_edge(edge: Json) -> bool:
+    if edge.get("condition_type", "unconditional") != "unconditional":
+        return False
+    if as_list(edge.get("conditions")) or edge_state_effects(edge):
+        return False
+    return normalized_continue_label(edge.get("label")) in GENERIC_CONTINUE_LABELS
+
+
+def add_adaptation_linearity_warnings(result: ValidationResult, artifacts: dict[str, Any], branch_graph: Json) -> None:
+    input_mode = artifacts.get("source_intake/input_profile.json", {}).get("input_mode")
+    if input_mode != "source_adaptation":
+        return
+
+    nodes = [node for node in as_list(branch_graph.get("nodes")) if isinstance(node, dict) and isinstance(node.get("id"), str)]
+    edges = [edge for edge in as_list(branch_graph.get("edges")) if isinstance(edge, dict)]
+    if len(nodes) < 4:
+        return
+
+    outgoing_by_from: dict[str, list[Json]] = {}
+    incoming_by_to: dict[str, list[Json]] = {}
+    for edge in edges:
+        source = edge.get("from")
+        target = edge.get("to")
+        if isinstance(source, str):
+            outgoing_by_from.setdefault(source, []).append(edge)
+        if isinstance(target, str):
+            incoming_by_to.setdefault(target, []).append(edge)
+
+    visible_choice_count = sum(1 for edge in edges if edge.get("condition_type", "player_choice") == "player_choice")
+    stateful_edge_count = sum(1 for edge in edges if as_list(edge.get("conditions")) or edge_state_effects(edge))
+    if len(nodes) >= 5 and visible_choice_count < 2 and stateful_edge_count < 2:
+        result.add(
+            "warning",
+            "adaptation_choice_underuse",
+            f"Source adaptation compiles to {len(nodes)} nodes with only {visible_choice_count} visible choice edges and {stateful_edge_count} stateful edges; early novel sections usually need canon-safe branchlets or soft-state payoff reads.",
+        )
+
+    node_ids = {str(node["id"]) for node in nodes}
+    visited: set[str] = set()
+    for node in nodes:
+        start_id = str(node["id"])
+        if start_id in visited:
+            continue
+        incoming_plain = [edge for edge in incoming_by_to.get(start_id, []) if is_plain_continue_edge(edge)]
+        if len(incoming_plain) == 1:
+            continue
+        chain_nodes = [start_id]
+        chain_edges: list[Json] = []
+        current_id = start_id
+        while current_id in node_ids:
+            outgoing = outgoing_by_from.get(current_id, [])
+            if len(outgoing) != 1 or not is_plain_continue_edge(outgoing[0]):
+                break
+            edge = outgoing[0]
+            target = edge.get("to")
+            if not isinstance(target, str) or target in chain_nodes:
+                break
+            chain_edges.append(edge)
+            chain_nodes.append(target)
+            current_id = target
+        visited.update(chain_nodes)
+        if len(chain_edges) >= 3:
+            result.add(
+                "warning",
+                "adaptation_linear_continue_streak",
+                "Source adaptation contains a long generic continuation chain "
+                f"({len(chain_edges)} edges): {' -> '.join(chain_nodes[:6])}"
+                + (" ..." if len(chain_nodes) > 6 else "")
+                + ". Add canon-safe branchlets or concrete transition handoff labels/summaries when the source permits.",
+            )
+
+
 def add_ending_resolver_findings(result: ValidationResult, artifacts: dict[str, Any], branch_graph: Json) -> None:
     resolver_macro_ids = ending_resolver_macro_ids(artifacts)
     if not resolver_macro_ids:
@@ -425,6 +591,7 @@ def add_design_quality_warnings(result: ValidationResult, artifacts: dict[str, A
 
     branch_graph = compile_branch_graph(artifacts)
     add_ending_resolver_findings(result, artifacts, branch_graph)
+    add_adaptation_linearity_warnings(result, artifacts, branch_graph)
     edges_by_from: dict[str, list[Json]] = {}
     for edge in as_list(branch_graph.get("edges")):
         if isinstance(edge, dict) and isinstance(edge.get("from"), str):
@@ -530,6 +697,442 @@ def add_design_quality_warnings(result: ValidationResult, artifacts: dict[str, A
         result.add("warning", "theme_drift", "No theme ids are declared for V2 drift checks.")
 
 
+def validate_source_intake_core(artifacts: dict[str, Any], result: ValidationResult) -> Json:
+    input_profile = artifacts["source_intake/input_profile.json"]
+    segments_payload = artifacts["source_intake/source_segments.json"]
+    beat_table = artifacts["source_intake/source_beat_table.json"]
+    coverage_matrix = artifacts["source_intake/adaptation_coverage_matrix.json"]
+
+    input_mode = input_profile.get("input_mode")
+    if input_mode not in ("idea", "source_adaptation"):
+        result.add(
+            "error",
+            "schema",
+            "input_profile.input_mode must be 'idea' or 'source_adaptation'.",
+            "source_intake.input_profile.input_mode",
+        )
+        input_mode = "idea"
+    source_kind = input_profile.get("source_kind")
+    if not isinstance(source_kind, str) or not source_kind:
+        result.add("error", "schema", "input_profile.source_kind is required.", "source_intake.input_profile.source_kind")
+    coverage_policy = input_profile.get("coverage_policy")
+    if coverage_policy not in ("inventive", "faithful_adaptation"):
+        result.add(
+            "warning",
+            "schema",
+            "input_profile.coverage_policy should be 'inventive' or 'faithful_adaptation'.",
+            "source_intake.input_profile.coverage_policy",
+        )
+
+    segments = [item for item in as_list(segments_payload.get("segments")) if isinstance(item, dict)]
+    segment_ids = unique_id_check(segments, "source_intake.source_segments.segments", result)
+    if not segments:
+        result.add("error", "schema", "source_segments.segments must contain at least one segment.", "source_intake.source_segments.segments")
+
+    segment_importance: dict[str, str] = {}
+    segment_freedom: dict[str, str] = {}
+    for index, segment in enumerate(segments):
+        segment_id = segment.get("id")
+        importance = segment.get("importance", "optional")
+        freedom = segment.get("adaptation_freedom", "expandable")
+        span = segment.get("source_span") if isinstance(segment.get("source_span"), dict) else {}
+        if importance not in ("must_cover", "compressible", "optional"):
+            result.add(
+                "error",
+                "schema",
+                f"Unsupported segment importance: {importance}",
+                f"source_intake.source_segments.segments[{index}].importance",
+            )
+        if freedom not in ("locked", "expandable", "reinterpret_allowed"):
+            result.add(
+                "error",
+                "schema",
+                f"Unsupported segment adaptation_freedom: {freedom}",
+                f"source_intake.source_segments.segments[{index}].adaptation_freedom",
+            )
+        if isinstance(segment_id, str):
+            segment_importance[segment_id] = str(importance)
+            segment_freedom[segment_id] = str(freedom)
+        if input_mode == "idea" and isinstance(segment_id, str) and not segment_id.startswith("idea."):
+            result.add(
+                "warning",
+                "idea_segment_id",
+                f"Idea-mode synthetic segment id should normally use the idea.* namespace: {segment_id}",
+                f"source_intake.source_segments.segments[{index}].id",
+            )
+        normalized_source_kind = str(source_kind).lower()
+        if input_mode == "source_adaptation" and "novel" in normalized_source_kind:
+            start = span.get("start")
+            end = span.get("end")
+            if isinstance(start, int) and isinstance(end, int) and end - start > 2500:
+                result.add(
+                    "warning",
+                    "coarse_novel_segment",
+                    f"Novel source segment is broad; split chapters into scene/dialogue beats when preserving detail: {segment_id}",
+                    f"source_intake.source_segments.segments[{index}].source_span",
+                )
+
+    beats = [item for item in as_list(beat_table.get("beats")) if isinstance(item, dict)]
+    unique_id_check(beats, "source_intake.source_beat_table.beats", result)
+    for index, beat in enumerate(beats):
+        refs = source_segment_ids_from(beat) or {str(item) for item in as_list(beat.get("segment_ids")) if isinstance(item, str)}
+        if not refs:
+            result.add("warning", "beat_without_segment", "Source beat has no source segment reference.", f"source_intake.source_beat_table.beats[{index}]")
+        add_segment_reference_findings(result, refs, segment_ids, f"source_intake.source_beat_table.beats[{index}].source_segment_ids")
+
+    normalized_source_kind = str(source_kind).lower()
+    if input_mode == "source_adaptation" and (
+        normalized_source_kind in ("novel", "full_novel", "fiction") or "novel" in normalized_source_kind
+    ):
+        chapter_count = input_profile.get("chapter_count")
+        if isinstance(chapter_count, int) and chapter_count > 0 and len(segments) <= chapter_count:
+            result.add(
+                "warning",
+                "chapter_level_novel_segments",
+                "Novel adaptation currently has no more source segments than chapters; use chapter groups plus finer scene/dialogue segments to preserve detail.",
+                "source_intake.source_segments.segments",
+            )
+
+    rows = [item for item in as_list(coverage_matrix.get("coverage")) if isinstance(item, dict)]
+    coverage_row_ids = unique_id_check(rows, "source_intake.adaptation_coverage_matrix.coverage", result)
+    coverage_by_segment: dict[str, Json] = {}
+    for index, row in enumerate(rows):
+        segment_id = row.get("segment_id")
+        if segment_id not in segment_ids:
+            result.add(
+                "error",
+                "invalid_reference",
+                f"Coverage row references missing source segment: {segment_id}",
+                f"source_intake.adaptation_coverage_matrix.coverage[{index}].segment_id",
+            )
+            continue
+        if segment_id in coverage_by_segment:
+            result.add(
+                "error",
+                "duplicate_id",
+                f"Duplicate coverage row for source segment: {segment_id}",
+                f"source_intake.adaptation_coverage_matrix.coverage[{index}].segment_id",
+            )
+        coverage_by_segment[str(segment_id)] = row
+        status = row.get("coverage_status", row.get("status"))
+        if status not in ("covered", "compressed", "omitted", "deferred"):
+            result.add(
+                "error",
+                "schema",
+                f"Unsupported coverage status: {status}",
+                f"source_intake.adaptation_coverage_matrix.coverage[{index}].coverage_status",
+            )
+        if status == "omitted" and not row.get("reason"):
+            result.add(
+                "error",
+                "coverage_without_reason",
+                f"Omitted source segment needs a reason: {segment_id}",
+                f"source_intake.adaptation_coverage_matrix.coverage[{index}].reason",
+            )
+
+    if input_mode == "source_adaptation":
+        for segment_id in sorted(segment_ids - set(coverage_by_segment)):
+            result.add(
+                "error",
+                "missing_coverage_row",
+                f"Every source segment needs an adaptation coverage row in source_adaptation mode: {segment_id}",
+                "source_intake.adaptation_coverage_matrix.coverage",
+            )
+        for segment_id, importance in sorted(segment_importance.items()):
+            row = coverage_by_segment.get(segment_id, {})
+            status = row.get("coverage_status", row.get("status"))
+            if importance == "must_cover" and status != "covered":
+                result.add(
+                    "error",
+                    "must_cover_segment_not_covered",
+                    f"Must-cover source segment must be covered, not {status}: {segment_id}",
+                    f"source_intake.adaptation_coverage_matrix.coverage[{segment_id}]",
+                )
+            if importance == "compressible" and status in ("omitted", "deferred"):
+                result.add(
+                    "warning",
+                    "compressible_segment_not_represented",
+                    f"Compressible source segment is not represented in the current design: {segment_id}",
+                    f"source_intake.adaptation_coverage_matrix.coverage[{segment_id}]",
+                )
+
+    return {
+        "input_mode": input_mode,
+        "source_kind": source_kind,
+        "coverage_policy": coverage_policy,
+        "segments": segments,
+        "segment_ids": segment_ids,
+        "segment_importance": segment_importance,
+        "segment_freedom": segment_freedom,
+        "coverage_rows": rows,
+        "coverage_row_ids": coverage_row_ids,
+        "coverage_by_segment": coverage_by_segment,
+    }
+
+
+def validate_source_adaptation_coverage(
+    result: ValidationResult,
+    intake: Json,
+    artifacts: dict[str, Any],
+    macro_nodes: list[Json],
+    contracts: list[Json],
+    subgraphs: list[Json],
+) -> Json:
+    segment_ids = set(intake.get("segment_ids", set()))
+    if not segment_ids:
+        return {"status": "skipped", "reason": "no source segments"}
+
+    input_mode = intake.get("input_mode")
+    segment_freedom = intake.get("segment_freedom", {})
+    coverage_by_segment = intake.get("coverage_by_segment", {})
+    actual_refs: dict[str, dict[str, list[str]]] = {
+        segment_id: {
+            "macro_node_ids": [],
+            "contract_ids": [],
+            "subgraph_ids": [],
+            "subgraph_node_ids": [],
+            "edge_ids": [],
+            "ending_ids": [],
+            "process_ids": [],
+        }
+        for segment_id in segment_ids
+    }
+
+    def add_refs(bucket: str, owner_id: str | None, refs: set[str], path: str) -> None:
+        add_segment_reference_findings(result, refs, segment_ids, path)
+        if not owner_id:
+            return
+        for segment_id in refs:
+            if segment_id in actual_refs:
+                actual_refs[segment_id].setdefault(bucket, []).append(owner_id)
+
+    macro_segment_refs: dict[str, set[str]] = {}
+    for index, macro_node in enumerate(macro_nodes):
+        macro_id = macro_node.get("id")
+        refs = source_segment_ids_from(macro_node)
+        add_refs("macro_node_ids", macro_id if isinstance(macro_id, str) else None, refs, f"macro.macro_story_graph.nodes[{index}].source_segment_ids")
+        if isinstance(macro_id, str):
+            macro_segment_refs[macro_id] = refs
+        if input_mode == "source_adaptation" and not refs:
+            result.add(
+                "error",
+                "adaptation_node_without_source_segment",
+                f"Macro node needs source_segment_ids in source_adaptation mode: {macro_id}",
+                f"macro.macro_story_graph.nodes[{index}].source_segment_ids",
+            )
+
+    for index, macro_edge in enumerate(as_list(artifacts["macro/macro_story_graph.json"].get("edges"))):
+        if not isinstance(macro_edge, dict):
+            continue
+        edge_id = macro_edge.get("id")
+        refs = source_segment_ids_from(macro_edge)
+        add_refs("edge_ids", edge_id if isinstance(edge_id, str) else None, refs, f"macro.macro_story_graph.edges[{index}].source_segment_ids")
+        if input_mode == "source_adaptation" and macro_edge.get("condition_type", "player_choice") == "player_choice" and not refs:
+            result.add(
+                "error",
+                "adaptation_choice_without_source_segment",
+                f"Macro player-visible choice edge needs source_segment_ids in source_adaptation mode: {edge_id}",
+                f"macro.macro_story_graph.edges[{index}].source_segment_ids",
+            )
+        source_macro_refs = macro_segment_refs.get(str(macro_edge.get("from")), set())
+        if source_macro_refs and refs - source_macro_refs:
+            result.add(
+                "error",
+                "segment_distribution_violation",
+                f"Macro edge {edge_id} references source segments outside its source macro node packet: {', '.join(sorted(refs - source_macro_refs))}",
+                f"macro.macro_story_graph.edges[{index}].source_segment_ids",
+            )
+
+    contract_segment_refs: dict[str, set[str]] = {}
+    contract_ids = id_list(contracts)
+    for index, contract in enumerate(contracts):
+        contract_id = contract.get("id")
+        macro_id = contract.get("macro_node_id")
+        refs = source_segment_ids_from(contract)
+        add_refs("contract_ids", contract_id if isinstance(contract_id, str) else None, refs, f"macro.macro_node_contracts.contracts[{index}].source_segment_ids")
+        if isinstance(contract_id, str):
+            contract_segment_refs[contract_id] = refs
+        if input_mode == "source_adaptation" and not refs:
+            result.add(
+                "error",
+                "adaptation_contract_without_source_segment",
+                f"Macro contract needs source_segment_ids in source_adaptation mode: {contract_id}",
+                f"macro.macro_node_contracts.contracts[{index}].source_segment_ids",
+            )
+        macro_refs = macro_segment_refs.get(str(macro_id), set())
+        missing_macro_refs = macro_refs - refs
+        if input_mode == "source_adaptation" and missing_macro_refs:
+            result.add(
+                "error",
+                "contract_missing_macro_segment",
+                f"Contract {contract_id} does not carry macro node source coverage: {', '.join(sorted(missing_macro_refs))}",
+                f"macro.macro_node_contracts.contracts[{index}].source_segment_ids",
+            )
+
+    subgraph_node_segment_refs: dict[str, set[str]] = {}
+    subgraph_ids = id_list(subgraphs)
+    for subgraph in sorted(subgraphs, key=lambda item: int(item.get("expansion_depth", 0)) if isinstance(item.get("expansion_depth"), int) else 9999):
+        subgraph_id = subgraph.get("id")
+        root_macro_id = subgraph_root_macro(subgraph)
+        parent_ref_id = subgraph_parent_ref(subgraph)
+        artifact_path = str(subgraph.get("_artifact_path", "workspace/design_layer_v2/subgraphs"))
+        contract = next((item for item in contracts if item.get("macro_node_id") == root_macro_id), {})
+        contract_refs = source_segment_ids_from(contract)
+        parent_allowed_refs = contract_refs
+        if subgraph.get("parent_ref_kind") == "subgraph_node":
+            parent_allowed_refs = subgraph_node_segment_refs.get(parent_ref_id, contract_refs)
+        refs = source_segment_ids_from(subgraph)
+        add_refs("subgraph_ids", subgraph_id if isinstance(subgraph_id, str) else None, refs, f"{artifact_path}.source_segment_ids")
+        if input_mode == "source_adaptation" and not refs:
+            result.add("error", "adaptation_subgraph_without_source_segment", f"Subgraph needs source_segment_ids: {subgraph_id}", f"{artifact_path}.source_segment_ids")
+        if parent_allowed_refs and refs - parent_allowed_refs:
+            result.add(
+                "error",
+                "segment_distribution_violation",
+                f"Subgraph {subgraph_id} references source segments outside its assigned parent packet: {', '.join(sorted(refs - parent_allowed_refs))}",
+                f"{artifact_path}.source_segment_ids",
+            )
+        local_allowed_refs = refs or parent_allowed_refs
+        for node_index, local_node in enumerate(as_list(subgraph.get("nodes"))):
+            if not isinstance(local_node, dict):
+                continue
+            node_id = local_node.get("id")
+            node_refs = source_segment_ids_from(local_node)
+            add_refs("subgraph_node_ids", node_id if isinstance(node_id, str) else None, node_refs, f"{artifact_path}.nodes[{node_index}].source_segment_ids")
+            if input_mode == "source_adaptation" and not node_refs:
+                result.add("error", "adaptation_node_without_source_segment", f"Subgraph node needs source_segment_ids: {node_id}", f"{artifact_path}.nodes[{node_index}].source_segment_ids")
+            if local_allowed_refs and node_refs - local_allowed_refs:
+                result.add(
+                    "error",
+                    "segment_distribution_violation",
+                    f"Subgraph node {node_id} references source segments outside its assigned parent packet: {', '.join(sorted(node_refs - local_allowed_refs))}",
+                    f"{artifact_path}.nodes[{node_index}].source_segment_ids",
+                )
+            if isinstance(node_id, str):
+                subgraph_node_segment_refs[node_id] = node_refs or local_allowed_refs
+        for edge_index, edge in enumerate(as_list(subgraph.get("edges"))):
+            if not isinstance(edge, dict):
+                continue
+            edge_id = edge.get("id")
+            edge_refs = source_segment_ids_from(edge)
+            add_refs("edge_ids", edge_id if isinstance(edge_id, str) else None, edge_refs, f"{artifact_path}.edges[{edge_index}].source_segment_ids")
+            if input_mode == "source_adaptation" and edge.get("condition_type", "player_choice") == "player_choice" and not edge_refs:
+                result.add(
+                    "error",
+                    "adaptation_choice_without_source_segment",
+                    f"Player-visible choice edge needs source_segment_ids in source_adaptation mode: {edge_id}",
+                    f"{artifact_path}.edges[{edge_index}].source_segment_ids",
+                )
+            if local_allowed_refs and edge_refs - local_allowed_refs:
+                result.add(
+                    "error",
+                    "segment_distribution_violation",
+                    f"Subgraph edge {edge_id} references source segments outside its assigned parent packet: {', '.join(sorted(edge_refs - local_allowed_refs))}",
+                    f"{artifact_path}.edges[{edge_index}].source_segment_ids",
+                )
+
+    adaptation = artifacts["adaptation/adaptation_policy.json"]
+    for index, process in enumerate(as_list(adaptation.get("variable_processes"))):
+        if not isinstance(process, dict):
+            continue
+        process_id = process.get("id")
+        refs = source_segment_ids_from(process)
+        add_refs("process_ids", process_id if isinstance(process_id, str) else None, refs, f"adaptation.adaptation_policy.variable_processes[{index}].source_segment_ids")
+        if input_mode == "source_adaptation":
+            if not refs:
+                result.add(
+                    "error",
+                    "variable_process_without_source_segment",
+                    f"Variable process needs source_segment_ids in source_adaptation mode: {process_id}",
+                    f"adaptation.adaptation_policy.variable_processes[{index}].source_segment_ids",
+                )
+            elif not any(segment_freedom.get(segment_id) in ("expandable", "reinterpret_allowed") for segment_id in refs):
+                result.add(
+                    "error",
+                    "variation_without_permission",
+                    f"Variable process has no expandable or reinterpret_allowed source segment: {process_id}",
+                    f"adaptation.adaptation_policy.variable_processes[{index}].source_segment_ids",
+                )
+    for index, ending in enumerate(as_list(adaptation.get("variable_endings"))):
+        if isinstance(ending, dict):
+            refs = source_segment_ids_from(ending)
+            add_refs("ending_ids", ending.get("id") if isinstance(ending.get("id"), str) else None, refs, f"adaptation.adaptation_policy.variable_endings[{index}].source_segment_ids")
+
+    ending_space = artifacts["adaptation/ending_space.json"]
+    for index, ending in enumerate(as_list(ending_space.get("endings"))):
+        if not isinstance(ending, dict):
+            continue
+        ending_id = ending.get("id")
+        refs = source_segment_ids_from(ending)
+        add_refs("ending_ids", ending_id if isinstance(ending_id, str) else None, refs, f"adaptation.ending_space.endings[{index}].source_segment_ids")
+        if input_mode == "source_adaptation" and ending.get("status") not in ("unavailable", "disabled") and not refs:
+            result.add(
+                "error",
+                "ending_without_source_tension",
+                f"Enabled ending needs source_segment_ids in source_adaptation mode: {ending_id}",
+                f"adaptation.ending_space.endings[{index}].source_segment_ids",
+            )
+
+    coverage_rows = []
+    known_macro_ids = id_list(macro_nodes)
+    known_node_ids = set(subgraph_node_segment_refs) | {
+        branch_node_id_for_macro(str(macro_node.get("id")))
+        for macro_node in macro_nodes
+        if isinstance(macro_node, dict) and isinstance(macro_node.get("id"), str)
+    }
+    for index, row in enumerate(as_list(artifacts["source_intake/adaptation_coverage_matrix.json"].get("coverage"))):
+        if not isinstance(row, dict):
+            continue
+        segment_id = row.get("segment_id")
+        if segment_id not in segment_ids:
+            continue
+        covered_by = row.get("covered_by") if isinstance(row.get("covered_by"), dict) else {}
+        for bucket, known in (
+            ("macro_node_ids", known_macro_ids),
+            ("contract_ids", contract_ids),
+            ("subgraph_ids", subgraph_ids),
+            ("subgraph_node_ids", known_node_ids),
+        ):
+            for ref_id in as_list(covered_by.get(bucket) or row.get(bucket)):
+                if ref_id not in known:
+                    result.add(
+                        "error",
+                        "invalid_reference",
+                        f"Coverage row references missing {bucket[:-1]}: {ref_id}",
+                        f"source_intake.adaptation_coverage_matrix.coverage[{index}].covered_by.{bucket}",
+                    )
+        status = row.get("coverage_status", row.get("status"))
+        declared_refs = {
+            bucket: [str(item) for item in as_list(covered_by.get(bucket) or row.get(bucket))]
+            for bucket in ("macro_node_ids", "contract_ids", "subgraph_ids", "subgraph_node_ids")
+        }
+        has_declared_refs = any(declared_refs.values())
+        has_actual_refs = any(actual_refs.get(str(segment_id), {}).get(bucket) for bucket in actual_refs.get(str(segment_id), {}))
+        if input_mode == "source_adaptation" and status in ("covered", "compressed") and not has_actual_refs and not has_declared_refs:
+            result.add(
+                "error",
+                "coverage_without_anchor",
+                f"Covered source segment has no macro/contract/subgraph anchor: {segment_id}",
+                f"source_intake.adaptation_coverage_matrix.coverage[{index}]",
+            )
+        coverage_rows.append({
+            "segment_id": segment_id,
+            "coverage_status": status,
+            "importance": intake.get("segment_importance", {}).get(segment_id),
+            "adaptation_freedom": segment_freedom.get(segment_id),
+            "actual_refs": actual_refs.get(str(segment_id), {}),
+            "declared_refs": declared_refs,
+            "reason": row.get("reason", ""),
+        })
+
+    return {
+        "status": "pass" if result.status != "fail" else "fail",
+        "input_mode": input_mode,
+        "segment_count": len(segment_ids),
+        "coverage": coverage_rows,
+    }
+
+
 def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationResult:
     ensure_design_v2_layout(run_root)
     result = ValidationResult()
@@ -551,6 +1154,9 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
             write_json(run_root / DESIGN_V2_VALIDATION_REPORT, result.to_json())
         return result
 
+    source_intake = validate_source_intake_core(artifacts, result)
+    segment_ids = set(source_intake.get("segment_ids", set()))
+
     fact_book = artifacts["source_facts/fact_book.json"]
     character_graph = artifacts["source_facts/character_graph.json"]
     event_timeline = artifacts["source_facts/event_timeline.json"]
@@ -569,12 +1175,29 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
 
     facts = as_list(fact_book.get("facts"))
     fact_ids = unique_id_check(facts, "source_facts.fact_book.facts", result)
+    fact_segment_refs: dict[str, set[str]] = {}
+    for index, fact in enumerate(facts):
+        if not isinstance(fact, dict):
+            continue
+        refs = source_segment_ids_from(fact)
+        span_segment_id = source_span_segment_id(fact)
+        if span_segment_id in segment_ids:
+            refs.add(span_segment_id)
+        add_segment_reference_findings(result, refs, segment_ids, f"source_facts.fact_book.facts[{index}].source_segment_ids")
+        fact_id = fact.get("id")
+        if isinstance(fact_id, str):
+            fact_segment_refs[fact_id] = refs
     characters = as_list(character_graph.get("characters"))
     character_ids = unique_id_check(characters, "source_facts.character_graph.characters", result)
     relationships = as_list(character_graph.get("relationships"))
     unique_id_check(relationships, "source_facts.character_graph.relationships", result)
     events = as_list(event_timeline.get("events"))
     event_ids = unique_id_check(events, "source_facts.event_timeline.events", result)
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        refs = source_segment_ids_from(event)
+        add_segment_reference_findings(result, refs, segment_ids, f"source_facts.event_timeline.events[{index}].source_segment_ids")
     themes = as_list(theme_constraints.get("themes"))
     theme_ids = set(normalize_string_items(themes))
     source_ids = fact_ids | event_ids
@@ -583,6 +1206,13 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
     for fact_id in fixed_fact_ids:
         if fact_id not in fact_ids:
             result.add("error", "invalid_reference", f"Fixed fact references missing fact: {fact_id}", "adaptation.adaptation_policy.fixed_fact_ids")
+        elif source_intake.get("input_mode") == "source_adaptation" and not fact_segment_refs.get(fact_id):
+            result.add(
+                "error",
+                "fixed_fact_without_source_segment",
+                f"Fixed fact needs a source segment anchor in source_adaptation mode: {fact_id}",
+                "source_facts.fact_book.facts.source_segment_ids",
+            )
     for process_index, process in enumerate(as_list(adaptation_policy.get("variable_processes"))):
         if not isinstance(process, dict):
             result.add("error", "schema", "Variable process entries must be objects.", f"adaptation.adaptation_policy.variable_processes[{process_index}]")
@@ -596,11 +1226,27 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
     for locked_fact_id in as_list(canon_locks.get("locked_fact_ids")):
         if locked_fact_id not in fact_ids:
             result.add("error", "invalid_reference", f"Canon lock references missing fact: {locked_fact_id}", "adaptation.canon_lock_table.locked_fact_ids")
+        elif source_intake.get("input_mode") == "source_adaptation" and not fact_segment_refs.get(str(locked_fact_id)):
+            result.add(
+                "error",
+                "locked_fact_without_source_segment",
+                f"Locked fact needs a source segment anchor in source_adaptation mode: {locked_fact_id}",
+                "source_facts.fact_book.facts.source_segment_ids",
+            )
     for lock_index, lock in enumerate(as_list(canon_locks.get("locks"))):
         if isinstance(lock, dict):
             fact_id = lock.get("fact_id")
             if fact_id not in fact_ids:
                 result.add("error", "invalid_reference", f"Canon lock references missing fact: {fact_id}", f"adaptation.canon_lock_table.locks[{lock_index}].fact_id")
+    if source_intake.get("input_mode") == "source_adaptation":
+        for fact in facts:
+            if isinstance(fact, dict) and fact.get("locked") is True and isinstance(fact.get("id"), str) and not fact_segment_refs.get(fact["id"]):
+                result.add(
+                    "error",
+                    "locked_fact_without_source_segment",
+                    f"Locked fact needs a source segment anchor in source_adaptation mode: {fact['id']}",
+                    "source_facts.fact_book.facts.source_segment_ids",
+                )
 
     process_ids = unique_id_check(as_list(variable_processes_payload.get("processes")), "adaptation.variable_process_table.processes", result)
     policy_process_ids = id_list(as_list(adaptation_policy.get("variable_processes")))
@@ -841,6 +1487,15 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
             if isinstance(local_exit_id, str):
                 subgraph_exit_refs.add(local_exit_id)
 
+    source_coverage_report = validate_source_adaptation_coverage(
+        result,
+        source_intake,
+        artifacts,
+        macro_nodes,
+        contracts,
+        subgraphs,
+    )
+
     known_budget_refs = macro_node_ids | seen_subgraph_node_ids
     for parent_ref in budget_parent_refs:
         if parent_ref not in known_budget_refs:
@@ -892,9 +1547,11 @@ def validate_design_v2(run_root: Path, write_report: bool = True) -> ValidationR
     if write_report:
         if simulation_profiles is not None:
             write_json(run_root / DESIGN_V2_SIMULATION_PROFILES, simulation_profiles)
+        write_json(run_root / DESIGN_V2_SOURCE_COVERAGE_REPORT, source_coverage_report)
         report = {
             "design_layer": {"version": "v2", "root": str(DESIGN_V2_ROOT)},
             "simulation_profiles": str(DESIGN_V2_SIMULATION_PROFILES) if simulation_profiles is not None else None,
+            "source_coverage_report": str(DESIGN_V2_SOURCE_COVERAGE_REPORT),
             **result.to_json(),
         }
         write_json(run_root / DESIGN_V2_VALIDATION_REPORT, report)
@@ -1270,7 +1927,7 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json) -> Json:
     variables = [dict(item) for item in as_list(artifacts["state/world_state_model.json"].get("variables")) if isinstance(item, dict)]
     macro_nodes = [item for item in as_list(artifacts["macro/macro_story_graph.json"].get("nodes")) if isinstance(item, dict)]
     macro_edges = [item for item in as_list(artifacts["macro/macro_story_graph.json"].get("edges")) if isinstance(item, dict)]
-    contracts = [dict(item) for item in as_list(artifacts["macro/macro_node_contracts.json"].get("contracts")) if isinstance(item, dict)]
+    contracts = [strip_internal_trace(dict(item)) for item in as_list(artifacts["macro/macro_node_contracts.json"].get("contracts")) if isinstance(item, dict)]
     subgraphs = [dict(item) for item in enabled_subgraphs(artifacts) if isinstance(item, dict)]
     contracts_by_macro = {contract.get("macro_node_id"): contract for contract in contracts}
     edge_by_exit = {edge.get("contract_exit_id") or edge.get("exit_id"): edge for edge in branch_graph.get("edges", []) if isinstance(edge, dict)}
@@ -1363,7 +2020,7 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json) -> Json:
                     for event in events
                     if isinstance(event, dict)
                 ],
-                "continuity_rules": as_list(artifacts["source_facts/world_rules.json"].get("rules")),
+                "continuity_rules": strip_internal_trace(as_list(artifacts["source_facts/world_rules.json"].get("rules"))),
             },
         },
         "world": {"summary": artifacts["macro/macro_story_graph.json"].get("summary", "")},
@@ -1394,7 +2051,7 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json) -> Json:
             for node in macro_nodes
         ],
         "node_contracts": contracts,
-        "mesh_expansion_policy": artifacts["control/mesh_expansion_policy.json"],
+        "mesh_expansion_policy": strip_internal_trace(artifacts["control/mesh_expansion_policy.json"]),
         "mesh_expansions": [
             {
                 "id": subgraph.get("id"),
@@ -1413,8 +2070,8 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json) -> Json:
         ],
         "event_rules": event_rules,
         "validation_expectations": {
-            "route_merge_policy": artifacts["control/route_merge_policy.json"],
-            "mesh_expansion_policy": artifacts["control/mesh_expansion_policy.json"],
+            "route_merge_policy": strip_internal_trace(artifacts["control/route_merge_policy.json"]),
+            "mesh_expansion_policy": strip_internal_trace(artifacts["control/mesh_expansion_policy.json"]),
             "compiled_branch_edge_count": len(as_list(branch_graph.get("edges"))),
         },
         "compiler_trace": {
@@ -1490,6 +2147,7 @@ def compile_design_v2(run_root: Path) -> ValidationResult:
         "stage": "copied_public_artifacts",
         "v2_validation_status": validation.status,
         "public_validation_status": public_validation.status,
+        "source_coverage_report": str(DESIGN_V2_SOURCE_COVERAGE_REPORT),
         "staged_outputs": [str(DESIGN_V2_ROOT / "compiled" / filename) for filename in staged],
         "public_outputs": [str(Path("workspace/design_layer") / filename) for filename in staged],
         "findings": [finding.to_json() for finding in validation.findings + public_validation.findings],
@@ -1509,6 +2167,118 @@ def source_node_for_plan(run_root: Path, plan_id: str) -> str | None:
     return None
 
 
+def project_source_adaptation_context(run_root: Path, node_id: str) -> Json:
+    root = design_v2_root(run_root)
+    if not root.exists():
+        return {}
+    segments_path = root / "source_intake" / "source_segments.json"
+    if not segments_path.exists():
+        return {}
+
+    node_segment_ids: set[str] = set()
+    for subgraph_path in list_subgraph_paths(run_root):
+        try:
+            subgraph = read_json(subgraph_path)
+        except Exception:  # noqa: BLE001
+            continue
+        for local_node in as_list(subgraph.get("nodes")):
+            if isinstance(local_node, dict) and local_node.get("id") == node_id:
+                node_segment_ids.update(source_segment_ids_from(local_node))
+        for edge in as_list(subgraph.get("edges")):
+            if isinstance(edge, dict) and (edge.get("from") == node_id or edge.get("to") == node_id):
+                node_segment_ids.update(source_segment_ids_from(edge))
+
+    segment_summaries: list[Json] = []
+    if segments_path.exists():
+        segments_payload = read_json(segments_path)
+        for segment in as_list(segments_payload.get("segments")):
+            if isinstance(segment, dict) and segment.get("id") in node_segment_ids:
+                segment_summaries.append({
+                    "id": segment.get("id"),
+                    "summary": segment.get("summary", ""),
+                    "chapter_number": segment.get("chapter_number"),
+                    "chapter_title": segment.get("chapter_title"),
+                    "importance": segment.get("importance"),
+                    "adaptation_freedom": segment.get("adaptation_freedom"),
+                })
+
+    if not segment_summaries:
+        return {}
+    return {
+        "source_segment_ids": sorted(node_segment_ids),
+        "segment_summaries": segment_summaries,
+        "usage_rules": [
+            "Do not invent contradictory dialogue that changes locked source facts.",
+            "Treat source context as private authoring material. Do not expose source intake labels or coverage ids in player-facing text.",
+            "Treat node summaries, continuity summaries, and transition context as private authoring material. Do not expose reader/player guidance, scene questions, or scene hooks such as 读者, 玩家, 问题是, 问题转向, 问题从, 钩子是, the question is, or the hook is.",
+            "Treat source segment summaries as private planning material. Do not paste summary sentences into Yarn; rewrite useful facts into concrete sensory action, object detail, or character speech.",
+            "Do not expose run-scope, UI, route, or state-label language such as 前五章暂止, 收束前五章, 不显示结局菜单, route, branch, state, or 余波 in player-facing text.",
+            "Write the node as a reader journey, not an excerpt list: orient the player, develop one active question or tension, land a reveal or emotional turn, and transition to the planned outcome.",
+            "Introduce world rules only after the scene gives the player a reason to need that explanation; preserve mystery when a later node should answer it.",
+        ],
+    }
+
+
+def project_transition_context(node: Json, incoming: list[Json], outgoing: list[Json], nodes_by_id: dict[str, Json]) -> Json:
+    def node_summary(node_id: Any) -> Json:
+        if not isinstance(node_id, str):
+            return {}
+        neighbor = nodes_by_id.get(node_id, {})
+        return {
+            "id": neighbor.get("id"),
+            "title": neighbor.get("title", ""),
+            "summary": neighbor.get("summary", ""),
+            "is_terminal": neighbor.get("is_terminal", False),
+        }
+
+    def edge_packet(edge: Json, direction: str) -> Json:
+        other_node_id = edge.get("from") if direction == "incoming" else edge.get("to")
+        return {
+            "edge_id": edge.get("id"),
+            "label": edge.get("label", ""),
+            "condition_type": edge.get("condition_type", "unconditional"),
+            "conditions": as_list(edge.get("conditions")),
+            "effects": edge_state_effects(edge),
+            "other_node": node_summary(other_node_id),
+        }
+
+    incoming_packets = [edge_packet(edge, "incoming") for edge in incoming]
+    outgoing_packets = [edge_packet(edge, "outgoing") for edge in outgoing]
+    state_payoff_cues: list[Json] = []
+    for edge in incoming + outgoing:
+        cue = {
+            "edge_id": edge.get("id"),
+            "label": edge.get("label", ""),
+            "condition_type": edge.get("condition_type", "unconditional"),
+            "state_reads": as_list(edge.get("conditions")),
+            "state_writes": edge_state_effects(edge),
+        }
+        if cue["state_reads"] or cue["state_writes"]:
+            state_payoff_cues.append(cue)
+    generic_outgoing = [
+        edge.get("id")
+        for edge in outgoing
+        if isinstance(edge, dict) and is_plain_continue_edge(edge)
+    ]
+    return {
+        "current_node": {
+            "id": node.get("id"),
+            "title": node.get("title", ""),
+            "summary": node.get("summary", ""),
+        },
+        "incoming": incoming_packets,
+        "outgoing": outgoing_packets,
+        "state_payoff_cues": state_payoff_cues,
+        "handoff_rules": [
+            "Open from the predecessor pressure or unanswered question when an incoming edge exists.",
+            "Use the current node summary as the entry anchor and dramatic task, not as a visible outline.",
+            "Before each planned outcome, make the outgoing edge feel motivated by a consequence, question, or decision.",
+            "If an outgoing edge writes or reads state, make the choice or payoff legible in scene prose without changing topology.",
+        ],
+        "generic_continue_edge_ids": [edge_id for edge_id in generic_outgoing if isinstance(edge_id, str)],
+    }
+
+
 def project_node_context(run_root: Path, node_id: str) -> tuple[Path, Json]:
     branch_graph = read_json(run_root / "workspace" / "design_layer" / "branch_graph.json")
     game_ir = read_json(run_root / "workspace" / "design_layer" / "game_ir.json")
@@ -1519,6 +2289,7 @@ def project_node_context(run_root: Path, node_id: str) -> tuple[Path, Json]:
         raise SystemExit(f"Unknown branch graph node: {node_id}")
     incoming = [edge for edge in edges if edge.get("to") == node_id]
     outgoing = [edge for edge in edges if edge.get("from") == node_id]
+    nodes_by_id = dict_by_id(nodes)
     neighbor_ids = {edge.get("from") for edge in incoming} | {edge.get("to") for edge in outgoing}
     neighbors = [
         {"id": item.get("id"), "title": item.get("title", ""), "summary": item.get("summary", ""), "is_terminal": item.get("is_terminal", False)}
@@ -1585,6 +2356,9 @@ def project_node_context(run_root: Path, node_id: str) -> tuple[Path, Json]:
                 "label": edge.get("label", ""),
                 "to": edge.get("to"),
                 "condition_type": edge.get("condition_type", "unconditional"),
+                "conditions": as_list(edge.get("conditions")),
+                "effects": edge_state_effects(edge),
+                "target_summary": nodes_by_id.get(str(edge.get("to")), {}).get("summary", "") if isinstance(edge.get("to"), str) else "",
             }
             for edge in outgoing
         ],
@@ -1592,6 +2366,8 @@ def project_node_context(run_root: Path, node_id: str) -> tuple[Path, Json]:
         "mesh_expansions": mesh_expansions,
         "state_variables": state_variables,
         "event_rules": event_rules,
+        "source_adaptation_context": project_source_adaptation_context(run_root, node_id),
+        "transition_context": project_transition_context(node, incoming, outgoing, nodes_by_id),
         "continuity": {
             "design_brief": game_ir.get("design_brief", {}),
             "source_facts_digest": game_ir.get("source_facts_digest", {}),

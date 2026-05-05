@@ -1,1 +1,16 @@
-{"fixed_fact_ids":["fact.oath"],"variable_processes":[],"variable_endings":[{"id":"ending.closed","title":"Closed"}],"forbidden_changes":[]}
+{
+  "fixed_fact_ids": [
+    "fact.oath"
+  ],
+  "variable_processes": [],
+  "variable_endings": [
+    {
+      "id": "ending.closed",
+      "title": "Closed",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    }
+  ],
+  "forbidden_changes": []
+}

@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "schema_version": "0.1.0",
+    "generated_by": "SourceSegmenter",
+    "notes": []
+  },
+  "details": [
+    {
+      "id": "detail.arrival.desk",
+      "summary": "Ara reaches the archive desk before dawn.",
+      "detail_type": "setting",
+      "preservation_priority": "must_keep",
+      "source_segment_ids": [
+        "seg.arrival"
+      ],
+      "target_node_ids": [
+        "node.intro.entry"
+      ]
+    },
+    {
+      "id": "detail.key.glass",
+      "summary": "The hidden index points to a glass key.",
+      "detail_type": "object",
+      "preservation_priority": "must_keep",
+      "source_segment_ids": [
+        "seg.key"
+      ],
+      "target_node_ids": [
+        "node.intro.secret"
+      ]
+    }
+  ]
+}

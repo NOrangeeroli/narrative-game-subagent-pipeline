@@ -4,6 +4,7 @@
   const nodes = new Map((story.nodes || []).map((node) => [node.id, node]));
   const assets = new Map((story.assets || []).map((asset) => [asset.asset_id, asset]));
   const characters = new Map((story.characters || []).map((character) => [character.id, character]));
+  const nodeCompletionRules = story.node_completion_rules || [];
   const displayNameToCharacterId = new Map((story.characters || []).map((character) => [normalizeKey(character.display_name), character.id]));
   const portraitAssetToCharacterId = new Map();
   (story.assets || []).forEach((asset) => {
@@ -14,8 +15,16 @@
 
   let currentNodeId = story.start_node_id;
   let beatIndex = 0;
+  let overlayBeats = null;
+  let overlayBeatIndex = 0;
+  let overlayReturnIndex = 0;
+  let overlayExitChoice = null;
   let activitySession = null;
   let pendingRouteChoice = null;
+  let terminalVariantPlayed = false;
+  let activeEndingVariant = null;
+  let nodeCompletionApplied = false;
+  let sceneBackgroundId = null;
   let currentBgmId = null;
   let currentBgm = null;
   let currentVoice = null;
@@ -127,7 +136,8 @@
   }
 
   function resetNodeScene(node) {
-    setBackground(node.background_id || node.id);
+    sceneBackgroundId = node.background_id || node.id;
+    setBackground(sceneBackgroundId);
     activePortraits.clear();
     const beats = node.beats || [];
     const hasPresentationCommands = beats.some((beat) => {
@@ -265,11 +275,19 @@
   }
 
   function executeCommand(command) {
-    if (!command || command.type !== "command") return;
+    if (!command || command.type !== "command") return false;
     const args = command.args || {};
     if (command.command === "show_bg") {
       const assetId = commandArg(command, "asset_id", "bg");
+      if (assetId) {
+        sceneBackgroundId = assetId;
+        setBackground(assetId);
+      }
+    } else if (command.command === "show_cg") {
+      const assetId = commandArg(command, "asset_id", "cg");
       if (assetId) setBackground(assetId);
+    } else if (command.command === "hide_cg") {
+      setBackground(sceneBackgroundId || currentNodeId);
     } else if (command.command === "show_char") {
       const assetId = args.asset_id || args.expression_asset_id || args.portrait;
       const characterHint = args.character_id || args.character || args.name;
@@ -298,44 +316,76 @@
       stopBgm();
     } else if (command.command === "play_sfx") {
       playSfx(commandArg(command, "asset_id", "track"));
+    } else if (command.command === "set") {
+      applyWrites([args]);
+    } else if (command.command === "complete_activity") {
+      return completeActivity(args.outcome || args.outcome_id || args.edge_id, []);
     }
+    return false;
   }
 
   function advancePastCommands(beats) {
     while (beatIndex < beats.length && beats[beatIndex] && beats[beatIndex].type === "command") {
-      executeCommand(beats[beatIndex]);
+      if (executeCommand(beats[beatIndex])) return true;
       beatIndex += 1;
     }
+    return false;
   }
 
   function applyWrites(writes) {
     (writes || []).forEach((write) => {
-      const id = write.state_variable_id;
-      if (!id) return;
-      if (write.operation === "increment") {
-        state[id] = Number(state[id] || 0) + Number(write.value || 1);
-      } else if (write.operation === "decrement") {
-        state[id] = Number(state[id] || 0) - Number(write.value || 1);
-      } else if (write.operation === "append") {
-        state[id] = Array.isArray(state[id]) ? state[id].concat([write.value]) : [write.value];
-      } else if (write.operation === "remove") {
-        state[id] = Array.isArray(state[id]) ? state[id].filter((item) => item !== write.value) : state[id];
+      if (!write || typeof write !== "object") {
+        if (typeof console !== "undefined" && console.warn) console.warn("Ignoring invalid state write", write);
+        return;
+      }
+      const id = write.state_variable_id || write.state_id || write.id;
+      if (!id) {
+        if (typeof console !== "undefined" && console.warn) console.warn("Ignoring state write without id", write);
+        return;
+      }
+      const value = normalizeStateValue(write.value);
+      const operation = write.operation || write.op || "set";
+      if (operation === "increment") {
+        state[id] = Number(state[id] || 0) + Number(value || 1);
+      } else if (operation === "decrement") {
+        state[id] = Number(state[id] || 0) - Number(value || 1);
+      } else if (operation === "append") {
+        state[id] = Array.isArray(state[id]) ? state[id].concat([value]) : [value];
+      } else if (operation === "remove") {
+        state[id] = Array.isArray(state[id]) ? state[id].filter((item) => item !== value) : state[id];
       } else {
-        state[id] = write.value;
+        state[id] = value;
       }
     });
   }
 
+  function normalizeStateValue(value) {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    if (value === "null") return null;
+    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+    return value;
+  }
+
   function conditionPasses(condition) {
-    if (!condition || !condition.state_variable_id) return true;
-    const actual = state[condition.state_variable_id];
-    const expected = condition.value;
+    const id = condition && (condition.state_variable_id || condition.state_id || condition.id);
+    if (!condition || !id) return true;
+    const actual = state[id];
+    const expected = normalizeStateValue(condition.value);
     switch (condition.operator) {
+      case "!=":
       case "not_equals": return actual !== expected;
+      case ">":
       case "greater_than": return Number(actual) > Number(expected);
+      case ">=":
       case "greater_than_or_equal": return Number(actual) >= Number(expected);
+      case "<":
       case "less_than": return Number(actual) < Number(expected);
+      case "<=":
       case "less_than_or_equal": return Number(actual) <= Number(expected);
+      case "==":
       case "equals":
       default: return actual === expected;
     }
@@ -345,6 +395,17 @@
     return (choice.conditions || []).every(conditionPasses);
   }
 
+  function applyNodeCompletionRules(nodeId) {
+    if (nodeCompletionApplied) return;
+    nodeCompletionApplied = true;
+    nodeCompletionRules.forEach((rule) => {
+      if (!rule || rule.source_node_id !== nodeId) return;
+      if ((rule.conditions || []).every(conditionPasses)) {
+        applyWrites(rule.effects);
+      }
+    });
+  }
+
   function isVisibleChoice(choice) {
     return (choice.condition_type || "player_choice") === "player_choice";
   }
@@ -352,8 +413,15 @@
   function enterNode(nodeId) {
     currentNodeId = nodeId;
     beatIndex = 0;
+    overlayBeats = null;
+    overlayBeatIndex = 0;
+    overlayReturnIndex = 0;
+    overlayExitChoice = null;
     activitySession = null;
     pendingRouteChoice = null;
+    terminalVariantPlayed = false;
+    activeEndingVariant = null;
+    nodeCompletionApplied = false;
     lastVoiceKey = null;
     stopVoice();
     stopAllSfx();
@@ -362,22 +430,98 @@
     render();
   }
 
+  function commitChoice(choice, extraWrites) {
+    if (!choice || !choice.target) return;
+    applyWrites(choice.effects);
+    applyWrites(choice.state_writes);
+    applyWrites(extraWrites);
+    applyNodeCompletionRules(currentNodeId);
+    enterNode(choice.target);
+    return true;
+  }
+
+  function startOverlay(beats, options) {
+    overlayBeats = beats || [];
+    overlayBeatIndex = 0;
+    overlayReturnIndex = options && Number.isInteger(options.returnIndex) ? options.returnIndex : beatIndex;
+    overlayExitChoice = options && options.exitChoice ? options.exitChoice : null;
+    beatIndex = 0;
+    render();
+  }
+
   function followChoice(choice) {
     if (!choice || !choice.target) return;
+    const beats = choice.beats || [];
+    if (beats.length) {
+      startOverlay(beats, { exitChoice: choice });
+      return;
+    }
+    commitChoice(choice, []);
+  }
+
+  function chooseInline(choice) {
+    const returnIndex = beatIndex + 1;
+    applyWrites(choice.effects);
     applyWrites(choice.state_writes);
-    enterNode(choice.target);
+    startOverlay(choice.beats || [], { returnIndex });
+  }
+
+  function finishOverlay() {
+    const exitChoice = overlayExitChoice;
+    const returnIndex = overlayReturnIndex;
+    overlayBeats = null;
+    overlayBeatIndex = 0;
+    overlayReturnIndex = 0;
+    overlayExitChoice = null;
+    if (exitChoice) {
+      commitChoice(exitChoice, []);
+    } else {
+      beatIndex = returnIndex;
+      render();
+    }
+  }
+
+  function selectEndingVariant(node) {
+    const variants = (node.ending_variants || []).filter((variant) => {
+      return (variant.conditions || []).every(conditionPasses);
+    });
+    if (!variants.length) return null;
+    variants.sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+    return variants[0];
+  }
+
+  function startTerminalVariant(node) {
+    if (!node || terminalVariantPlayed) return false;
+    const variant = selectEndingVariant(node);
+    if (!variant) return false;
+    terminalVariantPlayed = true;
+    activeEndingVariant = variant;
+    applyWrites(variant.state_writes);
+    if (variant.ending_id && state["state.game.ending_id"] == null) {
+      state["state.game.ending_id"] = variant.ending_id;
+    }
+    if ((variant.beats || []).length) {
+      startOverlay(variant.beats, { returnIndex: beatIndex });
+      return true;
+    }
+    render();
+    return true;
   }
 
   function completeActivity(outcomeId, writes) {
     const node = nodes.get(currentNodeId);
-    if (!node) return;
+    if (!node) return false;
     const choice = (node.choices || []).find((candidate) => {
-      return candidate.outcome_id === outcomeId || candidate.edge_id === outcomeId;
+      return candidate.outcome_id === outcomeId || candidate.edge_id === outcomeId || (candidate.source_rule_ids || []).includes(outcomeId);
     }) || (node.choices || [])[0];
-    if (!choice || !choicePasses(choice)) return;
-    applyWrites(choice.state_writes);
-    applyWrites(writes);
-    enterNode(choice.target);
+    if (!choice || !choicePasses(choice)) return false;
+    return commitChoice(choice, writes);
+  }
+
+  function followPendingRouteChoice() {
+    const choice = pendingRouteChoice;
+    pendingRouteChoice = null;
+    if (choice) followChoice(choice);
   }
 
   function makeButton(label, onClick, className) {
@@ -407,10 +551,11 @@
       continueButton.hidden = true;
       return;
     }
-    choices.forEach((choice) => {
-      choicesEl.appendChild(makeButton(choice.label || "Continue", () => followChoice(choice)));
+    const displayedChoices = choices.concat(routeChoices.length > 1 || choices.length > 0 ? routeChoices : []);
+    displayedChoices.forEach((choice) => {
+      choicesEl.appendChild(makeButton(choice.label || "Continue", () => followChoice(choice), isVisibleChoice(choice) ? "" : "route-choice"));
     });
-    if (choices.length === 0 && routeChoices.length > 0) {
+    if (choices.length === 0 && routeChoices.length === 1) {
       pendingRouteChoice = routeChoices[0];
       continueButton.hidden = false;
       return;
@@ -733,6 +878,39 @@
     }
   }
 
+  function renderInlineChoice(beat) {
+    choicesEl.innerHTML = "";
+    continueButton.hidden = true;
+    speakerEl.textContent = beat.speaker || "Choose";
+    lineEl.textContent = beat.text || "";
+    const availableChoices = (beat.choices || []).filter(choicePasses);
+    if (!availableChoices.length) {
+      beatIndex += 1;
+      render();
+      return;
+    }
+    availableChoices.forEach((choice) => {
+      choicesEl.appendChild(makeButton(choice.label || "Continue", () => chooseInline(choice)));
+    });
+  }
+
+  function renderBeatList(beats, onComplete) {
+    if (advancePastCommands(beats)) return true;
+    if (beatIndex >= beats.length) {
+      onComplete();
+      return true;
+    }
+    const beat = beats[Math.min(beatIndex, beats.length - 1)];
+    if (beat && beat.type === "choice") {
+      renderInlineChoice(beat);
+      return true;
+    }
+    speakerEl.textContent = beat.speaker || "Narrator";
+    lineEl.textContent = beat.text || "";
+    playVoiceForBeat(beat);
+    return false;
+  }
+
   function render() {
     const node = nodes.get(currentNodeId);
     if (!node) {
@@ -745,21 +923,33 @@
       return;
     }
     titleEl.textContent = story.title || "Narrative Game";
-    nodeTitleEl.textContent = node.title || node.id;
+    nodeTitleEl.textContent = (activeEndingVariant && activeEndingVariant.title) || node.title || node.id;
     choicesEl.innerHTML = "";
     continueButton.textContent = "Continue";
     pendingRouteChoice = null;
+    if (overlayBeats) {
+      if (!renderBeatList(overlayBeats, finishOverlay)) {
+        continueButton.hidden = false;
+      }
+      return;
+    }
     if (node.gameplay) {
       renderGameplay(node);
       return;
     }
     const beats = node.beats && node.beats.length ? node.beats : [{ speaker: "Narrator", text: "..." }];
-    advancePastCommands(beats);
+    if (advancePastCommands(beats)) return;
     if (beatIndex >= beats.length) {
+      if (node.is_terminal) applyNodeCompletionRules(node.id);
+      if (node.is_terminal && startTerminalVariant(node)) return;
       renderChoices(node);
       return;
     }
     const beat = beats[Math.min(beatIndex, beats.length - 1)];
+    if (beat && beat.type === "choice") {
+      renderInlineChoice(beat);
+      return;
+    }
     speakerEl.textContent = beat.speaker || "Narrator";
     lineEl.textContent = beat.text || "";
     playVoiceForBeat(beat);
@@ -772,7 +962,7 @@
 
   continueButton.addEventListener("click", () => {
     if (pendingRouteChoice) {
-      followChoice(pendingRouteChoice);
+      followPendingRouteChoice();
       return;
     }
     beatIndex += 1;
@@ -782,8 +972,15 @@
   restartButton.addEventListener("click", () => {
     currentNodeId = story.start_node_id;
     beatIndex = 0;
+    overlayBeats = null;
+    overlayBeatIndex = 0;
+    overlayReturnIndex = 0;
+    overlayExitChoice = null;
     activitySession = null;
     pendingRouteChoice = null;
+    terminalVariantPlayed = false;
+    activeEndingVariant = null;
+    nodeCompletionApplied = false;
     stopBgm();
     stopVoice();
     pendingAudio.length = 0;

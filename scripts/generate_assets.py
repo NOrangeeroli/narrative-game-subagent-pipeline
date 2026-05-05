@@ -16,6 +16,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -135,6 +136,35 @@ def render_background_svg(asset: Json, style_bible: Json) -> str:
     return '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">\n  ' + "\n  ".join(layers) + "\n</svg>\n"
 
 
+def render_cg_svg(asset: Json, style_bible: Json) -> str:
+    asset_id = str(asset.get("asset_id") or "cg.default")
+    spec = asset.get("spec") if isinstance(asset.get("spec"), dict) else {}
+    palette = [color for color in as_list(style_bible.get("palette")) if isinstance(color, str) and color.startswith("#")]
+    sky = palette[0] if palette else hex_color(asset_id, 21, 64, 26)
+    ground = palette[1] if len(palette) > 1 else hex_color(asset_id, 22, 46, 30)
+    accent = palette[2] if len(palette) > 2 else hex_color(asset_id, 23, 58, 52)
+    warm = palette[3] if len(palette) > 3 else "#f1c36a"
+    description = str(spec.get("description") or asset_id)
+    label = escape(description[:70])
+    layers = [
+        f'<rect x="0" y="0" width="1280" height="720" fill="{sky}" />',
+        f'<rect x="0" y="382" width="1280" height="338" fill="{ground}" />',
+        '<ellipse cx="640" cy="388" rx="460" ry="42" fill="#ffffff" opacity="0.16" />',
+        f'<polygon points="78,612 322,242 544,612" fill="{accent}" opacity="0.9" />',
+        f'<polygon points="424,620 726,170 1036,620" fill="{warm}" opacity="0.78" />',
+        '<ellipse cx="420" cy="618" rx="120" ry="30" fill="#111418" opacity="0.24" />',
+        '<ellipse cx="816" cy="618" rx="156" ry="34" fill="#111418" opacity="0.22" />',
+        '<circle cx="418" cy="360" r="62" fill="#efd0b7" />',
+        '<rect x="348" y="418" width="142" height="184" rx="48" fill="#3d5967" />',
+        '<circle cx="816" cy="326" r="74" fill="#efd0b7" />',
+        '<rect x="724" y="396" width="188" height="214" rx="58" fill="#754957" />',
+        '<path d="M188 216 C314 116 514 132 640 236 C764 340 980 288 1110 166" fill="none" stroke="#ffffff" stroke-width="12" stroke-opacity="0.36" stroke-linecap="round" />',
+        '<rect x="56" y="52" width="1168" height="616" rx="22" fill="none" stroke="#ffffff" stroke-opacity="0.34" stroke-width="8" />',
+        f'<text x="640" y="676" font-size="24" text-anchor="middle" fill="#f8f5ec" opacity="0.62">{label}</text>',
+    ]
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">\n  ' + "\n  ".join(layers) + "\n</svg>\n"
+
+
 def render_portrait_svg(character: Json, portrait: Json, style_bible: Json) -> str:
     asset_id = str(portrait.get("asset_id") or "portrait.character")
     display_name = str(character.get("display_name") or asset_id)
@@ -236,6 +266,19 @@ def resolve_audio_concurrency(value: int | None = None) -> int:
     return max(1, int(value or 1))
 
 
+def resolve_image_concurrency(value: int | None = None) -> int:
+    if value is None:
+        raw = os.environ.get("IMAGE_CONCURRENCY") or os.environ.get("IMAGE_ASSET_CONCURRENCY")
+        if raw and raw.strip():
+            try:
+                value = int(raw)
+            except ValueError:
+                value = 4
+        else:
+            value = 4
+    return max(1, int(value or 1))
+
+
 def write_image_as_png(output_path: Path, image: GeneratedImage, raw_path: Path | None = None) -> list[str]:
     ensure_dir(output_path.parent)
     notes: list[str] = []
@@ -310,6 +353,43 @@ def build_background_prompt(background: Json, manifest: Json) -> str:
     ])
 
 
+def build_cg_prompt(cg: Json, manifest: Json) -> str:
+    spec = cg.get("spec") if isinstance(cg.get("spec"), dict) else {}
+    style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
+    return " ".join([
+        str(spec.get("description") or f"Create a visual novel CG illustration for {cg.get('story_beat_id', 'story beat')}."),
+        f"Visual style: {style.get('rendering_mode', 'visual novel illustration')}.",
+        "Composition: memorable 16:9 story illustration that can be shown as a full-screen CG.",
+        "No readable captions, no speech bubbles, no UI chrome.",
+    ])
+
+
+def build_character_identity_direction(character: Json) -> str:
+    profile = character.get("character_profile") if isinstance(character.get("character_profile"), dict) else {}
+    gender = str(character.get("gender") or profile.get("gender") or "").strip()
+    age = str(character.get("age_impression") or profile.get("age_impression") or profile.get("age") or "").strip()
+    persona = str(profile.get("persona") or "").strip()
+    profile_prompt = str(profile.get("prompt") or "").strip()
+    parts = []
+    if gender:
+        normalized_gender = gender.lower()
+        if normalized_gender == "male":
+            parts.append("Mandatory identity: adult male character with clearly masculine face, build, posture, and styling.")
+        elif normalized_gender == "female":
+            parts.append("Mandatory gender: female.")
+        elif normalized_gender != "unspecified":
+            parts.append(f"Mandatory gender presentation: {gender}.")
+    if age:
+        parts.append(f"Age impression: {age}.")
+    if persona:
+        parts.append(f"Character persona: {persona}.")
+    if profile_prompt:
+        parts.append(f"Identity prompt: {profile_prompt}.")
+    if parts:
+        parts.append("These identity constraints override name associations, puns, aliases, and scene nicknames.")
+    return " ".join(parts)
+
+
 def build_portrait_prompt(character: Json, portrait: Json, manifest: Json, reference_image: bool = False) -> str:
     spec = portrait.get("spec") if isinstance(portrait.get("spec"), dict) else {}
     style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
@@ -331,6 +411,7 @@ def build_portrait_prompt(character: Json, portrait: Json, manifest: Json, refer
     )
     return " ".join([
         f"Character name: {character.get('display_name', character.get('id', 'character'))}.",
+        build_character_identity_direction(character),
         f"Required expression: {emotion}.",
         f"Expression direction: {expression_notes}.",
         f"Character and costume direction: {spec.get('description', '')}.",
@@ -341,8 +422,41 @@ def build_portrait_prompt(character: Json, portrait: Json, manifest: Json, refer
         "The face should occupy roughly 28 to 40 percent of the image height; do not render a tiny full-body sprite.",
         "The expression must be obvious at small visual novel sprite size through eyes, brows, mouth shape, head angle, shoulders, and hands.",
         "Avoid subtle micro-expressions; make the emotional contrast clear while preserving the character design.",
-        "No background, no text, no speech bubbles.",
+        "No background, no readable text, no logos, no captions, no speech bubbles.",
     ])
+
+
+def strip_dialogue_quotes(value: str) -> str:
+    text = value.strip()
+    for left, right in (("“", "”"), ('"', '"'), ("'", "'")):
+        if text.startswith(left) and text.endswith(right) and len(text) >= len(left) + len(right):
+            return text[len(left): -len(right)].strip()
+    return text
+
+
+def spoken_voice_text(value: Any, speaker: Any = None) -> str:
+    text = str(value or "").strip()
+    speaker_text = str(speaker or "").strip()
+    if not text:
+        return ""
+    if speaker_text:
+        escaped = re.escape(speaker_text)
+        action_match = re.match(rf"^{escaped}[^“”\"']*[:：]\s*[“\"](.+?)[”\"]\s*$", text)
+        if action_match:
+            return action_match.group(1).strip()
+        prefix_match = re.match(rf"^{escaped}(?:心想|（心声）|\(心声\))?[:：]\s*(.+)$", text)
+        if prefix_match:
+            return strip_dialogue_quotes(prefix_match.group(1))
+    label_match = re.match(r"^([^:：“”\"'\n]{1,24})[:：]\s*(.+)$", text)
+    if label_match:
+        label = re.sub(r"\s+", "", label_match.group(1).strip())
+        rest = label_match.group(2).strip()
+        speaker_compact = re.sub(r"\s+", "", speaker_text)
+        if rest.startswith(("“", '"')) or (
+            speaker_compact and (label in speaker_compact or speaker_compact in label)
+        ):
+            return strip_dialogue_quotes(rest)
+    return strip_dialogue_quotes(text)
 
 
 def ordered_portrait_assets(character: Json) -> list[Json]:
@@ -370,7 +484,10 @@ def build_audio_prompt(audio: Json, manifest: Json) -> str:
     description = str(spec.get("description") or audio.get("description") or audio.get("asset_id") or "audio cue")
     mood = str(spec.get("mood") or audio.get("mood") or style.get("lighting_mood") or "")
     if kind == "voice":
-        text = str(spec.get("text") or spec.get("line_text") or audio.get("text") or "").strip()
+        text = spoken_voice_text(
+            spec.get("text") or spec.get("line_text") or audio.get("text") or "",
+            spec.get("speaker") or audio.get("speaker"),
+        )
         if not text:
             raise RuntimeError(
                 f"Voice asset {audio.get('asset_id', '<unknown>')} requires exact dialogue or monologue text "
@@ -388,6 +505,25 @@ def build_audio_prompt(audio: Json, manifest: Json) -> str:
         f"Mood: {mood}." if mood else "",
         "Loop-friendly arrangement, no vocals, no lyrics, supports dialogue readability.",
     ]).strip()
+
+
+def audio_voice_delivery(audio: Json) -> Json:
+    if str(audio.get("kind") or "").lower() != "voice":
+        return {}
+    spec = audio.get("spec") if isinstance(audio.get("spec"), dict) else {}
+    binding = {}
+    if isinstance(spec.get("provider_bindings"), dict):
+        maybe_binding = spec["provider_bindings"].get("minimax-ppio")
+        if isinstance(maybe_binding, dict):
+            binding = maybe_binding
+    delivery = {
+        "speaker": spec.get("speaker"),
+        "authored_emotion": spec.get("emotion"),
+        "authored_tone": spec.get("tone"),
+        "provider_voice_emotion": binding.get("voice_emotion") or spec.get("voice_emotion"),
+        "voice_profile_id": binding.get("voice_profile_id") or spec.get("voice_id"),
+    }
+    return {key: value for key, value in delivery.items() if value not in (None, "", [])}
 
 
 def audio_with_manifest_voice_profile(audio: Json, manifest: Json) -> Json:
@@ -423,12 +559,14 @@ def generate_assets(
     sfx_provider: str | None = None,
     voice_provider: str | None = None,
     audio_concurrency: int | None = None,
+    image_concurrency: int | None = None,
 ) -> Json:
     provider = provider or os.environ.get("IMAGE_ASSET_PROVIDER") or "local-svg"
     audio_provider_id = audio_provider or os.environ.get("AUDIO_ASSET_PROVIDER") or os.environ.get("AUDIO_PROVIDER") or "mock"
     audio_fallback_provider = audio_fallback_provider or os.environ.get("AUDIO_FALLBACK_PROVIDER")
     audio_provider_overrides = {"bgm": bgm_provider, "sfx": sfx_provider, "voice": voice_provider}
     audio_concurrency_value = resolve_audio_concurrency(audio_concurrency)
+    image_concurrency_value = resolve_image_concurrency(image_concurrency)
     asset_manifest = load_optional_json(path_for(run_root, "asset_manifest"))
     if not asset_manifest:
         raise SystemExit("Missing workspace/asset-manifest.json. Run plan_assets.py first.")
@@ -439,13 +577,19 @@ def generate_assets(
     warnings = []
     model_id = resolve_provider_model(provider, model)
 
-    for background in as_list(asset_manifest.get("backgrounds")):
-        if not isinstance(background, dict):
-            continue
+    def run_parallel_tasks(items: list[Any], worker: Any, concurrency: int) -> list[Any]:
+        if concurrency > 1 and len(items) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(worker, item) for item in items]
+                return [future.result() for future in futures]
+        return [worker(item) for item in items]
+
+    def process_background(background: Json) -> tuple[Json | None, list[str]]:
+        local_warnings: list[str] = []
         output_path = output_root / str(background["file_ref"])
         if output_path.exists() and not overwrite:
-            warnings.append(f"Skipped existing background {background['asset_id']} at {background['file_ref']}.")
-            continue
+            local_warnings.append(f"Skipped existing background {background['asset_id']} at {background['file_ref']}.")
+            return None, local_warnings
         prompt = build_background_prompt(background, asset_manifest)
         prompt_path = prompt_root / f"{sanitize_file_stem(background['asset_id'])}.txt"
         write_text(prompt_path, prompt + "\n")
@@ -472,7 +616,7 @@ def generate_assets(
             svg = render_background_svg(background, asset_manifest.get("style_bible", {}))
             source_svg = output_root / "generated" / "sources" / f"{sanitize_file_stem(background['asset_id'])}.svg"
             notes.extend(write_png_from_svg(svg, output_path, source_svg))
-        entries.append({
+        return {
             "asset_id": background["asset_id"],
             "role": "background",
             "prompt": prompt,
@@ -481,84 +625,147 @@ def generate_assets(
             "model": model_id,
             "output_files": [str(output_path)],
             "notes": notes,
-        })
+        }, local_warnings
 
-    for character in as_list(asset_manifest.get("characters")):
-        if not isinstance(character, dict):
-            continue
-        first_portrait_path: Path | None = None
-        for portrait in ordered_portrait_assets(character):
-            output_path = output_root / str(portrait["file_ref"])
-            source_path = output_root / str(portrait.get("source_file_ref") or portrait["file_ref"])
-            if output_path.exists() and not overwrite:
-                warnings.append(f"Skipped existing portrait {portrait['asset_id']} at {portrait['file_ref']}.")
-                if first_portrait_path is None:
-                    first_portrait_path = output_path
-                continue
-            reference_images = []
-            if provider == "gemini" and first_portrait_path and first_portrait_path.exists() and first_portrait_path != output_path:
-                reference_images.append(first_portrait_path)
-            prompt = build_portrait_prompt(character, portrait, asset_manifest, reference_image=bool(reference_images))
-            prompt_path = prompt_root / f"{sanitize_file_stem(portrait['asset_id'])}.txt"
-            write_text(prompt_path, prompt + "\n")
-            notes = []
-            if reference_images:
-                notes.append(f"used reference portrait {reference_images[0].relative_to(output_root)}")
-            if maybe_copy_provider_hint(run_root, portrait, output_path):
-                ensure_dir(source_path.parent)
-                shutil.copy2(output_path, source_path)
-                notes.append("copied provider_hints source")
-            elif provider == "mock":
-                notes.extend(write_mock_png(source_path))
+    backgrounds = [background for background in as_list(asset_manifest.get("backgrounds")) if isinstance(background, dict)]
+    for entry, local_warnings in run_parallel_tasks(backgrounds, process_background, image_concurrency_value):
+        warnings.extend(local_warnings)
+        if entry:
+            entries.append(entry)
+
+    def process_cg(cg: Json) -> tuple[Json | None, list[str]]:
+        local_warnings: list[str] = []
+        output_path = output_root / str(cg["file_ref"])
+        if output_path.exists() and not overwrite:
+            local_warnings.append(f"Skipped existing CG {cg['asset_id']} at {cg['file_ref']}.")
+            return None, local_warnings
+        prompt = build_cg_prompt(cg, asset_manifest)
+        prompt_path = prompt_root / f"{sanitize_file_stem(cg['asset_id'])}.txt"
+        write_text(prompt_path, prompt + "\n")
+        notes = []
+        if maybe_copy_provider_hint(run_root, cg, output_path):
+            notes.append("copied provider_hints source")
+        elif provider == "mock":
+            notes.extend(write_mock_png(output_path))
+        elif provider in REMOTE_IMAGE_PROVIDERS:
+            images = generate_provider_images(
+                provider=provider,
+                model=model,
+                asset_id=str(cg["asset_id"]),
+                output_root=output_root,
+                prompt=prompt,
+                image_type="cg",
+                aspect_ratio="16:9",
+                expected_count=1,
+            )
+            if not images:
+                raise RuntimeError(f"Provider returned no CG image for {cg['asset_id']}.")
+            notes.extend(write_image_as_png(output_path, images[0]))
+        else:
+            svg = render_cg_svg(cg, asset_manifest.get("style_bible", {}))
+            source_svg = output_root / "generated" / "sources" / f"{sanitize_file_stem(cg['asset_id'])}.svg"
+            notes.extend(write_png_from_svg(svg, output_path, source_svg))
+        return {
+            "asset_id": cg["asset_id"],
+            "role": "cg",
+            "prompt": prompt,
+            "prompt_ref": str(prompt_path.relative_to(output_root)),
+            "provider": provider,
+            "model": model_id,
+            "output_files": [str(output_path)],
+            "notes": notes,
+        }, local_warnings
+
+    cgs = [cg for cg in as_list(asset_manifest.get("cgs")) if isinstance(cg, dict)]
+    for entry, local_warnings in run_parallel_tasks(cgs, process_cg, image_concurrency_value):
+        warnings.extend(local_warnings)
+        if entry:
+            entries.append(entry)
+
+    def process_portrait_asset(
+        character: Json,
+        portrait: Json,
+        first_portrait_path: Path | None,
+    ) -> tuple[Json | None, list[str], Path | None]:
+        local_warnings: list[str] = []
+        output_path = output_root / str(portrait["file_ref"])
+        source_path = output_root / str(portrait.get("source_file_ref") or portrait["file_ref"])
+        if output_path.exists() and not overwrite:
+            local_warnings.append(f"Skipped existing portrait {portrait['asset_id']} at {portrait['file_ref']}.")
+            return None, local_warnings, output_path
+        reference_images = []
+        if provider == "gemini" and first_portrait_path and first_portrait_path.exists() and first_portrait_path != output_path:
+            reference_images.append(first_portrait_path)
+        prompt = build_portrait_prompt(character, portrait, asset_manifest, reference_image=bool(reference_images))
+        prompt_path = prompt_root / f"{sanitize_file_stem(portrait['asset_id'])}.txt"
+        write_text(prompt_path, prompt + "\n")
+        notes = []
+        if reference_images:
+            notes.append(f"used reference portrait {reference_images[0].relative_to(output_root)}")
+        if maybe_copy_provider_hint(run_root, portrait, output_path):
+            ensure_dir(source_path.parent)
+            shutil.copy2(output_path, source_path)
+            notes.append("copied provider_hints source")
+        elif provider == "mock":
+            notes.extend(write_mock_png(source_path))
+            ensure_dir(output_path.parent)
+            shutil.copy2(source_path, output_path)
+        elif provider in REMOTE_IMAGE_PROVIDERS:
+            images = generate_provider_images(
+                provider=provider,
+                model=model,
+                asset_id=str(portrait["asset_id"]),
+                output_root=output_root,
+                prompt=prompt,
+                image_type="character",
+                aspect_ratio="2:3",
+                expected_count=1,
+                reference_images=reference_images,
+            )
+            if not images:
+                raise RuntimeError(f"Provider returned no portrait image for {portrait['asset_id']}.")
+            notes.extend(write_image_as_png(source_path, images[0]))
+            if remove_backgrounds:
+                notes.extend(remove_background_if_possible(source_path, output_path))
+            else:
                 ensure_dir(output_path.parent)
                 shutil.copy2(source_path, output_path)
-            elif provider in REMOTE_IMAGE_PROVIDERS:
-                images = generate_provider_images(
-                    provider=provider,
-                    model=model,
-                    asset_id=str(portrait["asset_id"]),
-                    output_root=output_root,
-                    prompt=prompt,
-                    image_type="character",
-                    aspect_ratio="2:3",
-                    expected_count=1,
-                    reference_images=reference_images,
-                )
-                if not images:
-                    raise RuntimeError(f"Provider returned no portrait image for {portrait['asset_id']}.")
-                notes.extend(write_image_as_png(source_path, images[0]))
-                if remove_backgrounds:
-                    notes.extend(remove_background_if_possible(source_path, output_path))
-                else:
-                    ensure_dir(output_path.parent)
-                    shutil.copy2(source_path, output_path)
-                    notes.append("background removal skipped")
-            else:
-                svg = render_portrait_svg(character, portrait, asset_manifest.get("style_bible", {}))
-                source_svg = output_root / "generated" / "sources" / f"{sanitize_file_stem(portrait['asset_id'])}.svg"
-                notes.extend(write_png_from_svg(svg, output_path, source_svg))
-                ensure_dir(source_path.parent)
-                shutil.copy2(output_path, source_path)
-                notes.append("transparent portrait generated directly; background removal skipped")
-            entries.append({
-                "asset_id": portrait["asset_id"],
-                "role": "portrait",
-                "prompt": prompt,
-                "prompt_ref": str(prompt_path.relative_to(output_root)),
-                "provider": provider,
-                "model": model_id,
-                "output_files": [str(output_path), str(source_path)],
-                "notes": notes,
-            })
-            if first_portrait_path is None:
-                first_portrait_path = output_path
+                notes.append("background removal skipped")
+        else:
+            svg = render_portrait_svg(character, portrait, asset_manifest.get("style_bible", {}))
+            source_svg = output_root / "generated" / "sources" / f"{sanitize_file_stem(portrait['asset_id'])}.svg"
+            notes.extend(write_png_from_svg(svg, output_path, source_svg))
+            ensure_dir(source_path.parent)
+            shutil.copy2(output_path, source_path)
+            notes.append("transparent portrait generated directly; background removal skipped")
+        return {
+            "asset_id": portrait["asset_id"],
+            "role": "portrait",
+            "prompt": prompt,
+            "prompt_ref": str(prompt_path.relative_to(output_root)),
+            "provider": provider,
+            "model": model_id,
+            "output_files": [str(output_path), str(source_path)],
+            "notes": notes,
+        }, local_warnings, output_path
+
+    def process_character_base(character: Json) -> tuple[list[Json], list[str], list[tuple[Json, Json, Path | None]]]:
+        local_entries: list[Json] = []
+        local_warnings: list[str] = []
+        portraits = ordered_portrait_assets(character)
+        if not portraits:
+            return local_entries, local_warnings, []
+        entry, portrait_warnings, first_portrait_path = process_portrait_asset(character, portraits[0], None)
+        local_warnings.extend(portrait_warnings)
+        if entry:
+            local_entries.append(entry)
         canon_ref = character.get("canon_ref_file_ref")
         if isinstance(canon_ref, str) and first_portrait_path and first_portrait_path.exists():
             canon_path = output_root / canon_ref
             if overwrite or not canon_path.exists():
                 ensure_dir(canon_path.parent)
                 shutil.copy2(first_portrait_path, canon_path)
-            entries.append({
+            local_entries.append({
                 "asset_id": character.get("canon_ref_asset_id", f"charref.{character.get('id', 'character')}"),
                 "role": "canon",
                 "prompt": f"Canon reference copied from {first_portrait_path.name}.",
@@ -567,6 +774,29 @@ def generate_assets(
                 "output_files": [str(canon_path)],
                 "notes": ["copied from generated base portrait"],
             })
+        expression_tasks = [(character, portrait, first_portrait_path) for portrait in portraits[1:]]
+        return local_entries, local_warnings, expression_tasks
+
+    characters = [character for character in as_list(asset_manifest.get("characters")) if isinstance(character, dict)]
+    expression_tasks: list[tuple[Json, Json, Path | None]] = []
+    for local_entries, local_warnings, local_expression_tasks in run_parallel_tasks(
+        characters,
+        process_character_base,
+        image_concurrency_value,
+    ):
+        entries.extend(local_entries)
+        warnings.extend(local_warnings)
+        expression_tasks.extend(local_expression_tasks)
+
+    def process_expression_task(task: tuple[Json, Json, Path | None]) -> tuple[Json | None, list[str]]:
+        character, portrait, first_portrait_path = task
+        entry, local_warnings, _ = process_portrait_asset(character, portrait, first_portrait_path)
+        return entry, local_warnings
+
+    for entry, local_warnings in run_parallel_tasks(expression_tasks, process_expression_task, image_concurrency_value):
+        warnings.extend(local_warnings)
+        if entry:
+            entries.append(entry)
 
     for ui_asset in as_list(asset_manifest.get("ui")):
         if not isinstance(ui_asset, dict):
@@ -638,7 +868,7 @@ def generate_assets(
                     f"fell back to {provider_used}: {generation.get('primary_error')}"
                 )
         audio_model_id = resolve_audio_provider_model(provider_used, audio_model, str(audio.get("kind") or "bgm"))
-        return {
+        entry: Json = {
             "asset_id": asset_id,
             "role": str(audio.get("kind") or "audio"),
             "prompt": prompt,
@@ -647,7 +877,11 @@ def generate_assets(
             "model": audio_model_id,
             "output_files": [str(output_path)],
             "notes": notes,
-        }, local_warnings
+        }
+        delivery = audio_voice_delivery(audio)
+        if delivery:
+            entry["voice_delivery"] = delivery
+        return entry, local_warnings
 
     audio_assets = [audio for audio in as_list(asset_manifest.get("audio")) if isinstance(audio, dict)]
     if audio_concurrency_value > 1 and len(audio_assets) > 1:
@@ -672,6 +906,7 @@ def generate_assets(
         "audio_provider": audio_provider_id,
         "audio_model": audio_model,
         "audio_concurrency": audio_concurrency_value,
+        "image_concurrency": image_concurrency_value,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "output_root": str(output_root),
         "entries": entries,
@@ -694,6 +929,7 @@ def main() -> None:
     parser.add_argument("--sfx-provider", default=None)
     parser.add_argument("--voice-provider", default=None)
     parser.add_argument("--audio-concurrency", type=int, default=None)
+    parser.add_argument("--image-concurrency", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-remove-backgrounds", action="store_false", dest="remove_backgrounds")
     parser.set_defaults(remove_backgrounds=True)
@@ -712,6 +948,7 @@ def main() -> None:
         sfx_provider=args.sfx_provider,
         voice_provider=args.voice_provider,
         audio_concurrency=args.audio_concurrency,
+        image_concurrency=args.image_concurrency,
     )
     print(json.dumps({"report": str(path_for(Path(args.run_root).resolve(), "asset_generation_report")), "entries": len(report["entries"])}, indent=2))
 

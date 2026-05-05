@@ -16,6 +16,9 @@ Json = dict[str, Any]
 
 STAGE_PATHS = {
     "prompt": "inputs/prompt.txt",
+    "source_full_text": "inputs/source_material/full_text.txt",
+    "source_index": "inputs/source_material/source_index.json",
+    "source_extraction_report": "inputs/source_material/extraction_report.json",
     "requirements": "workspace/design_layer/user_requirements.json",
     "synopsis": "workspace/design_layer/chapter_linear_synopsis.json",
     "branch_graph": "workspace/design_layer/branch_graph.json",
@@ -26,14 +29,12 @@ STAGE_PATHS = {
     "gameplay_manifest": "workspace/realization/gameplay-manifest.json",
     "asset_direction": "workspace/asset-direction.json",
     "asset_manifest": "workspace/asset-manifest.json",
-    "presentation_plan": "workspace/presentation/presentation-plan.json",
     "story_yarn": "workspace/vn/story.yarn",
     "story_ir": "workspace/vn/story.storyir.json",
     "validation_report": "reports/validation-report.json",
     "story_report": "reports/story-verification.json",
     "gameplay_validation_report": "reports/gameplay-validation.json",
     "gameplay_coverage_report": "reports/gameplay-coverage.json",
-    "presentation_validation_report": "reports/presentation-validation.json",
     "asset_generation_report": "reports/asset-generation-report.json",
     "asset_validation_report": "reports/asset-validation.json",
     "final_report": "reports/final-report.json",
@@ -104,6 +105,9 @@ def ensure_dir(path: Path) -> None:
 def ensure_run_layout(run_root: Path) -> None:
     for relative in [
         "inputs",
+        "inputs/source_material/original",
+        "inputs/source_material/chunks",
+        "workspace/controller-packets",
         "workspace/design_layer",
         "workspace/state",
         "workspace/realization/stubs",
@@ -111,7 +115,6 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/realization/interactions",
         "workspace/realization/puzzles",
         "workspace/realization/explorations",
-        "workspace/presentation",
         "workspace/vn/fragments",
         "workspace/runtime",
         "workspace/generated-assets",
@@ -735,7 +738,7 @@ def dialogue_beats_from_yarn(text: str) -> list[Json]:
         line = raw.strip()
         if not line or line.startswith("//") or line in ("---", "===") or line.startswith("title:") or line.startswith("<<") or line.startswith("->"):
             continue
-        match = re.match(r"^([^:]{1,32}):\s*(.+)$", line)
+        match = re.match(r"^([A-Za-z0-9_.\-·\u4e00-\u9fff（）()]{1,24})[:：]\s*(.+)$", line)
         if match:
             beats.append({"speaker": match.group(1).strip(), "text": match.group(2).strip()})
         else:

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "schema_version": "0.1.0",
+    "generated_by": "SourceSegmenter",
+    "notes": []
+  },
+  "beats": [
+    {
+      "id": "beat.oath",
+      "summary": "The oath remains sealed.",
+      "source_segment_ids": [
+        "seg.oath"
+      ]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ Integrate the audio demos into the existing post-design asset pipeline. The desi
 - Read API credentials from environment only:
   - `AUDIO_API_KEY` or `PPIO_API_KEY`
   - optional `AUDIO_BASE_URL`, `AUDIO_MODEL`, `AUDIO_FORMAT`
+- Route `https://api.ppio.com/v3/minimax-music` with no proxy by default; keep `AUDIO_NO_PROXY=1` available for all audio requests and `PPIO_MINIMAX_MUSIC_NO_PROXY=0` only for intentional proxy tests.
 - Never copy demo fallback keys into this repo.
 
 ## Pipeline Changes
@@ -22,6 +23,7 @@ Integrate the audio demos into the existing post-design asset pipeline. The desi
   - Generate audio entries after visual assets.
   - Write prompt snapshots and generation report entries just like image assets.
   - Copy provider hints when supplied.
+  - Use provider-specific emotion/profile bindings from `asset-manifest.json`; provider adapters validate enum values but do not own creative emotion mapping.
 - `scripts/validate_assets.py`
   - Validate audio files by existence and non-empty size.
 - `scripts/export_web_vn.py`

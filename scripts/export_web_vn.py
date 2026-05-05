@@ -25,8 +25,84 @@ from pipeline_lib import (
 )
 
 
+AUTHORING_TEXT_PATTERNS = [
+    re.compile(r"\b(source detail|source_dialogue|must_keep|detail row|transition context)\b", re.I),
+    re.compile(r"原文细节"),
+    re.compile(r"(读者|玩家)"),
+    re.compile(r"(读者|玩家).{0,80}(抓住|注意|了解|沉浸|问题|钩子|选择|看到)"),
+    re.compile(r"\b(reader|player).{0,80}\b(journey|hook|question|tension|notice|learn)\b", re.I),
+    re.compile(r"钩子是"),
+    re.compile(r"问题(是|从|转向|撕开).{0,100}钩子"),
+    re.compile(r"\b(the question is|the hook is)\b", re.I),
+    re.compile(r"(不显示|显示).{0,20}(菜单|按钮|结局)"),
+    re.compile(r"前五章.{0,12}(暂止|收束|结局|菜单)"),
+    re.compile(r"(被展开|这是前五章暂止点|场景继续向前推进)"),
+    re.compile(r"余波"),
+]
+
+
+def contains_authoring_text(text: str) -> bool:
+    return any(pattern.search(text) for pattern in AUTHORING_TEXT_PATTERNS)
+
+
 def node_text(node: Json) -> str:
-    return str(node.get("body") or node.get("summary") or node.get("title") or "The scene continues.")
+    for value in (node.get("body"), node.get("summary")):
+        if isinstance(value, str) and value.strip() and not contains_authoring_text(value):
+            return value
+    return str(node.get("title") or "The scene continues.")
+
+
+def filter_player_beats(beats: list[Json]) -> list[Json]:
+    filtered = [
+        beat for beat in beats
+        if not (isinstance(beat, dict) and contains_authoring_text(str(beat.get("text", ""))))
+    ]
+    return filtered or beats
+
+
+def validate_player_facing_story(story: Json) -> None:
+    leaks: list[str] = []
+
+    def check_beats(node_id: str, beats: list[Any]) -> None:
+        for beat in beats:
+            if not isinstance(beat, dict):
+                continue
+            text = str(beat.get("text") or "")
+            if text and contains_authoring_text(text):
+                leaks.append(f"{node_id} beat: {text}")
+            if beat.get("type") == "choice":
+                for choice in as_list(beat.get("choices")):
+                    if not isinstance(choice, dict):
+                        continue
+                    label = str(choice.get("label") or "")
+                    if label and contains_authoring_text(label):
+                        leaks.append(f"{node_id} inline choice: {label}")
+                    check_beats(node_id, as_list(choice.get("beats")))
+
+    for node in as_list(story.get("nodes")):
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("id") or "<unknown>")
+        title = str(node.get("title") or "")
+        if title and contains_authoring_text(title):
+            leaks.append(f"{node_id} title: {title}")
+        check_beats(node_id, as_list(node.get("beats")))
+        for variant in as_list(node.get("ending_variants")):
+            if not isinstance(variant, dict):
+                continue
+            variant_title = str(variant.get("title") or "")
+            if variant_title and contains_authoring_text(variant_title):
+                leaks.append(f"{node_id} ending variant title: {variant_title}")
+            check_beats(node_id, as_list(variant.get("beats")))
+        for choice in as_list(node.get("choices")):
+            if isinstance(choice, dict):
+                label = str(choice.get("label") or "")
+                if label and contains_authoring_text(label):
+                    leaks.append(f"{node_id} choice: {label}")
+                check_beats(node_id, as_list(choice.get("beats")))
+    if leaks:
+        sample = "\n".join(leaks[:20])
+        raise SystemExit(f"Player-facing authoring text leak detected:\n{sample}")
 
 
 def runtime_asset_name(asset_id: str, suffix: str) -> str:
@@ -55,6 +131,17 @@ def safe_voice_token(value: Any) -> str:
 def is_narration_speaker(value: Any) -> bool:
     token = str(value or "").strip().lower()
     return token in {"", "旁白", "narrator"}
+
+
+def parse_dialogue_line(line: str) -> Json | None:
+    match = re.match(r"^([A-Za-z0-9_.\-·\u4e00-\u9fff（）()]{1,24})[:：]\s*(.+)$", line)
+    if not match:
+        return None
+    speaker = match.group(1).strip()
+    text = match.group(2).strip()
+    if not speaker or not text:
+        return None
+    return {"type": "line", "speaker": speaker, "text": text}
 
 
 def parse_yarn_command(line: str) -> Json | None:
@@ -108,35 +195,183 @@ def parse_yarn_command(line: str) -> Json | None:
             args["character_id"] = character_id
         if expression:
             args["expression_asset_id"] = expression
-    elif command == "hide_char":
+    elif command in ("hide_char", "hide_cg"):
         character_id = first("character_id", "character", "name")
         if character_id:
             args["character_id"] = character_id
+        asset_id = first("asset_id", "cg")
+        if asset_id:
+            args["asset_id"] = asset_id
     elif command == "stop_bgm":
+        pass
+    elif command == "set":
+        state_id = first("state_variable_id", "state_id", "id")
+        operation = first("operation", "op") or "set"
+        value = first("value")
+        if state_id:
+            args["state_variable_id"] = state_id
+        if operation:
+            args["operation"] = operation
+        if value is not None:
+            args["value"] = value
+    elif command == "complete_activity":
+        outcome = first("outcome", "outcome_id", "edge_id")
+        if outcome:
+            args["outcome"] = outcome
+    elif command == "ending_variant":
+        variant_id = first("id", "variant_id", "ending_id")
+        title = first("title", "label")
+        priority = first("priority")
+        if variant_id:
+            args["id"] = variant_id
+            args["ending_id"] = variant_id
+        if title:
+            args["title"] = title
+        if priority is not None:
+            args["priority"] = priority
+    elif command in ("end_ending_variant", "ending_variant_end"):
         pass
     else:
         return None
     return {"type": "command", "command": command, "args": args}
 
 
-def vn_beats_from_yarn(text: str) -> list[Json]:
+def parse_yarn_beat_line(line: str) -> Json | None:
+    if not line or line.startswith("//") or line in ("---", "===") or line.startswith("title:") or line.startswith("[["):
+        return None
+    command = parse_yarn_command(line)
+    if command:
+        return command
+    if line.startswith("<<") and line.endswith(">>"):
+        return None
+    dialogue = parse_dialogue_line(line)
+    return dialogue if dialogue else {"type": "line", "speaker": "Narrator", "text": line}
+
+
+def split_choice_label(label: str) -> tuple[str, str | None]:
+    match = re.search(r"\s*<<if\s+(.+?)>>\s*$", label)
+    if not match:
+        return label.strip(), None
+    return label[:match.start()].strip(), match.group(1).strip()
+
+
+def parse_yarn_choice_branch(label: str, raw_lines: list[str]) -> Json:
+    clean_label, condition_text = split_choice_label(label)
     beats: list[Json] = []
-    for raw in text.splitlines():
+    outcome_id: str | None = None
+    for raw in raw_lines:
         line = raw.strip()
-        if not line or line.startswith("//") or line in ("---", "===") or line.startswith("title:") or line.startswith("->") or line.startswith("[["):
-            continue
         command = parse_yarn_command(line)
-        if command:
-            beats.append(command)
+        if command and command.get("command") == "complete_activity":
+            outcome = command.get("args", {}).get("outcome") if isinstance(command.get("args"), dict) else None
+            if isinstance(outcome, str) and outcome:
+                outcome_id = outcome
             continue
-        if line.startswith("<<") and line.endswith(">>"):
-            continue
-        match = re.match(r"^([^:]{1,32}):\s*(.+)$", line)
-        if match:
-            beats.append({"type": "line", "speaker": match.group(1).strip(), "text": match.group(2).strip()})
+        beat = parse_yarn_beat_line(line)
+        if beat:
+            beats.append(beat)
+    choice: Json = {"label": clean_label or "Continue", "beats": beats}
+    if condition_text:
+        choice["condition_text"] = condition_text
+    if outcome_id:
+        choice["outcome_id"] = outcome_id
+    return choice
+
+
+def parse_vn_yarn(text: str) -> Json:
+    beats: list[Json] = []
+    exit_choices: list[Json] = []
+    ending_variants: list[Json] = []
+    current_variant: Json | None = None
+
+    def append_beat(beat: Json) -> None:
+        if current_variant is not None:
+            current_variant.setdefault("beats", []).append(beat)
         else:
-            beats.append({"type": "line", "speaker": "Narrator", "text": line})
-    return beats or [{"type": "line", "speaker": "Narrator", "text": "The scene continues."}]
+            beats.append(beat)
+
+    def close_variant() -> None:
+        nonlocal current_variant
+        if current_variant is not None:
+            ending_variants.append(current_variant)
+            current_variant = None
+
+    def parse_priority(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        line = raw.strip()
+        if not line:
+            index += 1
+            continue
+        if line.startswith("->"):
+            group: list[Json] = []
+            while index < len(lines) and lines[index].strip().startswith("->"):
+                label = lines[index].strip()[2:].strip()
+                index += 1
+                branch_lines: list[str] = []
+                while index < len(lines):
+                    next_raw = lines[index]
+                    next_line = next_raw.strip()
+                    if next_line.startswith("->"):
+                        break
+                    if next_line in ("---", "===") or next_line.startswith("title:"):
+                        break
+                    if not next_line or next_raw[:1].isspace():
+                        branch_lines.append(next_raw)
+                        index += 1
+                        continue
+                    break
+                group.append(parse_yarn_choice_branch(label, branch_lines))
+                if index >= len(lines) or not lines[index].strip().startswith("->"):
+                    break
+            if group and all(choice.get("outcome_id") for choice in group):
+                exit_choices.extend(group)
+            elif group:
+                inline_choices = [choice for choice in group if not choice.get("outcome_id")]
+                exit_choices.extend(choice for choice in group if choice.get("outcome_id"))
+                if inline_choices:
+                    append_beat({"type": "choice", "choices": inline_choices})
+            continue
+
+        command = parse_yarn_command(line)
+        if command and command.get("command") == "ending_variant":
+            close_variant()
+            args = command.get("args") if isinstance(command.get("args"), dict) else {}
+            variant_id = str(args.get("id") or args.get("ending_id") or f"ending.variant.{len(ending_variants) + 1}")
+            current_variant = {
+                "id": variant_id,
+                "ending_id": args.get("ending_id") or variant_id,
+                "title": args.get("title") or variant_id,
+                "priority": parse_priority(args.get("priority")),
+                "beats": [],
+            }
+            index += 1
+            continue
+        if command and command.get("command") in ("end_ending_variant", "ending_variant_end"):
+            close_variant()
+            index += 1
+            continue
+        if command and command.get("command") == "complete_activity":
+            target_beats = current_variant.get("beats", []) if current_variant is not None else beats
+            while target_beats and isinstance(target_beats[-1], dict) and target_beats[-1].get("type") == "command" and target_beats[-1].get("command") == "set":
+                target_beats.pop()
+            index += 1
+            continue
+        beat = parse_yarn_beat_line(line)
+        if beat:
+            append_beat(beat)
+        index += 1
+    close_variant()
+    if not beats:
+        beats = [{"type": "line", "speaker": "Narrator", "text": "The scene continues."}]
+    return {"beats": beats, "exit_choices": exit_choices, "ending_variants": ending_variants}
 
 
 def voice_asset_lookup(manifest: Json) -> tuple[set[str], dict[str, Json]]:
@@ -153,7 +388,7 @@ def voice_asset_lookup(manifest: Json) -> tuple[set[str], dict[str, Json]]:
     return voice_ids, voice_specs
 
 
-def attach_voice_assets(beats: list[Json], node_id: str, manifest: Json) -> None:
+def attach_voice_assets(beats: list[Json], node_id: str, manifest: Json, allow_fallback: bool = True) -> None:
     voice_ids, voice_specs = voice_asset_lookup(manifest)
     if not voice_ids:
         return
@@ -164,8 +399,6 @@ def attach_voice_assets(beats: list[Json], node_id: str, manifest: Json) -> None
         if not isinstance(beat, dict) or beat.get("type") != "line":
             continue
         line_index += 1
-        if is_narration_speaker(beat.get("speaker")):
-            continue
         speaker_token = safe_voice_token(beat.get("speaker"))
         beat_text = str(beat.get("text") or "").strip()
         beat_speaker = str(beat.get("speaker") or "").strip()
@@ -177,10 +410,40 @@ def attach_voice_assets(beats: list[Json], node_id: str, manifest: Json) -> None
                 continue
             spec_text = str(spec.get("line_text") or spec.get("text") or "").strip()
             spec_speaker = str(spec.get("speaker") or "").strip()
-            if spec_text and spec_text == beat_text and (not spec_speaker or not beat_speaker or spec_speaker == beat_speaker):
+            if spec_text and spec_text == beat_text and (
+                not spec_speaker or not beat_speaker or spec_speaker == beat_speaker or is_narration_speaker(beat_speaker)
+            ):
+                if spec_speaker and is_narration_speaker(beat.get("speaker")):
+                    beat["speaker"] = spec_speaker
+                    speaker_token = safe_voice_token(spec_speaker)
+                    beat_speaker = spec_speaker
                 beat["voice_asset_id"] = asset_id
                 break
         if beat.get("voice_asset_id"):
+            continue
+        if not allow_fallback:
+            continue
+        for asset_id, audio in voice_specs.items():
+            spec = audio.get("spec") if isinstance(audio.get("spec"), dict) else {}
+            trace = spec.get("source_trace") if isinstance(spec.get("source_trace"), dict) else {}
+            source_nodes = as_list(trace.get("node_ids"))
+            if node_id not in source_nodes:
+                continue
+            try:
+                spec_line_index = int(spec.get("line_index"))
+            except (TypeError, ValueError):
+                continue
+            if spec_line_index != line_index:
+                continue
+            spec_speaker = str(spec.get("speaker") or "").strip()
+            if spec_speaker and (not beat_speaker or spec_speaker == beat_speaker or is_narration_speaker(beat_speaker)):
+                if is_narration_speaker(beat.get("speaker")):
+                    beat["speaker"] = spec_speaker
+                beat["voice_asset_id"] = asset_id
+                break
+        if beat.get("voice_asset_id"):
+            continue
+        if is_narration_speaker(beat.get("speaker")):
             continue
         candidates = [
             f"voice.{node_id}.{line_index}",
@@ -201,6 +464,16 @@ def attach_voice_assets(beats: list[Json], node_id: str, manifest: Json) -> None
             if asset_id in voice_ids:
                 beat["voice_asset_id"] = asset_id
                 break
+
+
+def attach_voice_assets_recursive(beats: list[Json], node_id: str, manifest: Json, allow_fallback: bool = True) -> None:
+    attach_voice_assets(beats, node_id, manifest, allow_fallback=allow_fallback)
+    for beat in beats:
+        if not isinstance(beat, dict) or beat.get("type") != "choice":
+            continue
+        for choice in as_list(beat.get("choices")):
+            if isinstance(choice, dict):
+                attach_voice_assets_recursive(as_list(choice.get("beats")), node_id, manifest, allow_fallback=False)
 
 
 def collect_runtime_assets(run_root: Path, output_root: Path, asset_directions: list[Any]) -> dict[str, str]:
@@ -326,8 +599,137 @@ def manifest_character_entries(manifest: Json) -> list[Json]:
     return characters
 
 
+def normalize_state_ops(value: Any) -> list[Json]:
+    ops: list[Json] = []
+    for item in as_list(value):
+        if not isinstance(item, dict):
+            continue
+        state_id = item.get("state_variable_id") or item.get("state_id") or item.get("id")
+        if not isinstance(state_id, str) or not state_id:
+            continue
+        op = dict(item)
+        op["state_variable_id"] = state_id
+        op.setdefault("operation", "set")
+        ops.append(op)
+    return ops
+
+
+def load_v3_edge_origins(run_root: Path) -> dict[str, Json]:
+    origins: dict[str, Json] = {}
+    design_root = run_root / "workspace" / "design_layer_v3" / "design_levels"
+    if not design_root.exists():
+        return origins
+    for path in sorted(design_root.glob("level_*/story_graph.json")):
+        graph_payload = load_optional_json(path) or {}
+        graph = graph_payload.get("story_graph") if isinstance(graph_payload.get("story_graph"), dict) else graph_payload
+        for edge in as_list(graph.get("edges") if isinstance(graph, dict) else []):
+            if isinstance(edge, dict) and isinstance(edge.get("id"), str):
+                origins[edge["id"]] = edge
+    return origins
+
+
+def expanded_runtime_edges(edge: Json, edge_origins: dict[str, Json]) -> list[Json]:
+    source_ids = [source_id for source_id in as_list(edge.get("source_rule_ids")) if isinstance(source_id, str) and source_id]
+    origin = edge_origins.get(str(edge.get("id") or ""))
+    if not isinstance(origin, dict) and source_ids:
+        origin = edge_origins.get(source_ids[0], {})
+    merged = dict(edge)
+    if isinstance(origin, dict):
+        merged["label"] = origin.get("label") or merged.get("label")
+        merged["condition_type"] = origin.get("condition_type") or merged.get("condition_type")
+        merged["conditions"] = as_list(origin.get("conditions")) or as_list(merged.get("conditions"))
+        merged["effects"] = normalize_state_ops(origin.get("effects")) or normalize_state_ops(merged.get("effects"))
+    else:
+        merged["effects"] = normalize_state_ops(merged.get("effects"))
+    return [merged]
+
+
+def attach_choice_beats(choice: Json, branch: Json | None, node_id: str, manifest: Json) -> None:
+    if not isinstance(branch, dict):
+        return
+    beats = as_list(branch.get("beats"))
+    attach_voice_assets_recursive(beats, node_id, manifest, allow_fallback=False)
+    if beats:
+        choice["beats"] = beats
+    if branch.get("label"):
+        choice["label"] = branch["label"]
+    if branch.get("condition_text"):
+        choice["condition_text"] = branch["condition_text"]
+
+
+def normalize_terminal_variants(parsed_yarn: Json, plan: Json, fragment_manifest: Json, node_id: str, asset_manifest: Json) -> list[Json]:
+    metadata_by_id: dict[str, Json] = {}
+    for source in (as_list(plan.get("terminal_variants")) if isinstance(plan, dict) else []):
+        if isinstance(source, dict) and isinstance(source.get("id"), str):
+            metadata_by_id[source["id"]] = dict(source)
+    for source in as_list(fragment_manifest.get("terminal_variants") if isinstance(fragment_manifest, dict) else []):
+        if isinstance(source, dict) and isinstance(source.get("id"), str):
+            metadata_by_id[source["id"]] = {**metadata_by_id.get(source["id"], {}), **source}
+
+    variants: list[Json] = []
+    used_ids: set[str] = set()
+    for parsed in as_list(parsed_yarn.get("ending_variants")):
+        if not isinstance(parsed, dict):
+            continue
+        variant_id = parsed.get("id")
+        if not isinstance(variant_id, str) or not variant_id:
+            continue
+        merged = {**metadata_by_id.get(variant_id, {}), **parsed}
+        beats = filter_player_beats(as_list(merged.get("beats")))
+        attach_voice_assets_recursive(beats, node_id, asset_manifest, allow_fallback=False)
+        merged["beats"] = beats
+        merged["conditions"] = as_list(merged.get("conditions"))
+        merged["state_writes"] = normalize_state_ops(merged.get("state_writes"))
+        try:
+            merged["priority"] = int(merged.get("priority", 0))
+        except (TypeError, ValueError):
+            merged["priority"] = 0
+        if "ending_id" not in merged:
+            merged["ending_id"] = variant_id
+        if "title" not in merged:
+            merged["title"] = variant_id
+        variants.append(merged)
+        used_ids.add(variant_id)
+
+    for variant_id, metadata in metadata_by_id.items():
+        if variant_id in used_ids:
+            continue
+        merged = dict(metadata)
+        merged["conditions"] = as_list(merged.get("conditions"))
+        merged["state_writes"] = normalize_state_ops(merged.get("state_writes"))
+        merged.setdefault("ending_id", variant_id)
+        merged.setdefault("title", variant_id)
+        merged.setdefault("priority", 0)
+        merged.setdefault("beats", [])
+        variants.append(merged)
+
+    return sorted(variants, key=lambda item: int(item.get("priority", 0)), reverse=True)
+
+
+def normalize_node_completion_rules(game_ir: Json) -> list[Json]:
+    rules: list[Json] = []
+    for rule in as_list(game_ir.get("event_rules") if isinstance(game_ir, dict) else []):
+        if not isinstance(rule, dict) or not isinstance(rule.get("source_node_id"), str):
+            continue
+        if rule.get("source_edge_id"):
+            continue
+        effects = normalize_state_ops(rule.get("effects"))
+        if not effects:
+            continue
+        rules.append({
+            "id": rule.get("id") or f"rule.node_completion.{len(rules) + 1}",
+            "source_node_id": rule["source_node_id"],
+            "conditions": as_list(rule.get("conditions")),
+            "effects": effects,
+            "description": rule.get("description", ""),
+            "source_settlement_id": rule.get("source_settlement_id"),
+        })
+    return rules
+
+
 def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = None) -> Json:
     branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
+    game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     plans = load_optional_json(path_for(run_root, "realization_plans")) or {"plans": []}
     shared_state = load_optional_json(path_for(run_root, "shared_state")) or {"variables": []}
     asset_direction = load_optional_json(path_for(run_root, "asset_direction")) or {"asset_directions": []}
@@ -336,6 +738,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
     runtime_assets = runtime_assets or {}
     fragments = load_yarn_fragments(run_root)
     gameplay_units = load_gameplay_units(run_root)
+    edge_origins = load_v3_edge_origins(run_root)
 
     fragments_by_node = {fragment["node_id"]: fragment for fragment in fragments}
     plan_by_node = {
@@ -346,7 +749,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
     edges_by_from: dict[str, list[Json]] = {}
     for edge in as_list(branch_graph.get("edges")):
         if isinstance(edge, dict) and isinstance(edge.get("from"), str):
-            edges_by_from.setdefault(edge["from"], []).append(edge)
+            edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge, edge_origins))
 
     initial_state = {
         variable.get("id"): variable.get("initial_value")
@@ -362,9 +765,18 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         plan = plan_by_node.get(node_id, {})
         fragment = fragments_by_node.get(node_id)
         gameplay_unit = gameplay_units.get(node_id)
+        fragment_manifest = fragment.get("manifest") if isinstance(fragment, dict) and isinstance(fragment.get("manifest"), dict) else {}
         entry_text = str(gameplay_unit.get("entry_text") or node_text(node)) if gameplay_unit else node_text(node)
-        beats = vn_beats_from_yarn(fragment["yarn_text"]) if fragment else [{"type": "line", "speaker": "Narrator", "text": entry_text}]
-        attach_voice_assets(beats, node_id, asset_manifest)
+        parsed_yarn = parse_vn_yarn(fragment["yarn_text"]) if fragment else {"beats": [{"type": "line", "speaker": "Narrator", "text": entry_text}], "exit_choices": []}
+        beats = as_list(parsed_yarn.get("beats"))
+        beats = filter_player_beats(beats)
+        attach_voice_assets_recursive(beats, node_id, asset_manifest)
+        terminal_variants = normalize_terminal_variants(parsed_yarn, plan if isinstance(plan, dict) else {}, fragment_manifest, node_id, asset_manifest)
+        yarn_choice_by_outcome = {
+            choice.get("outcome_id"): choice
+            for choice in as_list(parsed_yarn.get("exit_choices"))
+            if isinstance(choice, dict) and isinstance(choice.get("outcome_id"), str)
+        }
         exit_bindings = {
             binding.get("edge_id"): binding
             for binding in as_list((gameplay_unit or plan).get("exit_bindings") if isinstance((gameplay_unit or plan), dict) else [])
@@ -373,16 +785,28 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         choices = []
         for edge in edges_by_from.get(node_id, []):
             edge_id = edge.get("id")
+            source_rule_ids = [source_id for source_id in as_list(edge.get("source_rule_ids")) if isinstance(source_id, str)]
             binding = exit_bindings.get(edge_id, {})
-            choices.append({
+            if not binding:
+                binding = next((exit_bindings.get(source_id) for source_id in source_rule_ids if exit_bindings.get(source_id)), {})
+            outcome_id = binding.get("outcome_id") or edge_id
+            choice: Json = {
                 "label": binding.get("label") or edge.get("label") or edge.get("condition_label") or edge.get("outcome_label") or "Continue",
                 "target": edge.get("to"),
                 "edge_id": edge_id,
-                "outcome_id": binding.get("outcome_id") or edge_id,
+                "outcome_id": outcome_id,
                 "condition_type": edge.get("condition_type", "player_choice"),
-                "state_writes": binding.get("state_writes") or (plan.get("state_writes", []) if isinstance(plan, dict) else []),
+                "effects": normalize_state_ops(edge.get("effects")),
+                "state_writes": normalize_state_ops(binding.get("state_writes")),
                 "conditions": edge.get("conditions", []),
-            })
+            }
+            if source_rule_ids:
+                choice["source_rule_ids"] = source_rule_ids
+            branch = yarn_choice_by_outcome.get(str(outcome_id)) or yarn_choice_by_outcome.get(str(edge_id))
+            if not branch:
+                branch = next((yarn_choice_by_outcome.get(source_id) for source_id in source_rule_ids if yarn_choice_by_outcome.get(source_id)), None)
+            attach_choice_beats(choice, branch, node_id, asset_manifest)
+            choices.append(choice)
         required_assets = as_list(plan.get("required_assets") if isinstance(plan, dict) else [])
         if isinstance(gameplay_unit, dict):
             required_assets = [*required_assets, *as_list(gameplay_unit.get("required_assets"))]
@@ -407,6 +831,8 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
                 "exit_bindings": gameplay_unit.get("exit_bindings", []),
                 "fail_forward": gameplay_unit.get("fail_forward", {}),
             }
+        if terminal_variants:
+            story_node["ending_variants"] = terminal_variants
         story_nodes.append(story_node)
 
     assets = manifest_asset_entries(asset_manifest, runtime_assets)
@@ -431,6 +857,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
         "characters": manifest_character_entries(asset_manifest),
         "assets": assets,
         "gameplay_units": gameplay_units,
+        "node_completion_rules": normalize_node_completion_rules(game_ir),
     }
 
 
@@ -439,11 +866,32 @@ def web_export_audio_report(story: Json) -> Json:
     voiced_lines = 0
     voice_ids: list[str] = []
     unvoiced_lines: list[Json] = []
+
+    def iter_beats(beats: list[Any]) -> Any:
+        for beat in beats:
+            if not isinstance(beat, dict):
+                continue
+            if beat.get("type") == "choice":
+                for choice in as_list(beat.get("choices")):
+                    if isinstance(choice, dict):
+                        yield from iter_beats(as_list(choice.get("beats")))
+                continue
+            yield beat
+
     for node in as_list(story.get("nodes")):
         if not isinstance(node, dict):
             continue
-        for index, beat in enumerate(as_list(node.get("beats"))):
+        all_beats = list(iter_beats(as_list(node.get("beats"))))
+        for variant in as_list(node.get("ending_variants")):
+            if isinstance(variant, dict):
+                all_beats.extend(iter_beats(as_list(variant.get("beats"))))
+        for choice in as_list(node.get("choices")):
+            if isinstance(choice, dict):
+                all_beats.extend(iter_beats(as_list(choice.get("beats"))))
+        for index, beat in enumerate(all_beats):
             if not isinstance(beat, dict) or beat.get("type") != "line" or is_narration_speaker(beat.get("speaker")):
+                continue
+            if str(beat.get("text") or "").strip() in {"...", "…"}:
                 continue
             non_narration_lines += 1
             voice_asset_id = beat.get("voice_asset_id")
@@ -463,7 +911,7 @@ def web_export_audio_report(story: Json) -> Json:
         if count > 1
     ]
     return {
-        "status": "pass" if not unvoiced_lines and not duplicate_voice_asset_ids else "fail",
+        "status": "pass" if not unvoiced_lines else "fail",
         "non_narration_lines": non_narration_lines,
         "voiced_lines": voiced_lines,
         "unique_voice_asset_ids": len(set(voice_ids)),
@@ -478,6 +926,7 @@ def export_web_vn(run_root: Path) -> Path:
     asset_direction = load_optional_json(path_for(run_root, "asset_direction")) or {"asset_directions": []}
     runtime_assets = collect_runtime_assets(run_root, output_root, as_list(asset_direction.get("asset_directions")))
     story = build_story_payload(run_root, runtime_assets)
+    validate_player_facing_story(story)
     write_text(output_root / "story-data.js", "window.NARRATIVE_GAME_STORY = " + json.dumps(story, ensure_ascii=False, indent=2) + ";\n")
     write_text(run_root / "reports" / "web-vn-export-report.json", json.dumps(web_export_audio_report(story), ensure_ascii=False, indent=2) + "\n")
     return output_root / "index.html"

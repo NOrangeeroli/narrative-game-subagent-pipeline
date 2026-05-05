@@ -6,6 +6,11 @@
   "parent_ref_id": "macro.intro",
   "parent_ref_kind": "macro_node",
   "entry_node_id": "node.intro.entry",
+  "source_segment_ids": [
+    "seg.arrival",
+    "seg.key",
+    "seg.oath"
+  ],
   "nodes": [
     {
       "id": "node.intro.entry",
@@ -23,6 +28,9 @@
       "state_writes": [],
       "source_fact_ids": [
         "fact.archive"
+      ],
+      "source_segment_ids": [
+        "seg.arrival"
       ]
     },
     {
@@ -49,6 +57,10 @@
       "source_fact_ids": [
         "fact.key"
       ],
+      "source_segment_ids": [
+        "seg.key",
+        "seg.oath"
+      ],
       "expandable": true,
       "target_child_depth": 2
     },
@@ -68,6 +80,9 @@
       "state_writes": [],
       "source_fact_ids": [
         "fact.oath"
+      ],
+      "source_segment_ids": [
+        "seg.oath"
       ]
     }
   ],
@@ -79,7 +94,11 @@
       "label": "Open the index",
       "condition_type": "player_choice",
       "conditions": [],
-      "effects": []
+      "effects": [],
+      "source_segment_ids": [
+        "seg.key",
+        "seg.oath"
+      ]
     },
     {
       "id": "edge.intro.entry.left",
@@ -88,7 +107,10 @@
       "label": "Leave the desk",
       "condition_type": "player_choice",
       "conditions": [],
-      "effects": []
+      "effects": [],
+      "source_segment_ids": [
+        "seg.oath"
+      ]
     }
   ],
   "exit_mappings": [
