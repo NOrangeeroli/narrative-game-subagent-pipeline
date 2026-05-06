@@ -1,0 +1,22 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "facts": [
+    {"id": "fact.key_hidden", "kind": "object", "summary": "The glass key is hidden below the archive index desk.", "story_unit_ids": ["story.l1.ch01"]},
+    {"id": "fact.ledger_opens", "kind": "event", "summary": "The glass key opens the oath ledger.", "story_unit_ids": ["story.l1.ch02"]}
+  ],
+  "characters": [
+    {"id": "char.ara", "name": "Ara", "summary": "The viewpoint archivist."},
+    {"id": "char.niko", "name": "Niko", "summary": "Ara's cautious helper."}
+  ],
+  "locations": [
+    {"id": "loc.archive", "name": "Archive", "summary": "A quiet archive with a hidden oath ledger."}
+  ],
+  "events": [
+    {"id": "event.arrival", "summary": "Ara enters the archive.", "order": 1},
+    {"id": "event.key_found", "summary": "Ara finds the glass key.", "order": 2},
+    {"id": "event.ledger_open", "summary": "The oath ledger opens.", "order": 3}
+  ],
+  "world_rules": [],
+  "themes": ["theme.hidden_oaths"]
+}

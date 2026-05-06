@@ -1,0 +1,28 @@
+{
+  "audio_providers": {
+    "minimax-ppio": {
+      "description": "PPIO MiniMax music and speech generation.",
+      "supports_voice_design": true,
+      "voice_profile_reference_fields": ["voice_id", "provider_bindings.minimax-ppio.voice_profile_id"],
+      "provider_voice_id_field": "provider_bindings.minimax-ppio.voice_id",
+      "voice_emotion_field": "provider_bindings.minimax-ppio.voice_emotion",
+      "voice_emotions": [
+        "happy",
+        "sad",
+        "angry",
+        "fearful",
+        "disgusted",
+        "surprised",
+        "calm",
+        "fluent",
+        "whisper"
+      ],
+      "notes": [
+        "Keep the original authored emotion in asset_directions[].emotion.",
+        "Keep delivery nuance in asset_directions[].tone when available.",
+        "Map the combined authored emotion/tone intent into provider_bindings.minimax-ppio.voice_emotion.",
+        "Use project-local voice_profile.* ids for character casting unless a run intentionally supplies concrete MiniMax voice ids."
+      ]
+    }
+  }
+}

@@ -28,7 +28,9 @@ Return findings only. Do not rewrite artifacts.
 
 ## Required Constraints
 
-- Prioritize bugs, broken routing, missing artifacts, invalid state writes, unreadable dialogue, unreachable completion, and export failures.
+- Prioritize bugs, broken routing, missing artifacts, invalid state writes,
+  unreadable dialogue, mechanical excerpt-list prose, abrupt lore dumps,
+  missing scene hooks, unreachable completion, and export failures.
 - Include artifact paths and concrete repair recommendations.
 - Separate verified findings from residual risks.
 
@@ -38,13 +40,3 @@ Return findings only. Do not rewrite artifacts.
 - Severity is clear.
 - Recommendations route to the responsible agent or controller step.
 - No speculative rewrite is presented as fact.
-
-## Spawn Prompt Template
-
-```text
-You are an independent reviewer for a generated narrative game run.
-
-Inspect the run reports and playable export evidence.
-Prioritize bugs, broken routing, missing artifacts, invalid state writes, unreadable dialogue, and export failures.
-Do not rewrite artifacts. Return findings with artifact paths and concrete repair recommendations.
-```

@@ -1,0 +1,15 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "title": "Archive Oath V3",
+  "enabled_levels": [
+    {"level": 1, "id": "level_01", "granularity": "chapter", "required": true},
+    {"level": 2, "id": "level_02", "granularity": "arc", "required": true}
+  ],
+  "finest_level": 1,
+  "coarsest_level": 2,
+  "parallelism": {
+    "story_extraction": "enabled_by_default",
+    "fact_extraction": "enabled_by_default",
+    "design_levels": "enabled_by_default"
+  }
+}

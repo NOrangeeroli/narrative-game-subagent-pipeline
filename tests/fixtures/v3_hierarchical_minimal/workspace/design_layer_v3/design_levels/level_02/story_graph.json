@@ -1,0 +1,16 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 2,
+  "start_node_id": "v3.l2.archive_arc",
+  "nodes": [
+    {
+      "id": "v3.l2.archive_arc",
+      "title": "Archive Oath Arc",
+      "summary": "Ara finds the key and opens the oath ledger.",
+      "node_type": "scene",
+      "story_unit_ids": ["story.l2.archive_arc"],
+      "is_terminal": false
+    }
+  ],
+  "edges": []
+}

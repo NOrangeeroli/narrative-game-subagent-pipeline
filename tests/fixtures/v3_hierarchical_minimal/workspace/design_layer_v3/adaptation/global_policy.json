@@ -1,0 +1,14 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "target_experience": "A compact mystery about choosing to reveal an archive oath.",
+  "tone": "quiet mystery",
+  "themes": ["theme.hidden_oaths"],
+  "fixed_fact_ids": ["fact.key_hidden", "fact.ledger_opens"],
+  "variable_processes": [
+    {"id": "process.reveal_confidence", "description": "The player can make the reveal feel cautious or decisive.", "allowed_fact_ids": ["fact.ledger_opens"]}
+  ],
+  "variable_endings": [],
+  "forbidden_changes": [
+    {"id": "forbid.remove_key", "description": "Do not remove the glass key from the plot."}
+  ]
+}

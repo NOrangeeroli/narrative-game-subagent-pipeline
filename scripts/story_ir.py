@@ -9,7 +9,47 @@ import re
 from pathlib import Path
 from typing import Any
 
-from pipeline_lib import Json, path_for, write_json
+from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
+
+
+AUTHORING_LEAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("source_context_label", re.compile(r"\b(source detail|source_dialogue|must_keep|detail row|transition context)\b", re.I)),
+    ("source_context_label", re.compile(r"原文细节")),
+    ("reader_reference", re.compile(r"(读者|玩家)")),
+    ("reader_guidance", re.compile(r"(读者|玩家).{0,80}(抓住|注意|了解|沉浸|问题|钩子|选择|看到)")),
+    ("reader_guidance", re.compile(r"\b(reader|player).{0,80}\b(journey|hook|question|tension|notice|learn)\b", re.I)),
+    ("scene_hook_note", re.compile(r"钩子是")),
+    ("scene_question_hook_note", re.compile(r"问题(是|从|转向|撕开).{0,100}钩子")),
+    ("english_scene_note", re.compile(r"\b(the question is|the hook is)\b", re.I)),
+    ("runtime_instruction", re.compile(r"(不显示|显示).{0,20}(菜单|按钮|结局)")),
+    ("scope_note", re.compile(r"前五章.{0,12}(暂止|收束|结局|菜单)")),
+    ("summary_voice", re.compile(r"(被展开|这是前五章暂止点|场景继续向前推进)")),
+]
+
+
+def split_private_phrases(text: str) -> list[str]:
+    phrases: list[str] = []
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) >= 12:
+        phrases.append(cleaned)
+    for part in re.split(r"[。！？；;]\s*", cleaned):
+        part = part.strip()
+        if len(part) >= 12:
+            phrases.append(part)
+    return phrases
+
+
+def collect_private_authoring_phrases(run_root: Path) -> list[str]:
+    phrases: list[str] = []
+    branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
+    for node in as_list(branch_graph.get("nodes")):
+        if not isinstance(node, dict):
+            continue
+        for key in ("summary", "body"):
+            value = node.get(key)
+            if isinstance(value, str):
+                phrases.extend(split_private_phrases(value))
+    return sorted(set(phrases), key=len, reverse=True)
 
 
 def parse_yarn(yarn_text: str) -> Json:
@@ -62,14 +102,16 @@ def parse_node(text: str) -> Json | None:
         "commands": commands,
         "jumps": jumps,
         "choices": choices,
+        "lines": lines,
         "line_count": len(lines),
     }
 
 
-def verify_story_ir(story_ir: Json) -> Json:
+def verify_story_ir(story_ir: Json, private_authoring_phrases: list[str] | None = None) -> Json:
     findings: list[Json] = []
     nodes = story_ir.get("nodes", [])
     titles: set[str] = set()
+    private_authoring_phrases = private_authoring_phrases or []
     for index, node in enumerate(nodes):
         title = node.get("title")
         if not isinstance(title, str):
@@ -98,10 +140,36 @@ def verify_story_ir(story_ir: Json) -> Json:
                 "play_sfx",
                 "play_bgm",
                 "stop_bgm",
+                "ending_variant",
+                "end_ending_variant",
             ):
                 findings.append({"severity": "warning", "kind": "unknown_command", "message": f"Unknown Yarn command: {command.get('command')}"})
             if command.get("command") == "complete_activity" and "outcome" not in command.get("args", {}):
                 findings.append({"severity": "error", "kind": "missing_outcome", "message": f"complete_activity in {node.get('title')} needs outcome arg."})
+        for line in node.get("lines", []):
+            if not isinstance(line, str):
+                continue
+            for kind, pattern in AUTHORING_LEAK_PATTERNS:
+                if pattern.search(line):
+                    snippet = line if len(line) <= 120 else line[:117] + "..."
+                    findings.append({
+                        "severity": "error",
+                        "kind": "authoring_text_leak",
+                        "code": kind,
+                        "message": f"{node.get('title')} contains authoring-only text: {snippet}",
+                    })
+                    break
+            visible_text = re.split(r"[:：]", line, 1)[1].strip() if re.search(r"[:：]", line) else line.strip()
+            for phrase in private_authoring_phrases:
+                if phrase and phrase in visible_text:
+                    snippet = visible_text if len(visible_text) <= 120 else visible_text[:117] + "..."
+                    findings.append({
+                        "severity": "error",
+                        "kind": "authoring_text_leak",
+                        "code": "private_summary_reuse",
+                        "message": f"{node.get('title')} reuses private design/source summary text: {snippet}",
+                    })
+                    break
     status = "fail" if any(f["severity"] == "error" for f in findings) else "pass"
     return {"status": status, "findings": findings, "node_count": len(nodes)}
 
@@ -115,7 +183,7 @@ def main() -> None:
     if not yarn_path.exists():
         raise SystemExit(f"Missing {yarn_path}")
     story_ir = parse_yarn(yarn_path.read_text(encoding="utf-8"))
-    report = verify_story_ir(story_ir)
+    report = verify_story_ir(story_ir, collect_private_authoring_phrases(run_root))
     story_ir["verification"] = report
     write_json(path_for(run_root, "story_ir"), story_ir)
     write_json(path_for(run_root, "story_report"), report)

@@ -75,7 +75,7 @@ Downstream agents must not need to read `user_requirements.json` or `chapter_lin
 
 ## Non-Goals
 
-- Do not replace the current v1 generation process with the larger v2 design workflow.
+- Do not replace the current v1 generation process with a larger private design workflow.
 - Do not require a database, vector store, or external narrative engine.
 - Do not change Web VN or Unity export semantics.
 - Do not make downstream agents parse every internal design note.

@@ -20,7 +20,7 @@ workspace/design_layer/branch_graph.json
 workspace/design_layer/game_ir.json
 ```
 
-No gameplay writer should read `user_requirements.json`, `chapter_linear_synopsis.json`, v2 internal design artifacts, generated assets, Web runtime code, or Unity project files directly. The controller prepares compact graph and IR slices for each worker.
+No gameplay writer should read `user_requirements.json`, `chapter_linear_synopsis.json`, private design-layer artifacts, generated assets, Web runtime code, or Unity project files directly. The controller prepares compact graph and IR slices for each worker.
 
 ## Non-Goals
 

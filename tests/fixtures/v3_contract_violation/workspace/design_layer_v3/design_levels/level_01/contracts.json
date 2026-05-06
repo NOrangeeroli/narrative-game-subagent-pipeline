@@ -1,0 +1,28 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "contracts": [
+    {
+      "id": "contract.l1.ch01",
+      "graph_node_id": "v3.l1.ch01.entry",
+      "story_unit_ids": ["story.l1.ch01"],
+      "allowed_characters": ["char.ara"],
+      "allowed_locations": ["loc.archive"],
+      "allowed_state_reads": ["state.l1.key_found"],
+      "allowed_state_writes": ["state.l1.key_found"],
+      "required_functions": ["Find the key."],
+      "forbidden_events": []
+    },
+    {
+      "id": "contract.l1.ch02",
+      "graph_node_id": "v3.l1.ch02.resolve",
+      "story_unit_ids": ["story.l1.ch02"],
+      "allowed_characters": ["char.ara", "char.niko"],
+      "allowed_locations": ["loc.archive"],
+      "allowed_state_reads": ["state.l1.key_found", "state.l2.truth_pressure"],
+      "allowed_state_writes": ["state.l1.key_found"],
+      "required_functions": ["Open the ledger."],
+      "forbidden_events": []
+    }
+  ]
+}

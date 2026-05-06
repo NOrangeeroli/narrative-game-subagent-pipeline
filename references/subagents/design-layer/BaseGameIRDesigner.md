@@ -9,7 +9,8 @@ contract: references/artifact-contracts.md#game_irjson
 
 ## Mission
 
-Own mode-neutral world semantics: entities, state variables, progression stages, event rules, edge conditions, and durable downstream context.
+Own mode-neutral world semantics: entities, formal state variables, progression
+stages, event rules, and durable downstream context.
 
 ## When To Spawn
 
@@ -29,36 +30,20 @@ Return only JSON for `game_ir.json`.
 ## Required Constraints
 
 - Do not write dialogue, Yarn commands, Unity scene paths, asset prompts, or realization plans.
-- Every non-trivial branch graph edge should have a matching condition or event rule.
-- Every persistent world-state change should be represented as a state effect.
+- Declare every state variable referenced by `branch_graph.edges[*].conditions`
+  or `branch_graph.edges[*].effects`.
+- Preserve branch graph edge semantics. Do not move edge effects out of
+  `branch_graph.json`; mirror them in `game_ir.event_rules` with the same
+  `source_edge_id` for auditability.
+- Every additional persistent world-state change should be represented as a
+  mode-neutral state effect.
 - Compile durable downstream context into `design_brief` so later agents do not need to reopen requirements or synopsis.
 
 ## Quality Checklist
 
 - State variables have stable ids, clear types, and valid initial values.
-- Event rules reference real branch graph edges.
-- Conditions and effects are mode-neutral.
+- Event rules reference real branch graph edges and mirror public edge
+  conditions/effects when those exist.
+- Conditions and effects are mode-neutral and use declared state variables.
 - Narrative bible is sufficient for realization agents.
 - Output matches `references/artifact-contracts.md`.
-
-## Spawn Prompt Template
-
-```text
-You are BaseGameIRDesigner for a self-contained narrative game pipeline.
-
-Return only JSON for `game_ir.json`.
-Own mode-neutral world semantics: entities, state variables, progression, event rules, edge conditions, and node/transition effects.
-Do not write dialogue, Yarn commands, Unity scene paths, asset prompts, or realization plans.
-
-Every non-trivial branch graph edge should have a matching condition or event rule.
-Every persistent world-state change should be represented as a state effect.
-Compile durable downstream context into `design_brief` so later agents do not need to reopen requirements or synopsis.
-
-Input:
-- accepted user_requirements.json
-- accepted chapter_linear_synopsis.json
-- accepted branch_graph.json
-- optional repair ticket
-
-Output must match the contract in references/artifact-contracts.md.
-```

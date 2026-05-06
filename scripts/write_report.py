@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from design_v3_lib import DESIGN_V3_COMPILE_REPORT, DESIGN_V3_ROOT
 from pipeline_lib import STAGE_PATHS, load_optional_json, path_for, write_json
 
 
@@ -18,8 +19,43 @@ def write_final_report(run_root: Path) -> Path:
     story_report = load_optional_json(path_for(run_root, "story_report")) or {"status": "missing", "findings": []}
     gameplay_validation = load_optional_json(path_for(run_root, "gameplay_validation_report")) or {"status": "missing", "findings": []}
     gameplay_coverage = load_optional_json(path_for(run_root, "gameplay_coverage_report")) or {"status": "missing"}
-    presentation_validation = load_optional_json(path_for(run_root, "presentation_validation_report")) or {"status": "missing", "issues": []}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
+    game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
+    design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
+    v3_compile_report = load_optional_json(run_root / DESIGN_V3_COMPILE_REPORT)
+    if design_layer_version == "v3":
+        design_layer_report = {
+            "version": "v3",
+            "source_root": str(DESIGN_V3_ROOT),
+            "source_artifacts": sorted(
+                str(path.relative_to(run_root))
+                for path in (run_root / DESIGN_V3_ROOT).rglob("*.json")
+                if "assembled" not in path.relative_to(run_root / DESIGN_V3_ROOT).parts
+                and "validation" not in path.relative_to(run_root / DESIGN_V3_ROOT).parts
+            ) if (run_root / DESIGN_V3_ROOT).exists() else [],
+            "assembled_artifacts": sorted(
+                str(path.relative_to(run_root))
+                for path in (run_root / DESIGN_V3_ROOT / "assembled").glob("*.json")
+            ) if (run_root / DESIGN_V3_ROOT / "assembled").exists() else [],
+            "compile_report": str(DESIGN_V3_COMPILE_REPORT) if (run_root / DESIGN_V3_COMPILE_REPORT).exists() else None,
+            "compile_status": v3_compile_report.get("status") if isinstance(v3_compile_report, dict) else None,
+            "runtime_artifacts": [
+                STAGE_PATHS["branch_graph"],
+                STAGE_PATHS["game_ir"],
+            ],
+        }
+    else:
+        design_layer_report = {
+            "version": "v1-refactored",
+            "source_artifacts": [
+                STAGE_PATHS["requirements"],
+                STAGE_PATHS["synopsis"],
+            ],
+            "runtime_artifacts": [
+                STAGE_PATHS["branch_graph"],
+                STAGE_PATHS["game_ir"],
+            ],
+        }
     web_path = run_root / "build" / "web-vn" / "index.html"
     unity_path = run_root / "build" / "unity-project"
     web_asset_root = run_root / "build" / "web-vn" / "assets"
@@ -39,7 +75,6 @@ def write_final_report(run_root: Path) -> Path:
         validation.get("status") == "fail"
         or story_report.get("status") == "fail"
         or gameplay_validation.get("status") == "fail"
-        or presentation_validation.get("status") == "fail"
         or asset_validation.get("status") == "fail"
         or not web_path.exists()
     ):
@@ -50,7 +85,6 @@ def write_final_report(run_root: Path) -> Path:
         "validation_status": validation.get("status"),
         "story_verification_status": story_report.get("status"),
         "gameplay_validation_status": gameplay_validation.get("status"),
-        "presentation_validation_status": presentation_validation.get("status"),
         "asset_validation_status": asset_validation.get("status"),
         "playable_exports": {
             "web_vn": str(web_path) if web_path.exists() else None,
@@ -58,8 +92,6 @@ def write_final_report(run_root: Path) -> Path:
         },
         "asset_exports": {
             "asset_manifest": STAGE_PATHS["asset_manifest"] if (run_root / STAGE_PATHS["asset_manifest"]).exists() else None,
-            "presentation_plan": STAGE_PATHS["presentation_plan"] if (run_root / STAGE_PATHS["presentation_plan"]).exists() else None,
-            "presentation_validation_report": STAGE_PATHS["presentation_validation_report"] if (run_root / STAGE_PATHS["presentation_validation_report"]).exists() else None,
             "asset_generation_report": STAGE_PATHS["asset_generation_report"] if (run_root / STAGE_PATHS["asset_generation_report"]).exists() else None,
             "asset_validation_report": STAGE_PATHS["asset_validation_report"] if (run_root / STAGE_PATHS["asset_validation_report"]).exists() else None,
             "generated_asset_count": len(generated_assets),
@@ -71,17 +103,7 @@ def write_final_report(run_root: Path) -> Path:
             "coverage_report": STAGE_PATHS["gameplay_coverage_report"] if (run_root / STAGE_PATHS["gameplay_coverage_report"]).exists() else None,
             "coverage": gameplay_coverage,
         },
-        "design_layer": {
-            "version": "v1-refactored",
-            "source_artifacts": [
-                STAGE_PATHS["requirements"],
-                STAGE_PATHS["synopsis"],
-            ],
-            "runtime_artifacts": [
-                STAGE_PATHS["branch_graph"],
-                STAGE_PATHS["game_ir"],
-            ],
-        },
+        "design_layer": design_layer_report,
         "artifacts": {
             key: value
             for key, value in STAGE_PATHS.items()

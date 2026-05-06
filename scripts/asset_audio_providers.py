@@ -38,6 +38,7 @@ MINIMAX_MUSIC_DEFAULT_MODEL = "music-2.5+"
 MINIMAX_MUSIC_ALLOWED_FORMATS = {"mp3", "wav", "pcm"}
 MINIMAX_MUSIC_ALLOWED_BITRATES = {32000, 64000, 128000, 256000}
 MINIMAX_MUSIC_ALLOWED_SAMPLE_RATES = {16000, 24000, 32000, 44100}
+MINIMAX_TTS_ALLOWED_EMOTIONS = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"}
 MINIMAX_DEFAULT_VOICE_ID = "Chinese (Mandarin)_ExplorativeGirl"
 MINIMAX_VOICE_DESIGN_DEFAULT_ENABLED = True
 VOICE_DESIGN_CACHE_NAME = "voice-design-cache.json"
@@ -272,6 +273,7 @@ def generate_minimax_voice_audio(
     api_key = require_audio_api_key()
     endpoint = build_ppio_audio_endpoint(model)
     spec = asset.get("spec") if isinstance(asset.get("spec"), dict) else {}
+    minimax_binding = provider_binding_for(spec, "minimax-ppio")
     audio_format = normalize_audio_format(expected_format)
     voice_setting = compact_dict({
         "voice_id": resolve_minimax_voice_id(spec, asset, output_root=output_root, preview_text=text),
@@ -280,7 +282,17 @@ def generate_minimax_voice_audio(
         "speed": env_float("AUDIO_VOICE_SPEED") or 1.0,
         "latex_read": parse_bool_env("AUDIO_VOICE_LATEX_READ", False),
         "text_normalization": parse_bool_env("AUDIO_TEXT_NORMALIZATION", True),
-        "emotion": first_text(spec.get("emotion"), asset.get("emotion"), os.environ.get("AUDIO_VOICE_EMOTION")),
+        "emotion": normalize_minimax_tts_emotion(
+            first_text(
+                minimax_binding.get("voice_emotion"),
+                minimax_binding.get("emotion"),
+                spec.get("voice_emotion"),
+                asset.get("voice_emotion"),
+                os.environ.get("AUDIO_VOICE_EMOTION"),
+                spec.get("emotion"),
+                asset.get("emotion"),
+            )
+        ),
     })
     payload: dict[str, Any] = {
         "text": text,
@@ -309,11 +321,26 @@ def generate_minimax_voice_audio(
             payload[payload_key] = extra
     configure_audio_payload(payload, "AUDIO_TTS_EXTRA_PARAMS")
     headers = audio_headers(api_key)
+    provider_emotion = voice_setting.get("emotion")
+    request_context = {
+        "assetKey": asset_id,
+        "assetType": "voice",
+        "operation": "audio.tts.generate",
+    }
+    delivery_context = compact_dict({
+        "speaker": spec.get("speaker") or asset.get("speaker"),
+        "authored_emotion": spec.get("emotion") or asset.get("emotion"),
+        "authored_tone": spec.get("tone") or asset.get("tone"),
+        "provider_voice_emotion": provider_emotion,
+        "voice_profile_id": minimax_binding.get("voice_profile_id") or spec.get("voice_id") or asset.get("voice_id"),
+    })
+    if delivery_context:
+        request_context["delivery"] = delivery_context
     append_audio_log_event(output_root, asset_id, {
         "timestamp": timestamp(),
         "provider": "minimax-ppio",
         "phase": "request",
-        "context": {"assetKey": asset_id, "assetType": "voice", "operation": "audio.tts.generate"},
+        "context": request_context,
         "url": endpoint,
         "method": "POST",
         "headers": redact_headers(headers),
@@ -448,9 +475,10 @@ def request_text(
 ) -> tuple[int, dict[str, str], str]:
     timeout = audio_http_timeout_seconds()
     last_error: Exception | None = None
+    no_proxy = audio_no_proxy_for_url(url)
     if requests is not None:
         session = requests.Session()
-        if audio_no_proxy():
+        if no_proxy:
             session.trust_env = False
         for attempt in range(resolve_audio_retry_count() + 1):
             try:
@@ -467,7 +495,7 @@ def request_text(
         raise RuntimeError(f"HTTP request failed: {last_error}")
 
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if audio_no_proxy() else None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if no_proxy else None
     open_url = opener.open if opener else urllib.request.urlopen
     for attempt in range(resolve_audio_retry_count() + 1):
         request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
@@ -584,6 +612,15 @@ def normalize_audio_kind(value: str | None) -> str:
     return "bgm" if kind.startswith("bgm") or kind in {"music", "background_music"} else kind or "bgm"
 
 
+def normalize_minimax_tts_emotion(value: str | None) -> str | None:
+    if not value or not value.strip():
+        return None
+    token = value.strip().lower()
+    if token in MINIMAX_TTS_ALLOWED_EMOTIONS:
+        return token
+    return None
+
+
 def normalize_audio_format(value: str | None) -> str:
     cleaned = str(value or "").strip().lower().lstrip(".")
     if cleaned in {"mpeg", "mpga"}:
@@ -642,6 +679,14 @@ def first_text(*values: Any) -> str | None:
     return None
 
 
+def provider_binding_for(spec: dict[str, Any], provider: str) -> dict[str, Any]:
+    bindings = spec.get("provider_bindings")
+    if not isinstance(bindings, dict):
+        return {}
+    binding = bindings.get(provider)
+    return binding if isinstance(binding, dict) else {}
+
+
 def resolve_minimax_voice_id(
     spec: dict[str, Any],
     asset: dict[str, Any],
@@ -654,7 +699,13 @@ def resolve_minimax_voice_id(
     if isinstance(configured_map, dict):
         profile_map.update({str(key): str(value) for key, value in configured_map.items() if value})
 
-    raw_voice_id = first_text(spec.get("voice_id"), asset.get("voice_id"))
+    minimax_binding = provider_binding_for(spec, "minimax-ppio")
+    raw_voice_id = first_text(
+        minimax_binding.get("voice_id"),
+        minimax_binding.get("voice_profile_id"),
+        spec.get("voice_id"),
+        asset.get("voice_id"),
+    )
     if raw_voice_id:
         profile = voice_profile_spec(raw_voice_id, spec=spec, asset=asset)
         if raw_voice_id.startswith("voice_profile.") and should_use_minimax_voice_design() and output_root is not None:
@@ -765,37 +816,59 @@ def voice_profile_spec(profile_id: str, *, spec: dict[str, Any] | None = None, a
                 normalized_key = "gender" if key == "voice_gender" else key
                 profile[normalized_key] = source[key]
                 break
-    prompt = first_text(
+    base_prompt = first_text(
         profile.get("prompt"),
         spec.get("voice_design_prompt"),
         asset.get("voice_design_prompt"),
-        build_generic_voice_design_prompt(profile_id, spec=spec, asset=asset, profile=profile),
     )
+    prompt = build_voice_design_prompt(profile_id, spec=spec, asset=asset, profile=profile, base_prompt=base_prompt)
     profile["prompt"] = prompt
     profile.setdefault("gender", "unknown")
     return profile
 
 
-def build_generic_voice_design_prompt(
+def build_voice_design_prompt(
     profile_id: str,
     *,
     spec: dict[str, Any],
     asset: dict[str, Any],
     profile: dict[str, Any],
+    base_prompt: str | None = None,
 ) -> str:
-    speaker = first_text(spec.get("speaker"), asset.get("speaker"), profile_id.removeprefix("voice_profile.").replace("_", " "))
+    speaker = first_text(
+        spec.get("speaker"),
+        asset.get("speaker"),
+        profile.get("speaker"),
+        profile.get("name"),
+        profile.get("display_name"),
+        profile_id.removeprefix("voice_profile.").replace("_", " "),
+    )
     gender = first_text(profile.get("gender"))
-    age = first_text(profile.get("age"))
+    age = first_text(profile.get("age"), profile.get("age_impression"))
     persona = first_text(profile.get("persona"))
     timbre = first_text(profile.get("timbre"))
     style = first_text(profile.get("style"))
+    critical_constraints: list[str] = []
+    gender_token = str(gender or "").lower()
+    age_token = str(age or "").lower()
+    timbre_token = str(timbre or "").lower()
+    if (
+        any(token in gender_token for token in ("female", "girl", "woman"))
+        and any(token in f"{age_token} {timbre_token}" for token in ("child", "girl", "8", "9", "10", "11", "young"))
+    ):
+        critical_constraints.append(
+            "Critical casting constraint: the resulting voice must clearly sound like a young Mandarin-speaking girl, "
+            "with a bright higher-pitched child timbre; it must not sound male, like a teenage boy, or like an adult."
+        )
     parts = [
+        base_prompt or "",
         f"Create a natural character voice for speaker {speaker}.",
         f"Gender: {gender}." if gender else "",
         f"Age or age impression: {age}." if age else "",
         f"Personality: {persona}." if persona else "",
         f"Timbre: {timbre}." if timbre else "",
         f"Speaking style: {style}." if style else "",
+        *critical_constraints,
         "Keep the voice suitable for the provided dialogue and maintain this character identity across lines.",
     ]
     return " ".join(part for part in parts if part)
@@ -869,6 +942,17 @@ def parse_bool_env(name: str, fallback: bool) -> bool:
 
 def audio_no_proxy() -> bool:
     return parse_bool_env("AUDIO_NO_PROXY", False)
+
+
+def audio_no_proxy_for_url(url: str) -> bool:
+    if audio_no_proxy():
+        return True
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    if host == "api.ppio.com" and path.endswith(f"/v3/{MINIMAX_MUSIC_ENDPOINT}"):
+        return parse_bool_env("PPIO_MINIMAX_MUSIC_NO_PROXY", True)
+    return False
 
 
 def env_int(name: str) -> int | None:

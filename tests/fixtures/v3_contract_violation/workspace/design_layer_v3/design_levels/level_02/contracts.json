@@ -1,0 +1,18 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 2,
+  "contracts": [
+    {
+      "id": "contract.l2.archive_arc",
+      "graph_node_id": "v3.l2.archive_arc",
+      "story_unit_ids": ["story.l2.archive_arc"],
+      "allowed_characters": ["char.ara", "char.niko"],
+      "allowed_locations": ["loc.archive"],
+      "allowed_state_reads": ["state.l2.truth_pressure"],
+      "allowed_state_writes": ["state.l2.truth_pressure"],
+      "required_functions": ["Reveal the ledger through the key."],
+      "forbidden_events": [],
+      "allowed_child_story_unit_ids": ["story.l1.ch01", "story.l1.ch02"]
+    }
+  ]
+}

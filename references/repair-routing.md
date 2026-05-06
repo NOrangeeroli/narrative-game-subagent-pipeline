@@ -12,16 +12,22 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | missing state variable, stale graph refs, missing edge semantics | `BaseGameIRDesigner` |
 | topology and semantics both need coordinated change | `BranchGraphDesigner` then `BaseGameIRDesigner`, or a paired planning pass |
 | missing realization plan, wrong exit binding, unsupported playable kind | `NodeRealizationPlanner` |
-| bad Yarn title, invalid command, missing outcome, changed state refs | affected `NodeDialogueWriter` |
+| bad Yarn title, invalid command, missing outcome, changed state refs | affected `NodeSceneWriter` (`NodeDialogueWriter` only as legacy alias) |
+| missing basic VN staging such as background, character presence, BGM, or SFX commands | affected `NodeSceneWriter` |
+| line voice cannot attach because line text, speaker, or line index is missing/mismatched | affected `NodeSceneWriter` manifest `line_performance`, then `AssetDirector` if direction consolidation dropped it |
 | invalid battle unit, weak verb coverage, missing victory path | `BattleRealizationWriter` |
 | invalid interaction unit, unreachable completion, broken hotspot gate | `InteractionRealizationWriter` |
 | invalid puzzle unit, missing solution, no fail-forward or hints | `PuzzleRealizationWriter` |
 | invalid exploration unit, broken local exit, unreachable planned outcome | `ExplorationRealizationWriter` |
 | missing asset id, wrong prefix, bad trace | `AssetDirector` |
-| weak portrait staging, invalid presentation insertion, missing expression use for available portraits | `PresentationDirector` |
+| weak portrait staging or missing expression use for available portraits | affected `NodeSceneWriter` |
 | gameplay adapter runtime failure | controller/runtime adapter bug first |
 | Web export failure | controller/tool bug first |
 | Unity export failure | controller/template bug first |
+| Runtime Yarn exposes internal source labels such as `source detail`, `source_dialogue`, `must_keep`, coverage ids, or `原文细节` | affected `NodeSceneWriter` |
+| Runtime-visible choice button has no SceneWriter-authored Yarn `->` label, uses a generic label, or falls back to designer/plan text | affected `NodeSceneWriter`; if the edge is not in the realization plan, repair V3 compile/export first |
+| Runtime Yarn replaces character interaction or concrete scene action with generic summary, visible placeholders, or table-like prose | affected `NodeSceneWriter` |
+| Runtime Yarn reads like mechanical excerpt stitching, lacks viewpoint orientation, active tension, emotional turn, or transition hook | affected `NodeSceneWriter`, or `NodeRealizationPlanner` if continuity summaries are too thin |
 
 ## Repair Ticket Shape
 
@@ -29,7 +35,7 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 {
   "ticket_id": "repair.stage.1",
   "issue_ids": ["issue.stage.1"],
-  "owners": ["NodeDialogueWriter"],
+  "owners": ["NodeSceneWriter"],
   "artifact_scope": "yarn_fragment",
   "repair_order": ["yarn_fragment"],
   "instructions": [
