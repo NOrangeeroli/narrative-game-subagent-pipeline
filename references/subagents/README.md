@@ -89,10 +89,14 @@ node orders or access, state gates, optional/revisit/delayed routes, convergence
 with route memory, and downstream contracts that read prior route state.
 Use the `Controller Packet Prompt Template` in
 `design-layer-v3/LevelStateGraphDesigner.md` for each level/shard worker.
-Every story extraction level and every graph/state design level should support
-parallel clean-context workers by default. The controller shards a level into
-packets, stores raw returns under that level's `shard_returns/`, and performs
-the deterministic merge into canonical artifacts.
+Every story extraction level should support parallel clean-context workers by
+default. For graph/state design, the coarsest enabled level is the exception:
+the controller must spawn exactly one clean-context `LevelStateGraphDesigner`
+with all coarsest story units so the global graph, global state model,
+route-family consistency, and ending-resolution state are designed coherently.
+Only non-coarsest graph/state levels should be sharded, normally by immediate
+parent packet. The controller stores raw returns under that level's
+`shard_returns/` and performs the deterministic merge into canonical artifacts.
 
 Minimum V3 input packets:
 
@@ -100,7 +104,7 @@ Minimum V3 input packets:
 | --- | --- |
 | StoryLevelExtractor | One story level id, assigned source chunks for the finest level or assigned lower-level story units for higher levels, granularity and scale notes, plus fact-capture requirements. |
 | AdaptationPolicyDesigner | Coarsest enabled `linear_story.json`, `facts/canonical_fact_graph.json`, user adaptation brief, and global constraints. |
-| LevelStateGraphDesigner | One parent packet: immediate parent graph/state/contracts slice, same-level story units, same-level fact view slice, global adaptation policy direction, and any controller-selected relevant excerpts. |
+| LevelStateGraphDesigner | Coarsest level: one global packet containing all same-level story units, same-level fact view, global adaptation policy direction, and no parent context. Non-coarsest levels: one parent packet with immediate parent graph/state/contracts slice, assigned same-level story units, same-level fact view slice, global policy direction, and any controller-selected relevant excerpts. |
 | DesignV3CompilerReviewer | V3 validation reports, compile report, assembled public artifacts, and only contract excerpts needed to explain failures. |
 
 | Agent | Role Card | Canonical Output |
@@ -118,9 +122,19 @@ must not skip levels.
 ## Post Design
 
 These agents run after the design layer. They should not reopen requirements or synopsis by default; use the durable downstream context in `game_ir.design_brief`, the graph topology in `branch_graph.json`, and controller-provided slices.
-For networked V3 outputs, `NodeRealizationPlanner` must preserve visible branch
+For networked outputs, `NodeRealizationPlanner` must preserve visible branch
 structure in the realization plan: choice placement, state-gated beat changes,
 route-memory payoff, and entry variants for nodes reached from different routes.
+`NodeSceneWriter` owns runtime-visible Yarn `->` choice labels and terminal
+variant prose. For V3 runs, pass
+`design-layer-v3/V3PostDesignNetworkedVNOverlay.md` only to preserve the
+finest-level public graph boundary and treat L2/L3 artifacts as trace context.
+Use `references/post-design-prompts.md` for controller-facing dispatch
+templates. For large source-adaptation VN runs, the controller may batch
+multiple `vn_yarn` or `cutscene_yarn` plans into a chapter/source-chunk shard
+packet, provided every assigned graph node still writes its own separate Yarn
+fragment pair and the worker receives only the source chunk named in that
+packet.
 After V3 `NodeSceneWriter` fragments are accepted, the controller should run
 `scripts/run_pipeline.py check-v3-scene-choice-labels --run-root <run-root>`.
 This check confirms that every runtime-visible choice button is backed by a

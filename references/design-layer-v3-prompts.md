@@ -11,8 +11,12 @@ Use these role cards for the V3 front-half:
 
 Story extraction runs fine-to-coarse and captures facts in the same pass.
 Graph/state design runs coarse-to-fine and is state-first.
-Every level supports parallel shard workers by default; the controller owns the
-deterministic merge into canonical artifacts.
+The coarsest enabled graph/state level must be designed by exactly one
+clean-context `LevelStateGraphDesigner` worker, because it owns the global
+graph, global state model, route-family consistency, and ending-resolution
+state. Non-coarsest graph/state levels may use parallel shard workers by
+immediate parent packet; the controller owns the deterministic merge into
+canonical artifacts.
 Only the finest enabled design level, normally L1, exports public/runtime graph
 nodes and edges. L2/L3 graph outputs are higher-level design artifacts used for
 parent context, result settlement, trace, and validation; their edges and labels
@@ -21,20 +25,23 @@ must not become player-visible branch choices.
 For V3 post-design realization, pass
 `subagents/design-layer-v3/V3PostDesignNetworkedVNOverlay.md` together with the
 shared post-design role card when spawning `NodeRealizationPlanner` or
-`NodeSceneWriter`. The overlay contains V3-only requirements for visible
-network payoff and state-resolved terminal variants; do not put those V3
-requirements into shared pipeline validators.
+`NodeSceneWriter`. The shared post-design role cards contain the generic
+networked VN, terminal variant, source-adaptation, and choice-label rules. The
+V3 overlay only explains V3-specific artifact interpretation: finest-level
+public graph boundaries, higher-level trace context, and the rule that L2/L3
+designer labels must not become runtime button text.
 
 Exact payload shapes are defined in `references/design-layer-v3-contracts.md`.
 
 ## Controller Task Prompt
 
-`LevelStateGraphDesigner` is shard-dependent. Use the
-`Controller Packet Prompt Template` in
-`subagents/design-layer-v3/LevelStateGraphDesigner.md` for each spawned shard,
-filling the level id, shard id, assigned story units, parent context, fact view,
-policy excerpt, relevant source/fact excerpts, branch permission, and repair
-notes.
+`LevelStateGraphDesigner` is packet-dependent. For the coarsest enabled level,
+spawn one global designer packet containing all same-level story units and no
+parent context. For every non-coarsest level, use the `Controller Packet Prompt
+Template` in `subagents/design-layer-v3/LevelStateGraphDesigner.md` for each
+spawned shard, filling the level id, shard id, assigned story units, parent
+context, fact view, policy excerpt, relevant source/fact excerpts, branch
+permission, and repair notes.
 
 The following block is the mandatory network target inside that packet for
 branch-permitted runs:

@@ -34,7 +34,8 @@ Spawn once per `vn_yarn` or `cutscene_yarn` plan after
   outgoing hooks, successor entry expectations, and state payoff cues.
 - Allowed commands: `complete_activity`, `set`, `wait`, `show_bg`,
   `show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`,
-  `play_sfx`, `play_bgm`, `stop_bgm`.
+  `play_sfx`, `play_bgm`, `stop_bgm`, `ending_variant`,
+  `end_ending_variant`.
 - Voice is not authored as a Yarn command. Put voice/performance intent in the
   fragment manifest `line_performance` array so the controller can attach
   generated voice only to dialogue or monologue line beats.
@@ -99,10 +100,34 @@ Return a Yarn fragment and manifest payload for exactly one realization plan.
 - Every required state read must create a visible payoff in prose, staging,
   available choice, branch beat, or terminal variant. Do not preserve a state
   read only in manifest metadata.
+- For terminal plans with `terminal_variants`, write one common canon sequence
+  plus one Yarn block per terminal variant. Wrap each variant block with
+  `<<ending_variant id="..." title="..." priority="...">>` and
+  `<<end_ending_variant>>`, make the variants visibly distinct, and copy the
+  variant ids, titles, priorities, conditions, state_writes, and visible payoff
+  notes into manifest `terminal_variants`.
+- Do not use `complete_activity` for terminal variants unless the plan also has
+  outgoing exit bindings. Do not add a final unconditional `set` that overwrites
+  the selected ending.
 - Before returning, self-check that every planned visible choice outcome appears
   exactly once as a labeled Yarn `->` branch and that each such branch contains
   the matching `<<complete_activity outcome="...">>`.
 - Do not change topology, invent state variables, add persistent effects, or implement non-VN gameplay.
+
+## Source-Adaptation Workflow
+
+For source-adaptation VN/cutscene nodes, do the work in this order:
+
+1. Read the realization plan, branch graph slice, state reads/writes, and
+   transition context.
+2. Identify required route variants, entry variants, branch beats, and terminal
+   variants.
+3. Read only the assigned source chunk.
+4. Classify source material into common canon beats, route-specific beats,
+   optional or revisit beats, and forbidden changes.
+5. Write fresh VN prose that preserves canon while realizing the planned
+   state/branch structure. Do not use source order as the default runtime
+   topology when the plan requires variants.
 
 ## Manifest Notes
 
@@ -135,6 +160,7 @@ optional scene-performance data:
   "exit_bindings": [{"outcome_id": "continue", "edge_id": "edge.intro_to_choice"}],
   "state_reads": [],
   "state_writes": [],
+  "terminal_variants": [],
   "continuity_summary": "...",
   "source_trace": {"requirement_ids": [], "event_ids": [], "node_ids": ["node.intro"], "edge_ids": [], "game_ir_ids": []}
 }
@@ -157,6 +183,8 @@ do not count.
 - Scene openings and endings use transition context rather than abrupt resets.
 - Worldbuilding is introduced because the current scene creates a need for it;
   heavy lore is not dumped before the player has a question.
+- Terminal variants are visibly different when the plan asks for state-resolved
+  endings.
 - Every planned outcome is reachable.
 - Manifest command refs match the Yarn commands.
 - Local asset refs match scheduled assets.
@@ -184,6 +212,16 @@ an internal mood, belief, interpretation, or abstract stance. If the plan
 describes a psychological route, express it through what the protagonist
 visibly does and preserve the psychology in branch beats or state payoff.
 Preserve plan exit bindings, state reads, and state writes in the manifest.
+If the plan has terminal_variants, write one common canon sequence plus one
+Yarn block per variant. Wrap each block with
+`<<ending_variant id="..." title="..." priority="...">>` and
+`<<end_ending_variant>>`. Make variants visibly distinct through concrete
+dialogue, staging, reflection, final-frame details, title text, or summary
+details. Copy variant ids, titles, priorities, conditions, state_writes, and
+visible payoff notes into manifest terminal_variants. Do not use
+complete_activity for terminal variants unless the plan also has outgoing exit
+bindings. Do not add a final unconditional set that overwrites the selected
+ending.
 
 Write the scene as something playable, not only text:
 - use concrete narration, dialogue, and monologue
@@ -196,6 +234,8 @@ Write the scene as something playable, not only text:
 
 If the input includes `source_adaptation_context`:
 - use source segment summaries only as grounding for what happens in this node
+- before writing, identify required route variants, entry variants, branch
+  beats, and terminal variants from the plan and graph slice
 - write fresh VN prose and dialogue that fits the source events and tone
 - read the assigned original source chunk for this node when present; match its
   style, scene density, and concrete event beats without copying long passages
@@ -238,7 +278,8 @@ Input:
 - optional transition context with predecessor pressure, outgoing hooks,
   successor entry expectations, and state payoff cues
 - allowed commands: complete_activity, set, wait, show_bg, show_char,
-  set_expression, hide_char, show_cg, hide_cg, play_sfx, play_bgm, stop_bgm
+  set_expression, hide_char, show_cg, hide_cg, play_sfx, play_bgm, stop_bgm,
+  ending_variant, end_ending_variant
 - optional repair ticket
 
 Output:

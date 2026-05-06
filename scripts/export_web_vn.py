@@ -45,6 +45,67 @@ def contains_authoring_text(text: str) -> bool:
     return any(pattern.search(text) for pattern in AUTHORING_TEXT_PATTERNS)
 
 
+def contains_cjk(text: Any) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff]", str(text or "")))
+
+
+def story_beats_contain_cjk(beats: list[Any]) -> bool:
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        if contains_cjk(beat.get("text")) or contains_cjk(beat.get("label")):
+            return True
+        if beat.get("type") == "choice":
+            for choice in as_list(beat.get("choices")):
+                if isinstance(choice, dict) and (
+                    contains_cjk(choice.get("label"))
+                    or story_beats_contain_cjk(as_list(choice.get("beats")))
+                ):
+                    return True
+    return False
+
+
+def exported_story_uses_cjk(story_nodes: list[Json]) -> bool:
+    for node in story_nodes:
+        if not isinstance(node, dict):
+            continue
+        if story_beats_contain_cjk(as_list(node.get("beats"))):
+            return True
+        for choice in as_list(node.get("choices")):
+            if isinstance(choice, dict) and (
+                contains_cjk(choice.get("label"))
+                or story_beats_contain_cjk(as_list(choice.get("beats")))
+            ):
+                return True
+        for variant in as_list(node.get("ending_variants")):
+            if isinstance(variant, dict) and (
+                contains_cjk(variant.get("title"))
+                or story_beats_contain_cjk(as_list(variant.get("beats")))
+            ):
+                return True
+    return False
+
+
+def localized_story_title(title: Any, story_nodes: list[Json]) -> str:
+    source_title = str(title or "").strip()
+    if not exported_story_uses_cjk(story_nodes) or contains_cjk(source_title):
+        return source_title or "Narrative Game"
+    if "alice" in source_title.lower():
+        return "爱丽丝梦游奇境：网状改编"
+    return "互动叙事"
+
+
+def localize_choice_fallbacks_for_cjk(story_nodes: list[Json]) -> None:
+    if not exported_story_uses_cjk(story_nodes):
+        return
+    for node in story_nodes:
+        if not isinstance(node, dict):
+            continue
+        for choice in as_list(node.get("choices")):
+            if isinstance(choice, dict) and not contains_cjk(choice.get("label")):
+                choice["label"] = "继续"
+
+
 def node_text(node: Json) -> str:
     for value in (node.get("body"), node.get("summary")):
         if isinstance(value, str) and value.strip() and not contains_authoring_text(value):
@@ -646,6 +707,8 @@ def expanded_runtime_edges(edge: Json, edge_origins: dict[str, Json]) -> list[Js
 
 def attach_choice_beats(choice: Json, branch: Json | None, node_id: str, manifest: Json) -> None:
     if not isinstance(branch, dict):
+        if str(choice.get("condition_type") or "") != "player_choice":
+            choice["label"] = "继续"
         return
     beats = as_list(branch.get("beats"))
     attach_voice_assets_recursive(beats, node_id, manifest, allow_fallback=False)
@@ -688,6 +751,15 @@ def normalize_terminal_variants(parsed_yarn: Json, plan: Json, fragment_manifest
             merged["ending_id"] = variant_id
         if "title" not in merged:
             merged["title"] = variant_id
+        merged = {
+            "id": merged.get("id"),
+            "ending_id": merged.get("ending_id"),
+            "title": merged.get("title"),
+            "priority": merged.get("priority"),
+            "beats": merged.get("beats", []),
+            "conditions": merged.get("conditions", []),
+            "state_writes": merged.get("state_writes", []),
+        }
         variants.append(merged)
         used_ids.add(variant_id)
 
@@ -701,6 +773,15 @@ def normalize_terminal_variants(parsed_yarn: Json, plan: Json, fragment_manifest
         merged.setdefault("title", variant_id)
         merged.setdefault("priority", 0)
         merged.setdefault("beats", [])
+        merged = {
+            "id": merged.get("id"),
+            "ending_id": merged.get("ending_id"),
+            "title": merged.get("title"),
+            "priority": merged.get("priority"),
+            "beats": merged.get("beats", []),
+            "conditions": merged.get("conditions", []),
+            "state_writes": merged.get("state_writes", []),
+        }
         variants.append(merged)
 
     return sorted(variants, key=lambda item: int(item.get("priority", 0)), reverse=True)
@@ -812,9 +893,12 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
             required_assets = [*required_assets, *as_list(gameplay_unit.get("required_assets"))]
         background_id = next((asset for asset in required_assets if isinstance(asset, str) and asset.startswith("bg.")), None)
         portrait_ids = [asset for asset in required_assets if isinstance(asset, str) and asset.startswith("portrait.")]
+        node_title = fragment_manifest.get("display_title") if isinstance(fragment_manifest, dict) else None
+        if not isinstance(node_title, str) or not node_title.strip():
+            node_title = "" if story_beats_contain_cjk(beats) else str(node.get("title") or node_id)
         story_node = {
             "id": node_id,
-            "title": node.get("title") or node_id,
+            "title": node_title,
             "background_id": background_id or node.get("asset_id") or "bg.default",
             "portrait_ids": portrait_ids,
             "beats": beats,
@@ -835,6 +919,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
             story_node["ending_variants"] = terminal_variants
         story_nodes.append(story_node)
 
+    localize_choice_fallbacks_for_cjk(story_nodes)
     assets = manifest_asset_entries(asset_manifest, runtime_assets)
     seen_asset_ids = {asset.get("asset_id") for asset in assets if isinstance(asset, dict)}
     for asset in asset_directions:
@@ -850,7 +935,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
 
     return {
         "metadata": {"schema_version": "0.1.0", "generated_by": "export_web_vn.py"},
-        "title": branch_graph.get("title") or "Generated Narrative Game",
+        "title": localized_story_title(branch_graph.get("title") or "Generated Narrative Game", story_nodes),
         "start_node_id": branch_graph.get("start_node_id") or (story_nodes[0]["id"] if story_nodes else ""),
         "initial_state": initial_state,
         "nodes": story_nodes,
@@ -910,13 +995,22 @@ def web_export_audio_report(story: Json) -> Json:
         for asset_id, count in collections.Counter(voice_ids).items()
         if count > 1
     ]
+    voice_expected = bool(voice_ids)
+    status = "pass" if not unvoiced_lines or not voice_expected else "fail"
+    warnings = []
+    if unvoiced_lines and not voice_expected:
+        warnings.append({
+            "kind": "voice_assets_missing",
+            "message": "No voice assets were attached; exported VN remains playable as an unvoiced build.",
+        })
     return {
-        "status": "pass" if not unvoiced_lines else "fail",
+        "status": status,
         "non_narration_lines": non_narration_lines,
         "voiced_lines": voiced_lines,
         "unique_voice_asset_ids": len(set(voice_ids)),
         "unvoiced_lines": unvoiced_lines,
         "duplicate_voice_asset_ids": duplicate_voice_asset_ids,
+        "warnings": warnings,
     }
 
 

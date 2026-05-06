@@ -110,6 +110,7 @@ def init_run(args: argparse.Namespace) -> None:
                     "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
                     "Run run_pipeline.py compile-design --design-layer v3.",
                     "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
+                    "Use references/post-design-prompts.md when spawning NodeRealizationPlanner and large-run NodeSceneWriter chapter/source-chunk shards.",
                     "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
                 ]
                 if design_layer == "v3"
@@ -204,6 +205,7 @@ def init_run(args: argparse.Namespace) -> None:
                 "targeted repair workers that receive explicit validation or contract excerpts",
             ],
             "v3_scene_choice_label_check": "run_pipeline.py check-v3-scene-choice-labels --run-root <run-root>",
+            "post_design_prompt_templates": "references/post-design-prompts.md",
         },
         "asset_pipeline_artifacts": [
             "workspace/asset-direction.json",

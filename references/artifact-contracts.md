@@ -78,8 +78,11 @@ Allowed `node_type`: `start`, `scene`, `choice`, `convergence`, `terminal`.
 
 Allowed `condition_type`: `unconditional`, `player_choice`, `state_gate`, `outcome`, `terminal_resolution`.
 
-Branch graph owns topology and player-facing labels, not executable state semantics.
-It must not contain Yarn text, Unity paths, image-generation prompts, or persistent state effects.
+Branch graph owns topology and authoring-intent labels, not executable state
+semantics. For VN/cutscene realization, final runtime button text is authored
+in SceneWriter Yarn `->` labels. Branch graph labels are planning/debug
+fallback data, not the authoritative runtime prose. It must not contain Yarn
+text, Unity paths, image-generation prompts, or persistent state effects.
 
 ## `game_ir.json`
 
@@ -140,6 +143,7 @@ Required shape:
       "exit_bindings": [{"outcome_id": "continue", "edge_id": "edge.intro_to_choice"}],
       "required_state_reads": [],
       "state_writes": [],
+      "terminal_variants": [],
       "required_assets": ["bg.intro"],
       "continuity_summary": "What this unit must preserve",
       "implementation_notes": [],
@@ -152,6 +156,22 @@ Required shape:
 Allowed `realization_kind`: `vn_yarn`, `cutscene_yarn`, `battle`, `interaction`, `puzzle`, `exploration`, `external_stub`.
 
 `vn_yarn` and `cutscene_yarn` use Yarn fragment pairs. `battle`, `interaction`, `puzzle`, and `exploration` use typed gameplay unit JSON files and registered runtime adapters. `external_stub` remains a not-implemented stub.
+
+Optional `terminal_variants` entries are used by terminal VN/cutscene plans that
+resolve endings from state:
+
+```json
+{
+  "id": "ending.resolved",
+  "title": "Resolved",
+  "priority": 40,
+  "conditions": [{"state_variable_id": "state.game.ending_id", "operator": "==", "value": "ending.resolved"}],
+  "state_writes": [{"state_variable_id": "state.game.ending_id", "operation": "set", "value": "ending.resolved"}],
+  "visible_payoff": "What must visibly differ in this ending.",
+  "canon_locked_beats": [],
+  "variant_beats": []
+}
+```
 
 ## Yarn Fragment Pair
 
@@ -176,7 +196,13 @@ Speaker: Line text.
 ===
 ```
 
-Allowed VN presentation commands are `show_bg`, `show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`, `play_bgm`, `stop_bgm`, and `play_sfx`. `NodeSceneWriter` should author the background, character, expression, BGM, and SFX scheduling that is materially needed by the scene. Later asset planning may consolidate ids and prompts, but it should not be the first place where basic scene scheduling appears.
+Allowed VN commands are `complete_activity`, `set`, `wait`, `show_bg`,
+`show_char`, `set_expression`, `hide_char`, `show_cg`, `hide_cg`, `play_bgm`,
+`stop_bgm`, `play_sfx`, `ending_variant`, and `end_ending_variant`.
+`NodeSceneWriter` should author the background, character, expression, BGM, and
+SFX scheduling that is materially needed by the scene. Later asset planning may
+consolidate ids and prompts, but it should not be the first place where basic
+scene scheduling appears.
 
 Manifest shape:
 
@@ -207,6 +233,7 @@ Manifest shape:
   "exit_bindings": [{"outcome_id": "continue", "edge_id": "edge.intro_to_choice"}],
   "state_reads": [],
   "state_writes": [],
+  "terminal_variants": [],
   "continuity_summary": "...",
   "source_trace": {"requirement_ids": [], "event_ids": [], "node_ids": ["node.intro"], "edge_ids": [], "game_ir_ids": []}
 }
@@ -223,6 +250,14 @@ as `source detail`, `source_dialogue`, `must_keep`, coverage ids, or
 VN/cutscene prose should read as a scene, not a source table: it needs a clear
 viewpoint or orientation, an active question or tension, a reveal or emotional
 turn, and a motivated transition to the planned outcome.
+
+For terminal VN/cutscene plans with `terminal_variants`, each variant should be
+represented by a Yarn block wrapped in `<<ending_variant id="..."
+title="..." priority="...">>` and `<<end_ending_variant>>`. The fragment
+manifest should copy variant ids, titles, priorities, conditions, state_writes,
+and visible payoff notes into `terminal_variants`. Terminal variants should
+resolve automatically from state; do not add a final visible ending menu or an
+unconditional final state write unless the plan explicitly requires it.
 
 `line_performance` is optional but recommended for voiced VN lines. It is
 internal generation/staging metadata, not player-facing prose. `line_index`

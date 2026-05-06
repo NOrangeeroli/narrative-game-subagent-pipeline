@@ -26,9 +26,14 @@ story extraction:   fine -> coarse
 graph/state design: coarse -> fine
 ```
 
-Every story extraction level and every graph/state design level supports
-controller sharding by default. Workers return partial payloads only; the
-controller merges shard returns deterministically before the next level begins.
+Story extraction levels support controller sharding by default. Graph/state
+design proceeds coarse-to-fine, but the coarsest enabled graph/state level must
+be designed by exactly one clean-context `LevelStateGraphDesigner` worker. That
+top-level worker owns the global graph, global state model, route-family
+settlement, cross-act consistency, and ending-resolution state. Non-coarsest
+graph/state levels may then be sharded by immediate parent packet. Workers
+return partial payloads only; the controller merges shard returns
+deterministically before the next level begins.
 
 Design must preserve source anchoring at every enabled level, but graph/state
 design is allowed to expand one source story unit into multiple state-dependent
@@ -95,6 +100,20 @@ Shape:
       "child_unit_ids": [],
       "parent_unit_id": "story.l2.arc01",
       "key_events": [],
+      "protagonist_action_beats": [
+        {
+          "id": "action.l1.ch01.follow_signal",
+          "actor": "Protagonist",
+          "action": "The protagonist takes a concrete source-grounded action.",
+          "action_type": "movement",
+          "target": "",
+          "immediate_effect": "",
+          "state_or_access_effect": "",
+          "social_effect": "",
+          "unresolved_impact": "",
+          "source_refs": []
+        }
+      ],
       "characters": [],
       "locations": [],
       "open_questions": [],
@@ -114,6 +133,13 @@ Shape:
 For higher levels, `child_unit_ids` must reference units from the immediate
 lower level. For non-coarsest levels, `parent_unit_id` must reference a unit in
 the immediate higher level.
+
+`protagonist_action_beats` records source-grounded protagonist behavior and its
+impact. Use it to distinguish what the protagonist actively does from external
+events in `key_events`. Fine-level action beats should preserve concrete source
+actions. Higher-level action beats should summarize and condense child-level
+behavior into action patterns and trajectory changes, not concatenate child
+action lists.
 
 ## Facts
 

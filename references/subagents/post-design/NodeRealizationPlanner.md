@@ -35,6 +35,10 @@ Return only JSON for `node-realization-plans.json`.
 - State reads and writes may only reference variables declared in `game_ir.json`.
 - For every node with more than one outgoing edge, plan the player-facing branch
   as visible scene structure, not only as final-line outcomes.
+- Terminal VN/cutscene nodes may resolve endings through state. When a terminal
+  node reads ending, route-family, tone, pressure, or other final-resolution
+  state, plan explicit `terminal_variants` instead of collapsing all routes into
+  one generic finale.
 - If multiple exit bindings converge to the same target node, explain how the
   divergent state will be read by that target or a later node. If the graph does
   not make that possible, request repair instead of treating the exits as
@@ -100,6 +104,38 @@ If an upstream edge label is primarily psychological, convert it into the
 external action that expresses that route before handing it to SceneWriter; keep
 the psychological route meaning in state reads/writes and payoff notes.
 
+## Terminal Variant Planning
+
+For terminal VN/cutscene nodes that read ending, route-family, tone, pressure,
+or other final-resolution state, add a `terminal_variants` array to the plan.
+Each variant uses this shape:
+
+```json
+{
+  "id": "ending.resolved",
+  "title": "Resolved",
+  "priority": 40,
+  "conditions": [{"state_variable_id": "state.game.ending_id", "operator": "==", "value": "ending.resolved"}],
+  "state_writes": [{"state_variable_id": "state.game.ending_id", "operation": "set", "value": "ending.resolved"}],
+  "visible_payoff": "Concrete lines, images, dialogue emphasis, final-frame details, title text, or summary details that must differ.",
+  "canon_locked_beats": ["Fixed events that must still occur."],
+  "variant_beats": ["Specific beat-level instructions for this ending."]
+}
+```
+
+Rules:
+
+- Use automatic state resolution; do not turn endings into a final visible menu
+  unless the graph or policy explicitly asks for it.
+- Include at least three terminal variants when the design exposes three or
+  more ending families, plus one unconditional fallback only when needed.
+- Do not plan an unconditional final write that erases stronger route outcomes.
+- For canon-locked finales, separate `canon_locked_beats` from
+  `variant_beats`: preserve fixed final events while changing visible payoff,
+  final framing, reflection, title, or summary.
+- Every required state read that contributes to ending resolution must appear in
+  at least one variant condition or visible payoff note.
+
 ## Quality Checklist
 
 - Every branch graph node appears exactly once.
@@ -109,6 +145,8 @@ the psychological route meaning in state reads/writes and payoff notes.
 - Converging exits identify where route memory remains visible.
 - Multi-incoming nodes include entry variant instructions or a canon-grounded
   equivalence reason.
+- Terminal state reads resolve into distinct terminal variants or a documented
+  canon-grounded exception.
 - Required assets use stable prefixed ids.
 - Continuity summaries are useful to downstream writers.
 - VN/cutscene plans help dialogue writers avoid mechanical excerpt dumps by
@@ -154,6 +192,14 @@ acknowledgement, canon beat coverage, state-gated variation, player choice
 point, and exit consequence where applicable. Do not plan all branch choices as
 final-line cosmetic choices unless the branch_graph edge is explicitly terminal
 or canon-grounded.
+For terminal VN/cutscene nodes that read ending, route-family, tone, pressure,
+or other final-resolution state, add terminal_variants with ids, titles,
+priorities, conditions, state_writes, visible_payoff, canon_locked_beats, and
+variant_beats. Use automatic state resolution; do not turn endings into a final
+visible menu unless the graph or policy explicitly asks for it. Include at
+least three variants when the design exposes three or more ending families,
+plus one unconditional fallback only when needed. Do not plan a final
+unconditional write that erases stronger route outcomes.
 Do not write dialogue prose, Yarn scripts, Unity scene content, or new persistent state variables.
 
 Input:

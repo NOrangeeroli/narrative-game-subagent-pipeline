@@ -756,21 +756,54 @@ def compile_requirements(run_root: Path, artifacts: dict[str, Any]) -> Json:
     policy = artifacts["global_policy"]
     facts_by_id = dict_by_id(as_list(artifacts["canonical_facts"].get("facts")))
     requirements = []
+    used_requirement_ids: set[str] = set()
+
+    def unique_requirement_id(prefix: str, raw_suffix: Any, index: int) -> str:
+        suffix = safe_suffix(str(raw_suffix or f"item_{index + 1:02d}"))
+        candidate = f"{prefix}.{suffix}"
+        if candidate not in used_requirement_ids:
+            used_requirement_ids.add(candidate)
+            return candidate
+        counter = 2
+        while f"{candidate}_{counter}" in used_requirement_ids:
+            counter += 1
+        unique_candidate = f"{candidate}_{counter}"
+        used_requirement_ids.add(unique_candidate)
+        return unique_candidate
+
     for fact_id in as_list(policy.get("fixed_fact_ids")):
         fact = facts_by_id.get(str(fact_id), {})
         requirements.append({
-            "id": f"req.preserve.{safe_suffix(str(fact_id))}",
+            "id": unique_requirement_id("req.preserve", fact_id, len(requirements)),
             "priority": "must",
             "text": f"Preserve canon fact {fact_id}: {fact.get('summary', '')}".strip(),
             "source_phrase": str(fact_id),
         })
-    for process in as_list(policy.get("variable_processes")):
-        if isinstance(process, dict):
+    if not requirements:
+        for lock in as_list(policy.get("canon_locks")):
+            if not isinstance(lock, dict):
+                continue
+            lock_name = lock.get("id") or lock.get("name") or "canon_lock"
             requirements.append({
-                "id": f"req.process.{safe_suffix(str(process.get('id', 'process')))}",
+                "id": unique_requirement_id("req.preserve", lock_name, len(requirements)),
+                "priority": "must",
+                "text": f"Preserve canon lock {lock_name}: {lock.get('must_preserve', '')}".strip(),
+                "source_phrase": ", ".join(str(lock_id) for lock_id in as_list(lock.get("lock_ids"))),
+            })
+    for process_index, process in enumerate(as_list(policy.get("variable_processes"))):
+        if isinstance(process, dict):
+            process_id = process.get("id") or process.get("name") or process.get("title") or f"process_{process_index + 1:02d}"
+            process_text = (
+                process.get("description")
+                or process.get("may_vary")
+                or process.get("allowed_variation")
+                or "Support a variable narrative process."
+            )
+            requirements.append({
+                "id": unique_requirement_id("req.process", process_id, len(requirements)),
                 "priority": "should",
-                "text": process.get("description", "Support a variable narrative process."),
-                "source_phrase": str(process.get("id", "")),
+                "text": f"{process_id}: {process_text}",
+                "source_phrase": str(process_id),
             })
     if not requirements:
         requirements.append({

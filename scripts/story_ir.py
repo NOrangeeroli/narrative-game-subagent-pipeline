@@ -147,6 +147,8 @@ def verify_story_ir(story_ir: Json, private_authoring_phrases: list[str] | None 
                 "play_sfx",
                 "play_bgm",
                 "stop_bgm",
+                "ending_variant",
+                "end_ending_variant",
             ):
                 findings.append({"severity": "warning", "kind": "unknown_command", "message": f"Unknown Yarn command: {command.get('command')}"})
             if command.get("command") == "complete_activity" and "outcome" not in command.get("args", {}):

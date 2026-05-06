@@ -3,10 +3,14 @@
 ## Mission
 
 Design one V3 graph/state level. Graph/state design proceeds coarse-to-fine.
-Each worker handles one controller-assigned shard, usually one parent graph node
-or parent story unit. This role owns the concrete adaptation decisions for its
-level: state first, then source-derived event-space variants, then routes and
-choices, then state consequences. Player choices must be behavior-first:
+The coarsest enabled level must be designed by exactly one clean-context worker
+that receives all coarsest story units and owns the global graph, global state
+model, route-family consistency, cross-level pressure, and ending-resolution
+state. Non-coarsest levels may be sharded; each worker handles one
+controller-assigned parent packet, usually one parent graph node or parent story
+unit. This role owns the concrete adaptation decisions for its level: state
+first, then source-derived event-space variants, then routes and choices, then
+state consequences. Player choices must be behavior-first:
 they should describe visible actions, spoken moves, movement, inspection,
 waiting, refusal, use of objects, or other things the player can understand as
 doing in the scene. Internal psychology, interpretation, mood, or stance may be
@@ -19,7 +23,8 @@ Read only:
 
 - the immediate parent level graph/state/contracts slice when this is not the
   coarsest level;
-- the same-level story units assigned to this shard;
+- the same-level story units assigned to this packet. For the coarsest level,
+  this must be every same-level story unit, not a shard;
 - the same-level fact view slice;
 - the global adaptation policy direction and any controller-selected relevant
   excerpts for this level or parent unit;
@@ -52,9 +57,12 @@ level state, child graph design, and `parent_state_settlements`.
 
 ## Controller Packet Prompt Template
 
-`LevelStateGraphDesigner` is shard-dependent, so the controller must fill this
-template for each spawned worker instead of using a global fixed prompt. Pass
-only the completed packet plus this role card.
+`LevelStateGraphDesigner` is packet-dependent, so the controller must fill this
+template for each spawned worker instead of using a global fixed prompt. For the
+coarsest enabled level, spawn exactly one global packet with all coarsest
+same-level story units and no parent context. For non-coarsest levels, spawn
+parallel shard packets by immediate parent packet when useful. Pass only the
+completed packet plus this role card.
 
 ```text
 You are LevelStateGraphDesigner for a V3 hierarchical narrative adaptation.
@@ -69,8 +77,8 @@ Return only JSON with these top-level keys:
 - `contracts`
 - `parent_state_settlements`
 
-Your output is a shard return, not a canonical write. The controller will
-validate and merge accepted shard returns into:
+Your output is a packet return, not a canonical write. The controller will
+validate and merge accepted packet returns into:
 - `workspace/design_layer_v3/design_levels/<LEVEL_ID>/state_model.json`
 - `workspace/design_layer_v3/design_levels/<LEVEL_ID>/story_graph.json`
 - `workspace/design_layer_v3/design_levels/<LEVEL_ID>/contracts.json`
@@ -83,16 +91,20 @@ Runtime export boundary:
   rely on their edge labels or endpoints becoming runtime-visible choices;
 - coarser outcomes must be expressed through state, contracts, child-level
   design pressure, and `parent_state_settlements`.
+- the coarsest enabled level must be one global design packet, not parallel
+  shards, so global state and route-family consistency are designed in one
+  place.
 
-Read only the packet content listed below. Do not inspect sibling shard packets,
-the full run directory, source chunks not included here, Yarn fragments, assets,
+Read only the packet content listed below. Do not inspect sibling packets, the
+full run directory, source chunks not included here, Yarn fragments, assets,
 runtime files, or global contracts unless the packet explicitly embeds excerpts.
 
 Packet contents:
 - role card: `references/subagents/design-layer-v3/LevelStateGraphDesigner.md`
 - schema excerpt: `<EMBEDDED_OR_REFERENCED_SCHEMA_EXCERPT>`
 - hierarchy policy excerpt: `<HIERARCHY_POLICY_EXCERPT>`
-- assigned same-level story units: `<ASSIGNED_STORY_UNITS>`
+- assigned same-level story units; for the coarsest enabled level this must be
+  all same-level story units: `<ASSIGNED_STORY_UNITS>`
 - same-level fact view slice: `<FACT_VIEW_SLICE>`
 - global adaptation policy excerpt: `<GLOBAL_POLICY_EXCERPT>`
 - parent graph/state/contracts slice, or `null` for coarsest level:
@@ -163,6 +175,23 @@ Every non-coarsest level must declare how local completion or route settlement
 affects the immediate parent level state through `parent_state_settlements`.
 `effects_on_parent_state` may only write state variables owned by the immediate
 parent level.
+
+## Coarsest-Level Global Design
+
+The coarsest enabled level is the global coordination layer. It must be produced
+by one `LevelStateGraphDesigner` worker, not by parallel shards. That worker
+must see every coarsest same-level story unit and design:
+
+- a single connected top-level event space;
+- all global route-family state needed by lower levels;
+- cross-act route memory and convergence expectations;
+- ending-resolution state, if the run has multiple ending families;
+- the top-level contracts that tell child levels which state reads and writes
+  must remain meaningful.
+
+Do not split the coarsest graph/state level by act, arc, or source chunk. Lower
+levels may be sharded only after this global parent graph/state/contracts output
+exists.
 
 ## State-First Adaptation Order
 
@@ -472,7 +501,8 @@ When a shard owns or influences a terminal node:
 
 ## Constraints
 
-- Do not inspect sibling shard packets.
+- Do not inspect sibling packets. For the coarsest enabled level, there should
+  be no sibling graph/state packet.
 - Do not write canonical artifacts.
 - Do not write dialogue, Yarn, assets, Unity paths, or runtime code.
 - Preserve source anchoring between same-level story units and graph nodes:

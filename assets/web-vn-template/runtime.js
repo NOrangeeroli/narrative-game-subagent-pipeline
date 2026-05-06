@@ -527,7 +527,7 @@
   function makeButton(label, onClick, className) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = label || "Continue";
+    button.textContent = label || "继续";
     if (className) button.className = className;
     button.addEventListener("click", onClick);
     return button;
@@ -543,7 +543,7 @@
   function renderChoices(node) {
     choicesEl.innerHTML = "";
     pendingRouteChoice = null;
-    continueButton.textContent = "Continue";
+    continueButton.textContent = "继续";
     const availableChoices = (node.choices || []).filter(choicePasses);
     const choices = availableChoices.filter(isVisibleChoice);
     const routeChoices = availableChoices.filter((choice) => !isVisibleChoice(choice));
@@ -553,7 +553,7 @@
     }
     const displayedChoices = choices.concat(routeChoices.length > 1 || choices.length > 0 ? routeChoices : []);
     displayedChoices.forEach((choice) => {
-      choicesEl.appendChild(makeButton(choice.label || "Continue", () => followChoice(choice), isVisibleChoice(choice) ? "" : "route-choice"));
+      choicesEl.appendChild(makeButton(choice.label || "继续", () => followChoice(choice), isVisibleChoice(choice) ? "" : "route-choice"));
     });
     if (choices.length === 0 && routeChoices.length === 1) {
       pendingRouteChoice = routeChoices[0];
@@ -733,7 +733,7 @@
     });
     panel.appendChild(grid);
     if (complete) {
-      panel.appendChild(makeButton(completion.label || "Continue", () => {
+      panel.appendChild(makeButton(completion.label || "继续", () => {
         completeActivity(completion.outcome_id || firstOutcome(unit, "complete"), completion.state_writes || []);
       }, "primary-action"));
     }
@@ -890,7 +890,7 @@
       return;
     }
     availableChoices.forEach((choice) => {
-      choicesEl.appendChild(makeButton(choice.label || "Continue", () => chooseInline(choice)));
+      choicesEl.appendChild(makeButton(choice.label || "继续", () => chooseInline(choice)));
     });
   }
 
@@ -914,18 +914,21 @@
   function render() {
     const node = nodes.get(currentNodeId);
     if (!node) {
-      nodeTitleEl.textContent = "Missing Scene";
+      nodeTitleEl.hidden = false;
+      nodeTitleEl.textContent = "场景缺失";
       speakerEl.textContent = "";
-      lineEl.textContent = `No node exists for ${currentNodeId}.`;
+      lineEl.textContent = `找不到场景：${currentNodeId}`;
       continueButton.hidden = true;
       pendingRouteChoice = null;
       choicesEl.innerHTML = "";
       return;
     }
-    titleEl.textContent = story.title || "Narrative Game";
-    nodeTitleEl.textContent = (activeEndingVariant && activeEndingVariant.title) || node.title || node.id;
+    titleEl.textContent = story.title || "互动叙事";
+    const heading = (activeEndingVariant && activeEndingVariant.title) || node.title || "";
+    nodeTitleEl.textContent = heading;
+    nodeTitleEl.hidden = !heading;
     choicesEl.innerHTML = "";
-    continueButton.textContent = "Continue";
+    continueButton.textContent = "继续";
     pendingRouteChoice = null;
     if (overlayBeats) {
       if (!renderBeatList(overlayBeats, finishOverlay)) {
