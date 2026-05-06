@@ -1,1 +1,0 @@
-{"permissions":[{"state_variable_id":"state.key_found","readable_by":["macro.*","subgraph.*","node.*"],"writable_by":["macro.*","subgraph.*","node.*"]}]}

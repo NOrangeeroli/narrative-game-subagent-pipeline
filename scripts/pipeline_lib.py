@@ -322,6 +322,21 @@ def validate_game_ir(payload: Json | None, branch_graph: Json | None = None) -> 
     return findings
 
 
+def state_refs_from_transition(value: Any) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, dict):
+        for key in ("state_variable_id", "state_id", "id"):
+            ref = value.get(key)
+            if isinstance(ref, str) and ref:
+                refs.add(ref)
+        for item in value.values():
+            refs.update(state_refs_from_transition(item))
+    elif isinstance(value, list):
+        for item in value:
+            refs.update(state_refs_from_transition(item))
+    return refs
+
+
 def project_shared_state(game_ir: Json) -> Json:
     variables = as_list(game_ir.get("global_state_variables") or game_ir.get("state_variables"))
     projected = []
@@ -352,13 +367,20 @@ def validate_graph_ir_consistency(branch_graph: Json | None, game_ir: Json | Non
     if not branch_graph or not game_ir:
         return findings
     edges = [edge for edge in as_list(branch_graph.get("edges")) if isinstance(edge, dict)]
+    variables = as_list(game_ir.get("global_state_variables") or game_ir.get("state_variables"))
+    state_ids = {var.get("id") for var in variables if isinstance(var, dict) and isinstance(var.get("id"), str)}
     serialized_ir = json.dumps(game_ir, ensure_ascii=False)
     for edge in edges:
         edge_id = edge.get("id")
         if not isinstance(edge_id, str):
             continue
         condition_type = edge.get("condition_type", edge.get("type", ""))
-        if condition_type not in ("unconditional", "terminal_resolution") and edge_id not in serialized_ir:
+        transition_refs = state_refs_from_transition(edge.get("conditions")) | state_refs_from_transition(edge.get("effects"))
+        for state_id in sorted(transition_refs):
+            if state_id not in state_ids:
+                findings.append(Finding("error", "state_reference", f"Branch graph edge references missing Game IR state variable: {state_id}", f"branch_graph.edges.{edge_id}"))
+        has_transition_semantics = bool(as_list(edge.get("conditions")) or as_list(edge.get("effects")))
+        if (has_transition_semantics or condition_type not in ("unconditional", "terminal_resolution")) and edge_id not in serialized_ir:
             findings.append(Finding("warning", "edge_missing_semantics", f"Non-trivial edge is not referenced by Game IR: {edge_id}"))
     return findings
 

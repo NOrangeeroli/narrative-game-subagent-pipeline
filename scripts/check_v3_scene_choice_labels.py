@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from export_web_vn import expanded_runtime_edges, load_v3_edge_origins, parse_vn_yarn, parse_yarn_command
+from export_web_vn import expanded_runtime_edges, parse_vn_yarn, parse_yarn_command
 from pipeline_lib import Json, as_list, ensure_dir, load_optional_json, load_yarn_fragments, path_for
 
 
@@ -80,7 +80,6 @@ def check_scene_choice_labels(run_root: Path) -> Json:
     branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
     plans = load_optional_json(path_for(run_root, "realization_plans")) or {"plans": []}
     fragments = load_yarn_fragments(run_root)
-    edge_origins = load_v3_edge_origins(run_root)
 
     fragments_by_node = {
         fragment["node_id"]: fragment
@@ -93,7 +92,7 @@ def check_scene_choice_labels(run_root: Path) -> Json:
     for edge in as_list(branch_graph.get("edges")):
         if not isinstance(edge, dict) or not isinstance(edge.get("from"), str):
             continue
-        runtime_edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge, edge_origins))
+        runtime_edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge))
 
     findings: list[Json] = []
     checked_visible_choices = 0

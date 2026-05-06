@@ -26,14 +26,60 @@ story extraction:   fine -> coarse
 graph/state design: coarse -> fine
 ```
 
-Story extraction levels support controller sharding by default. Graph/state
-design proceeds coarse-to-fine, but the coarsest enabled graph/state level must
-be designed by exactly one clean-context `LevelStateGraphDesigner` worker. That
-top-level worker owns the global graph, global state model, route-family
-settlement, cross-act consistency, and ending-resolution state. Non-coarsest
-graph/state levels may then be sharded by immediate parent packet. Workers
-return partial payloads only; the controller merges shard returns
-deterministically before the next level begins.
+Non-coarsest story extraction levels support controller sharding by default. For
+long source-adaptation VN runs, enable three levels by default: L1 source
+scene/chapter chunks, L2 arc packets, and L3 global story/design. For
+source-adaptation runs, finest-level story extraction must cover the complete
+source inventory from `inputs/source_material/source_index.json`: the controller
+partitions every chunk/span across shard packets, waits for every shard return,
+and rejects the level merge if any source chunk is unassigned, unfinished, or
+missing from accepted extraction trace. Representative or sample-only excerpts
+are not valid `level_01` extraction input for a source adaptation. Non-coarsest
+higher-level story extraction must also be sliced: a worker receives only its
+assigned immediate child story units/fact excerpts, not the full lower-level
+`linear_story.json`. The coarsest enabled story extraction level is the global
+story-line layer and must be produced by exactly one clean-context
+`StoryLevelExtractor` worker with all immediate lower-level story unit summaries,
+but not full source text, all L1 detail, or lower-level design artifacts.
+
+Graph/state design proceeds coarse-to-fine, but the coarsest enabled
+graph/state level must be designed by exactly one clean-context
+`LevelStateGraphDesigner` worker. That top-level worker owns the global graph,
+global state model, route-family settlement, cross-act consistency, and
+ending-resolution state. Non-coarsest graph/state levels may then be sharded by
+immediate parent packet. A non-coarsest design worker receives only its parent
+graph/state/contracts slice, assigned same-level story unit slice, local
+fact/policy slice, and controller-selected evidence excerpts. It must not
+receive all same-level story units, all parent graph/state artifacts, all source
+chunks, full source text, or sibling shard packets. Workers return partial
+payloads only; the controller merges shard returns deterministically before the
+next level begins.
+
+Every subagent packet should include a `scope` object with role, level,
+`shard_id`, `global`, assigned ids, parent ids when applicable,
+`allowed_input_paths`, and `forbidden_input_patterns`. Validation may reject
+non-coarsest packets that point to complete same-level/lower-level canonical
+artifacts instead of controller-made slices.
+
+Canonical story artifacts remain whole-level files:
+
+```text
+story_levels/level_<NN>/linear_story.json
+```
+
+For shard dispatch, the controller derives read-only slices:
+
+```text
+story_levels/level_<NN>/slices/*.json
+facts/level_<NN>/slices/*.json
+adaptation/slices/*.json
+design_levels/level_<NN>/slices/*.json
+```
+
+Slices are deterministic projections from canonical artifacts and controller
+scope decisions. They must not contain new creative content, must be
+rebuildable from canonical artifacts, and must not be treated as accepted
+canonical artifacts.
 
 Design must preserve source anchoring at every enabled level, but graph/state
 design is allowed to expand one source story unit into multiple state-dependent
@@ -133,6 +179,18 @@ Shape:
 For higher levels, `child_unit_ids` must reference units from the immediate
 lower level. For non-coarsest levels, `parent_unit_id` must reference a unit in
 the immediate higher level.
+
+Every immediate lower-level story unit must be covered by exactly one
+higher-level story parent through `parent_unit_id` and the matching
+`child_unit_ids` list. The coarsest enabled story level has no `parent_unit_id`,
+but its units collectively define the global story line consumed by adaptation
+policy and top-level graph/state design.
+
+For source-adaptation `level_01` extraction, `source_refs` are audit evidence,
+not optional decoration. Across all accepted finest-level shard returns, every
+source chunk/span listed in `inputs/source_material/source_index.json` must be
+represented by at least one story unit or an explicit controller-recorded
+compression decision before the controller writes canonical `linear_story.json`.
 
 `protagonist_action_beats` records source-grounded protagonist behavior and its
 impact. Use it to distinguish what the protagonist actively does from external
@@ -355,3 +413,8 @@ public branch nodes, public branch edges, runtime-visible choice labels, or
 SceneWriter targets. Coarser state variables, contracts, and
 `parent_state_settlements` may still be compiled into `game_ir.json` when they
 settle onto finest-level public nodes.
+
+Finest-level edge `conditions` and `effects` are copied into public
+`branch_graph.edges[*].conditions` and `branch_graph.edges[*].effects`. Runtime
+exporters should read these public edge fields and must not recover transition
+state by reopening private V3 `design_levels/*/story_graph.json` files.

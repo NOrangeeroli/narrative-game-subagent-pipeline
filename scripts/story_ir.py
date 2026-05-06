@@ -49,13 +49,6 @@ def collect_private_authoring_phrases(run_root: Path) -> list[str]:
             value = node.get(key)
             if isinstance(value, str):
                 phrases.extend(split_private_phrases(value))
-    source_segments = load_optional_json(run_root / "workspace" / "design_layer_v2" / "source_intake" / "source_segments.json") or {}
-    for segment in as_list(source_segments.get("segments")):
-        if not isinstance(segment, dict):
-            continue
-        value = segment.get("summary")
-        if isinstance(value, str):
-            phrases.extend(split_private_phrases(value))
     return sorted(set(phrases), key=len, reverse=True)
 
 

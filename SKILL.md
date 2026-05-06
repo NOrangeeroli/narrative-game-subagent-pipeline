@@ -15,7 +15,7 @@ Subagents author typed payloads only. They do not write canonical artifacts, edi
 
 The controller owns run layout, artifact persistence, schema validation, deterministic verification, repair tickets, retries, per-node fan-out, story assembly, export, and final reporting.
 
-The controller owns global workflow context. It may read `references/design-layer-v2-contracts.md`, validation scripts, and the run directory, but normal clean-context subagents must not be asked to read those global files directly. For each spawn, the controller prepares a role-specific packet and passes only that packet plus the exact role card listed in `references/subagents/README.md`.
+The controller owns global workflow context. It may read validation scripts, contract references, and the run directory, but subagents must be spawned in clean-context mode: they must not browse global files directly or receive an open-ended instruction to inspect the run. For every subagent spawn, including design, V3, post-design, review, and repair workers, the controller prepares a role-specific packet, uses the separate prompt template listed in `references/subagents/README.md`, and passes only the rendered prompt, packet content, and exact role card. Prompt templates must live outside role card files.
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py
   --run-root runs/my-game
 ```
 
-Use `references/subagents/README.md` to find the specific subagent role card needed for a clean-context authoring spawn. Save accepted payloads into the run layout described below.
+Use `references/subagents/README.md` to find the specific subagent role card and prompt template needed for a clean-context authoring spawn. Save accepted payloads into the run layout described below.
 
 Build and export after required artifacts exist:
 
@@ -54,7 +54,6 @@ workspace/design_layer/user_requirements.json
 workspace/design_layer/chapter_linear_synopsis.json
 workspace/design_layer/branch_graph.json
 workspace/design_layer/game_ir.json
-workspace/design_layer_v2/
 workspace/design_layer_v3/
 workspace/state/shared-state.schema.json
 workspace/realization/node-realization-plans.json
@@ -87,52 +86,76 @@ For source-adaptation runs, the first controller-owned preprocessing step is ful
 
 `workspace/controller-packets/` stores the compact packets actually sent to clean-context subagents. A packet should name the role card, list the exact upstream artifact paths included, and include only the source excerpts or slices that role needs. These packets are controller scaffolding, not accepted canonical artifacts.
 
-For long source-adaptation runs, `SourceSegmenter` may be sharded by the controller. Put shard packets under `workspace/controller-packets/source_segmenter/`, run multiple clean-context `SourceSegmenter` workers in parallel, wait for every shard to finish, and store their raw partial payloads under `workspace/controller-packets/source_segmenter_returns/`. The controller then normalizes and merges every accepted shard into the three canonical files: `workspace/design_layer_v2/source_intake/source_segments.json`, `workspace/design_layer_v2/source_intake/source_beat_table.json`, and `workspace/design_layer_v2/source_intake/adaptation_coverage_matrix.json`. Shard workers must not read sibling shard packets, full source text outside their packet, or write canonical artifacts.
+For large V3 story levels, do not send a whole `linear_story.json` to shard
+workers. The controller keeps `story_levels/level_<NN>/linear_story.json` as the
+canonical merged validation/compile artifact, then deterministically derives
+shard-sized input files under `story_levels/level_<NN>/slices/` and, when
+needed, matching fact/policy slices under `facts/level_<NN>/slices/`.
+`slices/` files are controller-generated projections from canonical artifacts:
+they must be reproducible, must not contain new creative content, and are not
+accepted canonical artifacts. Subagent packets point to these slice files, not
+to the full canonical story file.
+
+For V3 source-adaptation runs, finest-level `StoryLevelExtractor` sharding must cover the full source inventory, not a representative sample. The controller partitions every entry in `inputs/source_material/source_index.json` across shard packets under `workspace/design_layer_v3/story_levels/level_01/shards/`, waits for every shard, stores raw returns under `workspace/design_layer_v3/story_levels/level_01/shard_returns/`, and verifies that every source chunk/span was either extracted or explicitly compressed before merging `level_01/linear_story.json` and `facts/level_01/local_facts.json`. Do not proceed to higher story levels, policy design, or graph/state design while any source chunk is unassigned, unfinished, or failed.
 
 ## Common Controller Rules
 
-For every clean-context subagent spawn, write or assemble a packet under
-`workspace/controller-packets/` and pass only that packet plus the exact role
-card. The controller reads contracts and validates outputs; normal authoring
-workers do not read global contract files, browse the run directory, or choose
-additional upstream files for themselves. Compiler reviewers and repair workers
-may receive contract excerpts or validation reports when the controller
-explicitly includes them.
+For every subagent spawn, write or assemble a packet under
+`workspace/controller-packets/` and use a role-specific prompt template from
+`references/design-layer-prompts.md`, `references/design-layer-v3-prompts.md`,
+or `references/post-design-prompts.md`. Keep prompt templates separate from role
+cards. The controller reads contracts and validates outputs; workers do not read
+global contract files, browse the run directory, or choose additional upstream
+files for themselves. Compiler reviewers and repair workers may receive contract
+excerpts or validation reports when the controller explicitly includes them. Do
+not spawn a worker from a loose natural-language task if the corresponding role
+card and controller prompt template have not both been selected.
+
+Every packet must declare its scope. At minimum include the role, level,
+`shard_id`, whether it is `global`, assigned source chunk ids or story unit ids,
+parent story/graph node ids when applicable, allowed input paths, and forbidden
+input path patterns. Non-coarsest packets must use controller-made slices, not
+full same-level or full lower-level canonical artifacts. Coarsest/global V3
+packets are the only exception: they may see all immediate child summaries or
+all coarsest same-level story units needed for global coordination, but must not
+receive full source text, all L1 detail, sibling shard packets, or lower-level
+design artifacts.
 
 If the run adapts an external source, extract the full source before the first
 subagent spawn and persist it under `inputs/source_material/` using the
 canonical paths above. Do not pass the raw full text to every worker; use it to
 prepare role-specific packets.
 
-## V1 Workflow
+## Design Layer Modules
+
+The design layer has exactly two parallel modules: V1 and V3. Choose one module at run initialization and keep its authoring flow separate. Both modules must ultimately produce the same public runtime interface under `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`, but their upstream authoring artifacts, role cards, controller packets, validation, and compile steps are different.
+
+Do not mix V1 and V3 role cards in the same design pass. Downstream post-design agents receive the compiled public artifacts plus controller-made slices; they should not depend on private V3 hierarchy files unless a targeted repair explicitly requires them.
+
+## V1 Module Workflow
 
 1. Initialize the run with `scripts/run_pipeline.py init --design-layer v1`.
 2. Spawn front-half subagents using role cards under `references/subagents/design-layer/`:
    `PromptAnalyst`, `LinearSynopsisDesigner`, `BranchGraphDesigner`, and `BaseGameIRDesigner`.
-3. Save accepted payloads directly to `workspace/design_layer/`:
+3. In V1, `branch_graph.edges[*].conditions` and
+   `branch_graph.edges[*].effects` are the same public runtime transition
+   interface used by compiled V3. `BranchGraphDesigner` should put edge-local
+   state gates/effects directly on edges, and `BaseGameIRDesigner` should
+   declare the referenced state variables and mirror non-trivial edge semantics
+   in `game_ir.event_rules`.
+4. Save accepted payloads directly to `workspace/design_layer/`:
    `user_requirements.json`, `chapter_linear_synopsis.json`, `branch_graph.json`, and `game_ir.json`.
-4. Continue with the common post-design workflow.
+5. Continue with the common post-design workflow.
 
-## V2 Workflow
-
-1. Initialize the run with `scripts/run_pipeline.py init --design-layer v2`.
-2. Spawn front-half subagents using role cards under `references/subagents/design-layer-v2/`:
-   `InputProfiler`, `SourceSegmenter`, `SourceFactExtractor`, `AdaptationPolicyDesigner`, `StateModelDesigner`, `MacroGraphDesigner`, `MacroContractWriter`, `MeshExpansionPlanner`, `MeshLayerDesigner`, and optional `DesignV2CompilerReviewer`.
-3. For long V2 sources, the controller may split `SourceSegmenter` into shard packets and run those workers in parallel. Wait for all shards to complete, save raw partial returns under `workspace/controller-packets/source_segmenter_returns/`, normalize id/key variants, merge in source order, and only then write the canonical `source_intake/*` JSON files. Do not continue to `SourceFactExtractor` until every source shard is accepted or repaired.
-4. For V2 mesh expansion, reuse `MeshLayerDesigner` recursively. Spawn it once per selected parent from `mesh_expansion_policy.json`: depth 1 expands macro nodes, and depth 2+ expands selected `subgraph_node` parents from lower-depth subgraphs. Do not introduce a separate tertiary graph writer role.
-5. Save accepted V2 source payloads to `workspace/design_layer_v2/`.
-6. Run `scripts/run_pipeline.py compile-design --design-layer v2` to produce `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`.
-7. Continue with the common post-design workflow.
-
-## V3 Workflow
+## V3 Module Workflow
 
 1. Initialize the run with `scripts/run_pipeline.py init --design-layer v3`.
 2. Spawn V3 subagents using role cards under `references/subagents/design-layer-v3/`:
    `StoryLevelExtractor`, `AdaptationPolicyDesigner`, `LevelStateGraphDesigner`, and optional `DesignV3CompilerReviewer`.
-3. Run story extraction from fine to coarse. Every story level supports parallel shard workers by default; the controller owns shard packet creation, raw return storage, and deterministic merge into `workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json`. Story extraction also captures and aggregates stable facts; the controller persists accepted fact payloads under `workspace/design_layer_v3/facts/`.
+3. Run story extraction from fine to coarse. Long source-adaptation VN runs should use three enabled story levels by default: `level_01` scene/chapter chunks, `level_02` arc packets, and `level_03` global story line. Non-coarsest story levels support parallel shard workers; each worker receives only its assigned source chunks or immediate child story-unit slice. The controller owns shard packet creation, raw return storage, and deterministic merge into `workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json`. The coarsest enabled story level must be handled by exactly one global `StoryLevelExtractor` worker so the run has one global story line and one global aggregated fact view before policy or graph/state design begins; this global worker receives only the immediate lower-level summaries/fact view needed for global aggregation, not full source or all lower-level detail. For source adaptations, the finest level must partition and cover every source chunk/span from `inputs/source_material/source_index.json`; representative excerpts are not valid input coverage. Story extraction also captures and aggregates stable facts; the controller persists accepted fact payloads under `workspace/design_layer_v3/facts/`.
 4. Design the global adaptation policy from the coarsest story view plus canonical facts. The policy should define route families, tone/style, canon locks, and broad adaptation permissions, not a complete graph/state plan.
-5. Run graph/state design from coarse to fine. Each design level supports parallel shard workers by default; each worker receives the global adaptation policy direction plus controller-selected relevant excerpts, then designs state first, then state-dependent routes/choices, then state effects, contracts, and parent settlements. For branch-permitted runs, the task prompt must require visibly networked topology: different node orders or access, state gates, optional/revisit/delayed routes, convergence with route memory, and downstream contracts that read earlier route state. The controller merges shard returns into `state_model.json`, `story_graph.json`, `contracts.json`, and `parent_state_settlements.json`.
-6. In V3, design and story must correspond strictly one-to-one at every enabled level: each `linear_story.units[*]` must have exactly one same-level `story_graph.nodes[*]`, and each graph node must reference exactly one same-level story unit. Do not merge multiple story units into fewer design nodes, and do not invent design nodes without story units. Use edges, state, contracts, and parent settlements to express pacing and branching.
+5. Run graph/state design from coarse to fine. The coarsest design level, normally `level_03` in long adaptations, must be handled by exactly one global `LevelStateGraphDesigner` worker so the run has one global graph and one global state model. Lower design levels must be sharded by immediate parent graph node or parent story packet. Each non-coarsest worker receives only the parent graph/state/contracts slice, assigned same-level story-unit slice, assigned fact/policy slice, and controller-selected evidence excerpts needed for that parent. It must not receive all same-level story units, all sibling parent contexts, full lower-level story files, full source text, or sibling shard packets. For branch-permitted runs, the task prompt must require visibly networked topology: different node orders or access, state gates, optional/revisit/delayed routes, convergence with route memory, and downstream contracts that read earlier route state. The controller merges shard returns into `state_model.json`, `story_graph.json`, `contracts.json`, and `parent_state_settlements.json`.
+6. In V3, design and story must preserve source anchoring at every enabled level, but graph/state design may expand one same-level story unit into multiple state-dependent graph nodes. Each `linear_story.units[*]` must be referenced by at least one same-level `story_graph.nodes[*].story_unit_ids`, and every graph node must reference one or more same-level story units. Do not invent graph nodes without source anchors; use source-anchored canon, variant, failure, delayed, revisit, consequence, or bridge nodes plus edges, state, contracts, and parent settlements to express pacing and branching.
 7. Every non-coarsest level must write `parent_state_settlements.json`, declaring how local completion or route settlement affects immediate parent state. Settlement effects must not skip the immediate parent level.
 8. Run `scripts/run_pipeline.py compile-design --design-layer v3` to produce `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`.
 9. Continue with the common post-design workflow.
@@ -162,29 +185,6 @@ prepare role-specific packets.
 
 Base design artifacts must not contain Yarn syntax, Unity paths, image-generation prompts, or implementation details.
 
-Design Layer V2 has two input modes. `idea` mode creates a synthetic source
-segment for a short premise and permits invention inside the brief.
-`source_adaptation` mode first creates `workspace/design_layer_v2/source_intake/*`
-and requires later macro/mesh agents to cite assigned `source_segment_ids` so
-every source segment has explicit coverage. For novel-like source material,
-faithfulness comes from sufficiently granular source segments and beat
-summaries, not from auxiliary extraction tables. These
-source-intake traces are internal and must not change the public
-`branch_graph.json` or `game_ir.json` interfaces.
-For long or dense novel adaptations, preserve nuance by allocating deeper mesh
-where needed and recursively reusing `MeshLayerDesigner` on selected
-`subgraph_node` parents. Final playable leaf nodes should represent coherent
-scene, dialogue, action, or reveal beats, not whole chapters, when chapter-level
-compression would flatten source events or character interaction.
-Faithful adaptation also requires reader-experience adaptation. V2 authors must
-stage what the player knows, what question is active, what information is still
-withheld, what emotion the current beat should produce, and what hook carries
-the player into the next beat. Use existing summaries, contracts, continuity
-notes, and controller context slices for this internal plan; do not add public
-`branch_graph.json` or `game_ir.json` fields for it. Source segment summaries
-ground the scene, but runtime prose must be freshly written and must not paste
-private summaries as visible text.
-
 `game_ir.json` is the semantic authority for state variables, transition conditions, world-state effects, and progression rules.
 
 `shared-state.schema.json` is projected from `game_ir.json`; do not author it by hand unless repairing the projector itself.
@@ -203,9 +203,6 @@ Subagents do not write runtime code for these adapters.
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
 - `scripts/validate_gameplay.py`: validate gameplay realization units and write gameplay reports.
 - `scripts/compile_gameplay_manifest.py`: compile gameplay unit artifacts into `workspace/realization/gameplay-manifest.json`.
-- `scripts/design_v2_validate.py`: validate V2 source design artifacts.
-- `scripts/design_v2_compile.py`: compile V2 source artifacts into `workspace/design_layer/`.
-- `scripts/design_v2_project_context.py`: project a focused node context from compiled V2 artifacts.
 - `scripts/design_v3_validate.py`: validate V3 hierarchical design artifacts.
 - `scripts/design_v3_compile.py`: compile V3 hierarchical design artifacts into `workspace/design_layer/`.
 - `scripts/assemble_yarn.py`: assemble per-node Yarn fragments into `workspace/vn/story.yarn`.
@@ -220,7 +217,7 @@ Subagents do not write runtime code for these adapters.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.
 
-Controller reads `references/artifact-contracts.md` only when exact V1 payload shapes are needed and `references/design-layer-v2-contracts.md` only when exact V2 payload shapes are needed for validation, repair, or packet preparation. Controller reads `references/repair-routing.md` only when validation fails. For subagent dispatch, read `references/subagents/README.md`, then only the specific subagent role card needed for the current spawn. V1 design role cards live under `references/subagents/design-layer/`; V2 design role cards live under `references/subagents/design-layer-v2/`. `references/design-layer-v2-prompts.md` is a compatibility index for the V2 role cards.
+Controller reads `references/artifact-contracts.md` only when exact V1 payload shapes are needed and `references/design-layer-v3-contracts.md` only when exact V3 payload shapes are needed for validation, repair, or packet preparation. Controller reads `references/repair-routing.md` only when validation fails. For subagent dispatch, read `references/subagents/README.md`, then only the specific subagent role card and separate prompt template needed for the current spawn. V1 design role cards live under `references/subagents/design-layer/`, with templates in `references/design-layer-prompts.md`; V3 design role cards live under `references/subagents/design-layer-v3/`, with templates in `references/design-layer-v3-prompts.md`.
 
 ## Completion
 

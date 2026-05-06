@@ -8,6 +8,7 @@ The skill coordinates authoring subagents, validates canonical design artifacts,
 
 - `SKILL.md`: controller instructions and quick-start workflow.
 - `references/`: artifact contracts, subagent prompts, and repair routing.
+- `references/v1-v3-postdesign-workflow.zh.md`: Chinese explanation of the current V1/V3 + post-design workflow.
 - `scripts/`: deterministic pipeline tools for init, validation, assembly, export, and reporting.
 - `assets/`: Web VN and Unity export templates.
 - `agents/`: sample agent configuration.
@@ -23,26 +24,14 @@ python3 scripts/run_pipeline.py build \
   --run-root runs/my-game
 ```
 
-Design Layer V2 is opt-in. It keeps the public runtime interface under
-`workspace/design_layer/`, but authors source design data under
-`workspace/design_layer_v2/` and compiles it afterward:
+The design layer has two parallel modules. V1 is the default direct design
+module: subagents write `workspace/design_layer/branch_graph.json` and
+`workspace/design_layer/game_ir.json` directly. V3 is the hierarchical
+source-adaptation module: subagents write private hierarchy artifacts under
+`workspace/design_layer_v3/`, then the compiler publishes the same public
+runtime interface under `workspace/design_layer/`.
 
-```bash
-python3 scripts/run_pipeline.py init \
-  --prompt "A one-sentence game prompt" \
-  --run-root runs/my-v2-game \
-  --design-layer v2
-
-python3 scripts/run_pipeline.py compile-design \
-  --run-root runs/my-v2-game \
-  --design-layer v2
-```
-
-V2 uses an adjustable multi-level mesh expansion model. Set
-`control/mesh_expansion_policy.json` to choose the default target depth and use
-`depth_budget_by_parent` to selectively open deeper mesh layers.
-
-Design Layer V3 is also opt-in. It extracts story levels from fine to coarse,
+Design Layer V3 extracts story levels from fine to coarse,
 captures facts during story extraction, designs graph/state levels from coarse
 to fine with state-first level design, and requires each non-coarsest design
 level to declare how local state settlement affects immediate parent state.
@@ -73,11 +62,19 @@ first authoring subagent. Canonical extraction outputs live under
 receive role-specific packets from `workspace/controller-packets/`, not the full
 run directory or global contract files.
 
-For long sources, the controller may shard `SourceSegmenter` across multiple
-parallel clean-context workers. Shard packets live under
-`workspace/controller-packets/source_segmenter/`, raw partial returns live under
-`workspace/controller-packets/source_segmenter_returns/`, and only the
-controller merges those returns into canonical `source_intake` artifacts.
+For V3 source adaptations, finest-level story extraction is also shardable, but
+the shard set must cover the complete `source_index.json` inventory. Do not send
+only representative chapters to `StoryLevelExtractor`; every chapter/chunk/span
+must be assigned to a shard, returned, audited, and merged before higher story
+levels or graph/state design begin.
+
+All subagents are dispatched clean-context: role cards and prompt templates are
+separate files. The controller selects the exact role card from
+`references/subagents/README.md`, renders the matching prompt template from
+`references/design-layer-prompts.md`, `references/design-layer-v3-prompts.md`, or
+`references/post-design-prompts.md`, and sends only the role card plus the
+role-specific packet. The coarsest V3 story extractor and the coarsest V3
+graph/state designer are single global workers, not shard sets.
 
 For use as a Codex skill, install or copy this directory under `~/.codex/skills/narrative-game-subagent-pipeline` and invoke it by name.
 

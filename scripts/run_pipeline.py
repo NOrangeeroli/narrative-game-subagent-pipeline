@@ -10,11 +10,6 @@ from pathlib import Path
 from export_unity_project import export_unity_project
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
-from design_v2_lib import (
-    REQUIRED_V2_FILES,
-    compile_design_v2,
-    ensure_design_v2_layout,
-)
 from design_v3_lib import compile_design_v3, ensure_design_v3_layout
 from pipeline_lib import (
     build_gameplay_manifest,
@@ -33,19 +28,6 @@ from story_ir import collect_private_authoring_phrases, parse_yarn, verify_story
 from validate_assets import validate_assets
 from write_report import write_final_report
 
-
-V2_AUTHORING_ROLES = [
-    "InputProfiler",
-    "SourceSegmenter",
-    "SourceFactExtractor",
-    "AdaptationPolicyDesigner",
-    "StateModelDesigner",
-    "MacroGraphDesigner",
-    "MacroContractWriter",
-    "MeshExpansionPlanner",
-    "MeshLayerDesigner",
-    "DesignV2CompilerReviewer",
-]
 
 V3_AUTHORING_ROLES = [
     "StoryLevelExtractor",
@@ -78,58 +60,43 @@ def init_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
     design_layer = getattr(args, "design_layer", "v1")
-    if design_layer == "v2":
-        ensure_design_v2_layout(run_root)
     if design_layer == "v3":
         ensure_design_v3_layout(run_root)
     write_text(path_for(run_root, "prompt"), args.prompt.strip() + "\n")
     write_json(run_root / "graph" / "state.json", {
         "run_root": str(run_root),
-        "current_stage": f"initialized_{design_layer}_design_layer" if design_layer in ("v2", "v3") else "initialized",
+        "current_stage": f"initialized_{design_layer}_design_layer" if design_layer == "v3" else "initialized",
         "design_layer": design_layer,
         "next_actions": (
             [
                 "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
-                "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
-                "For long sources, shard SourceSegmenter packets under workspace/controller-packets/source_segmenter/, run shard workers in parallel, wait for all shards, then controller-merge accepted returns into canonical source_intake artifacts.",
-                "Spawn V2 authoring agents using references/subagents/design-layer-v2/ in order: " + " -> ".join(V2_AUTHORING_ROLES) + ".",
-                "Reuse MeshLayerDesigner recursively per mesh_expansion_policy: depth 1 expands macro nodes; depth 2+ expands selected subgraph_node parents.",
-                "Write accepted payloads to workspace/design_layer_v2/.",
-                "Run run_pipeline.py compile-design --design-layer v2.",
+                "Create role-specific clean-context packets under workspace/controller-packets/; render the separate prompt template and pass only that prompt, the packet content, and the exact role card to each subagent.",
+                "Author V3 story levels from fine to coarse. Long source-adaptation VN runs should use three levels by default: level_01 source scene/chapter chunks, level_02 arc packets, and level_03 global story/design. For source-adaptation level_01, shard StoryLevelExtractor work so every source_index chunk/span is assigned, returned, audited, and merged; representative chapters are not sufficient. Non-coarsest higher story levels must also be sharded/sliced and may not receive full lower-level linear_story files. The coarsest enabled StoryLevelExtractor must be one global worker that sees only immediate child summaries/fact view and produces the global story line/fact view. Story extraction should capture facts for controller persistence under facts/*.",
+                "Write adaptation/global_policy.json from the coarsest story view plus canonical facts; keep policy broad and leave concrete state/topology decisions to level design.",
+                "Author V3 graph/state design from coarse to fine. The coarsest enabled LevelStateGraphDesigner must be one global worker over coarsest story units only; non-coarsest design levels must be sharded by immediate parent graph node or parent packet. Non-coarsest workers receive only parent graph/state/contracts slices, assigned same-level story-unit slices, local fact/policy slices, and relevant excerpts, then design state first, then state-dependent routes, behavior-first player choices, effects, contracts, and parent settlements. For branch-permitted runs, task prompts must require visibly networked topology: different node orders/access, state gates, optional/revisit/delayed routes, convergence with route memory, player choices framed as external actions rather than only internal attitudes, and no cosmetic final-line branching.",
+                "For every non-coarsest design level, write parent_state_settlements.json describing how this level affects immediate parent state.",
+                "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
+                "Run run_pipeline.py compile-design --design-layer v3.",
                 "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
+                "Use references/post-design-prompts.md when spawning NodeRealizationPlanner and large-run NodeSceneWriter chapter/source-chunk shards.",
+                "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
             ]
-            if design_layer == "v2"
-            else (
-                [
-                    "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
-                    "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
-                    "Author V3 story levels from fine to coarse. Each story level may be sharded and merged deterministically, and story extraction should capture facts for controller persistence under facts/*.",
-                    "Write adaptation/global_policy.json from the coarsest story view plus canonical facts; keep policy broad and leave concrete state/topology decisions to level design.",
-                    "Author V3 graph/state design from coarse to fine. Each design level may be sharded by parent graph node; workers receive global adaptation direction plus relevant controller excerpts, then design state first, then state-dependent routes, behavior-first player choices, effects, contracts, and parent settlements. For branch-permitted runs, task prompts must require visibly networked topology: different node orders/access, state gates, optional/revisit/delayed routes, convergence with route memory, player choices framed as external actions rather than only internal attitudes, and no cosmetic final-line branching.",
-                    "For every non-coarsest design level, write parent_state_settlements.json describing how this level affects immediate parent state.",
-                    "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
-                    "Run run_pipeline.py compile-design --design-layer v3.",
-                    "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
-                    "Use references/post-design-prompts.md when spawning NodeRealizationPlanner and large-run NodeSceneWriter chapter/source-chunk shards.",
-                    "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
-                ]
-                if design_layer == "v3"
-                else [
+            if design_layer == "v3"
+            else [
                 "For source-adaptation runs, extract the full source into inputs/source_material/ before spawning authoring agents.",
-                "Create role-specific clean-context packets under workspace/controller-packets/; pass only the packet plus the exact role card to each subagent.",
+                "Create role-specific clean-context packets under workspace/controller-packets/; render the separate prompt template and pass only that prompt, the packet content, and the exact role card to each subagent.",
                 "Spawn PromptAnalyst, LinearSynopsisDesigner, BranchGraphDesigner, and BaseGameIRDesigner.",
+                "For V1 public runtime semantics, put transition gates/effects on branch_graph.edges[*].conditions/effects; BaseGameIRDesigner must declare the referenced state variables and mirror non-trivial edges in game_ir.event_rules.",
                 "Write accepted payloads to workspace/design_layer/.",
                 "Run validate_artifacts.py --write-projections.",
                 ]
-            )
         ),
     })
     write_json(run_root / "reports" / "controller-todo.json", {
         "status": "initialized",
         "design_layer": design_layer,
         "authoring_roles": (
-            V2_AUTHORING_ROLES if design_layer == "v2"
-            else V3_AUTHORING_ROLES if design_layer == "v3"
+            V3_AUTHORING_ROLES if design_layer == "v3"
             else [
                 "PromptAnalyst",
                 "LinearSynopsisDesigner",
@@ -139,28 +106,23 @@ def init_run(args: argparse.Namespace) -> None:
         ),
         "prompt_path": "inputs/prompt.txt",
         "required_design_artifacts": (
-            [str(Path("workspace/design_layer_v2") / relative) for relative in REQUIRED_V2_FILES]
-            + ["workspace/design_layer_v2/subgraphs/subgraph.<parent_ref_id>.json"]
-            if design_layer == "v2"
-            else (
-                [
-                    "workspace/design_layer_v3/hierarchy_policy.json",
-                    "workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json",
-                    "workspace/design_layer_v3/facts/canonical_fact_graph.json",
-                    "workspace/design_layer_v3/adaptation/global_policy.json",
-                    "workspace/design_layer_v3/design_levels/level_<NN>/state_model.json",
-                    "workspace/design_layer_v3/design_levels/level_<NN>/story_graph.json",
-                    "workspace/design_layer_v3/design_levels/level_<NN>/contracts.json",
-                    "workspace/design_layer_v3/design_levels/level_<NN>/parent_state_settlements.json",
-                ]
-                if design_layer == "v3"
-                else [
-                    "workspace/design_layer/user_requirements.json",
-                    "workspace/design_layer/chapter_linear_synopsis.json",
-                    "workspace/design_layer/branch_graph.json",
-                    "workspace/design_layer/game_ir.json",
-                ]
-            )
+            [
+                "workspace/design_layer_v3/hierarchy_policy.json",
+                "workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json",
+                "workspace/design_layer_v3/facts/canonical_fact_graph.json",
+                "workspace/design_layer_v3/adaptation/global_policy.json",
+                "workspace/design_layer_v3/design_levels/level_<NN>/state_model.json",
+                "workspace/design_layer_v3/design_levels/level_<NN>/story_graph.json",
+                "workspace/design_layer_v3/design_levels/level_<NN>/contracts.json",
+                "workspace/design_layer_v3/design_levels/level_<NN>/parent_state_settlements.json",
+            ]
+            if design_layer == "v3"
+            else [
+                "workspace/design_layer/user_requirements.json",
+                "workspace/design_layer/chapter_linear_synopsis.json",
+                "workspace/design_layer/branch_graph.json",
+                "workspace/design_layer/game_ir.json",
+            ]
         ),
         "runtime_design_artifacts": [
             "workspace/design_layer/branch_graph.json",
@@ -175,33 +137,31 @@ def init_run(args: argparse.Namespace) -> None:
         },
         "subagent_input_policy": {
             "packet_root": "workspace/controller-packets/",
-            "source_segmenter_shards": {
-                "packet_glob": "workspace/controller-packets/source_segmenter/*.md",
-                "raw_return_glob": "workspace/controller-packets/source_segmenter_returns/*.raw.json",
-                "merge_owner": "controller",
-                "canonical_outputs": [
-                    "workspace/design_layer_v2/source_intake/source_segments.json",
-                    "workspace/design_layer_v2/source_intake/source_beat_table.json",
-                    "workspace/design_layer_v2/source_intake/adaptation_coverage_matrix.json",
-                ],
-            },
             "v3_parallel_level_policy": {
                 "story_level_shards": "workspace/design_layer_v3/story_levels/level_<NN>/shards/*.json",
                 "story_level_returns": "workspace/design_layer_v3/story_levels/level_<NN>/shard_returns/*.json",
+                "fine_level_source_coverage": "For source-adaptation level_01, shard packets must cover every entry in inputs/source_material/source_index.json before merge; do not use representative-only chapters.",
+                "three_level_default": "Long source-adaptation VN runs should use level_01 source scene/chapter chunks, level_02 arc packets, and level_03 global story/design.",
+                "coarsest_story_global": "The coarsest enabled StoryLevelExtractor is a single global packet/return that covers every immediate lower-level story unit.",
+                "coarsest_design_global": "The coarsest enabled LevelStateGraphDesigner is a single global packet/return that owns the global graph and state model.",
+                "non_coarsest_slice_only": "Non-coarsest story/design packets must include a scope declaration and use controller-made slices instead of full same-level or full lower-level artifacts.",
                 "design_level_shards": "workspace/design_layer_v3/design_levels/level_<NN>/shards/*.json",
                 "design_level_returns": "workspace/design_layer_v3/design_levels/level_<NN>/shard_returns/*.json",
                 "merge_owner": "controller",
                 "public_branch_graph_source": "finest_enabled_design_level_only",
             },
-            "normal_authoring_inputs": "exact role card plus role-specific controller packet only",
-                "controller_only_context": [
-                    "references/design-layer-v2-contracts.md",
-                    "validation scripts",
-                    "full run directory traversal",
-                    "full extracted source text unless a role packet explicitly includes it",
+            "prompt_template_files": [
+                "references/design-layer-prompts.md",
+                "references/design-layer-v3-prompts.md",
+                "references/post-design-prompts.md",
+            ],
+            "normal_authoring_inputs": "rendered separate prompt template plus exact role card plus role-specific controller packet only",
+            "controller_only_context": [
+                "validation scripts",
+                "full run directory traversal",
+                "full extracted source text unless a role packet explicitly includes it",
             ],
             "contract_exceptions": [
-                "DesignV2CompilerReviewer",
                 "targeted repair workers that receive explicit validation or contract excerpts",
             ],
             "v3_scene_choice_label_check": "run_pipeline.py check-v3-scene-choice-labels --run-root <run-root>",
@@ -230,14 +190,11 @@ def init_run(args: argparse.Namespace) -> None:
 def compile_design_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
-    if args.design_layer == "v2":
-        result = compile_design_v2(run_root)
-        report_path = run_root / "workspace" / "design_layer_v2" / "compile_report.json"
-    elif args.design_layer == "v3":
+    if args.design_layer == "v3":
         result = compile_design_v3(run_root)
         report_path = run_root / "workspace" / "design_layer_v3" / "compile_report.json"
     else:
-        raise SystemExit("compile-design currently supports --design-layer v2 or v3.")
+        raise SystemExit("compile-design currently supports --design-layer v3.")
     payload = load_optional_json(report_path) or result.to_json()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     if result.status == "fail":
@@ -330,12 +287,12 @@ def main() -> None:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--prompt", required=True)
     init_parser.add_argument("--run-root", required=True)
-    init_parser.add_argument("--design-layer", choices=["v1", "v2", "v3"], default="v1")
+    init_parser.add_argument("--design-layer", choices=["v1", "v3"], default="v1")
     init_parser.set_defaults(func=init_run)
 
     compile_design_parser = subparsers.add_parser("compile-design")
     compile_design_parser.add_argument("--run-root", required=True)
-    compile_design_parser.add_argument("--design-layer", choices=["v2", "v3"], default="v2")
+    compile_design_parser.add_argument("--design-layer", choices=["v3"], default="v3")
     compile_design_parser.set_defaults(func=compile_design_run)
 
     build_parser = subparsers.add_parser("build")

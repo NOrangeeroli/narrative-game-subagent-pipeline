@@ -675,33 +675,10 @@ def normalize_state_ops(value: Any) -> list[Json]:
     return ops
 
 
-def load_v3_edge_origins(run_root: Path) -> dict[str, Json]:
-    origins: dict[str, Json] = {}
-    design_root = run_root / "workspace" / "design_layer_v3" / "design_levels"
-    if not design_root.exists():
-        return origins
-    for path in sorted(design_root.glob("level_*/story_graph.json")):
-        graph_payload = load_optional_json(path) or {}
-        graph = graph_payload.get("story_graph") if isinstance(graph_payload.get("story_graph"), dict) else graph_payload
-        for edge in as_list(graph.get("edges") if isinstance(graph, dict) else []):
-            if isinstance(edge, dict) and isinstance(edge.get("id"), str):
-                origins[edge["id"]] = edge
-    return origins
-
-
-def expanded_runtime_edges(edge: Json, edge_origins: dict[str, Json]) -> list[Json]:
-    source_ids = [source_id for source_id in as_list(edge.get("source_rule_ids")) if isinstance(source_id, str) and source_id]
-    origin = edge_origins.get(str(edge.get("id") or ""))
-    if not isinstance(origin, dict) and source_ids:
-        origin = edge_origins.get(source_ids[0], {})
+def expanded_runtime_edges(edge: Json) -> list[Json]:
     merged = dict(edge)
-    if isinstance(origin, dict):
-        merged["label"] = origin.get("label") or merged.get("label")
-        merged["condition_type"] = origin.get("condition_type") or merged.get("condition_type")
-        merged["conditions"] = as_list(origin.get("conditions")) or as_list(merged.get("conditions"))
-        merged["effects"] = normalize_state_ops(origin.get("effects")) or normalize_state_ops(merged.get("effects"))
-    else:
-        merged["effects"] = normalize_state_ops(merged.get("effects"))
+    merged["conditions"] = as_list(merged.get("conditions"))
+    merged["effects"] = normalize_state_ops(merged.get("effects"))
     return [merged]
 
 
@@ -819,7 +796,6 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
     runtime_assets = runtime_assets or {}
     fragments = load_yarn_fragments(run_root)
     gameplay_units = load_gameplay_units(run_root)
-    edge_origins = load_v3_edge_origins(run_root)
 
     fragments_by_node = {fragment["node_id"]: fragment for fragment in fragments}
     plan_by_node = {
@@ -830,7 +806,7 @@ def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = 
     edges_by_from: dict[str, list[Json]] = {}
     for edge in as_list(branch_graph.get("edges")):
         if isinstance(edge, dict) and isinstance(edge.get("from"), str):
-            edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge, edge_origins))
+            edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge))
 
     initial_state = {
         variable.get("id"): variable.get("initial_value")

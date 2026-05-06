@@ -13,6 +13,10 @@ post-design agents.
 
 - Realize only the compiled public `branch_graph.json`. In V3, that public
   graph is exported from the finest enabled design level, normally L1.
+- Treat public `branch_graph.edges[*].conditions` and
+  `branch_graph.edges[*].effects` as the runtime transition semantics. Do not
+  reopen private V3 `design_levels/*/story_graph.json` files to recover edge
+  state.
 - Do not directly realize L2/L3 `story_graph` nodes or edges as runtime scenes,
   exit bindings, Yarn choices, or button labels unless they have been compiled
   into public finest-level graph nodes and edges.

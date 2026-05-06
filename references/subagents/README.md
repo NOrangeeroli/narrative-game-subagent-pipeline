@@ -1,77 +1,69 @@
 # Subagent Role Cards
 
-Use this index to pick the exact role card for a subagent spawn. Read only the role card needed for the current spawn, then pass only the minimum upstream artifacts listed there.
+Use this index to pick the exact role card and prompt template for a subagent
+spawn. Read only the role card needed for the current spawn, then pass only the
+minimum upstream artifacts listed there.
 
 Do not set a `model` override when spawning subagents.
 
 ## Clean-Context Dispatch Rules
 
-The controller owns global workflow context and run navigation. Subagents should receive a compact controller packet, not an open-ended instruction to inspect the run directory.
+The controller owns global workflow context and run navigation. Every subagent
+spawn must be clean-context: subagents receive a compact controller packet and a
+role card, not an open-ended instruction to inspect the run directory.
 
 - Controller may read contracts, validation scripts, source extraction files, and all accepted artifacts.
 - Normal authoring subagents read only their exact role card plus the packet prepared for that spawn.
-- Do not pass `references/design-layer-v2-contracts.md` to normal authoring workers by default. The controller uses it to validate and repair; `DesignV2CompilerReviewer` or targeted repair workers may receive contract excerpts when explicitly needed.
 - Store reusable dispatch packets under `workspace/controller-packets/`. Each packet should list included upstream artifact paths and source slices.
-- For long source adaptations, pass source material as assigned slices from `inputs/source_material/chunks/` or summaries derived from accepted source-intake artifacts, not as the full extracted text unless the role card explicitly requires whole-source profiling.
+- For long source adaptations, pass source material as assigned slices from `inputs/source_material/chunks/` or summaries derived from accepted story extraction artifacts, not as the full extracted text unless the role card explicitly requires whole-source profiling.
+- Use the separate controller-facing prompt template file named in this index for
+  every spawn. Do not put prompt templates inside role cards, and do not dispatch
+  a subagent with only a loose natural-language task.
+- Every controller packet must include a machine-readable scope declaration:
+  role, level, `shard_id`, `global`, assigned source chunk ids or story unit ids,
+  parent story/graph ids when applicable, allowed input paths, and forbidden
+  input path patterns. Non-coarsest packets must point to controller-made slices
+  or embed selected excerpts; they must not point workers at full same-level,
+  full lower-level, or sibling-shard artifacts.
+- `linear_story.json` is the merged controller-owned artifact for validation and
+  compile. For long levels, deterministically project shard-sized
+  `story_levels/level_<NN>/slices/*.json` files from canonical artifacts and use
+  those as subagent inputs. Slice files are reproducible controller projections,
+  not creative outputs and not accepted canonical artifacts. A shard worker
+  should never need to open a long full-level `linear_story.json`.
 
-When `SourceSegmenter` is sharded for a long source, each shard still uses the same `SourceSegmenter` role card but receives only one packet under `workspace/controller-packets/source_segmenter/`. Workers return partial typed payloads only. The controller waits for all shards, saves raw returns under `workspace/controller-packets/source_segmenter_returns/`, normalizes keys such as `segment_id` to `id`, merges all accepted segments/beats/coverage rows in source order, and writes the canonical `workspace/design_layer_v2/source_intake/*` files. No shard worker may inspect sibling shard packets or write canonical artifacts.
+When V3 `StoryLevelExtractor` is sharded for a source adaptation, the controller
+must cover the whole `inputs/source_material/source_index.json` inventory across
+fine-level shard packets. A shard receives only its assigned chunks, but the
+shard set as a whole must include every chapter/chunk/span. The controller waits
+for all shard returns, stores raw returns under
+`workspace/design_layer_v3/story_levels/level_01/shard_returns/`, audits
+coverage, and only then writes canonical `level_01/linear_story.json` and
+`facts/level_01/local_facts.json`.
 
-## Design Layer
+## Design Layer V1
 
-These agents produce the base design layer. They may depend on earlier design-layer outputs, but downstream agents should receive only `branch_graph.json`, `game_ir.json`, and controller-made slices unless a repair explicitly needs more context.
+These agents produce the direct V1 design module. They may depend on earlier design-layer outputs, but downstream agents should receive only `branch_graph.json`, `game_ir.json`, and controller-made slices unless a repair explicitly needs more context.
 
-| Agent | Role Card | Canonical Output |
-| --- | --- | --- |
-| PromptAnalyst | `design-layer/PromptAnalyst.md` | `workspace/design_layer/user_requirements.json` |
-| LinearSynopsisDesigner | `design-layer/LinearSynopsisDesigner.md` | `workspace/design_layer/chapter_linear_synopsis.json` |
-| BranchGraphDesigner | `design-layer/BranchGraphDesigner.md` | `workspace/design_layer/branch_graph.json` |
-| BaseGameIRDesigner | `design-layer/BaseGameIRDesigner.md` | `workspace/design_layer/game_ir.json` |
+| Agent | Role Card | Prompt Template | Canonical Output |
+| --- | --- | --- | --- |
+| PromptAnalyst | `design-layer/PromptAnalyst.md` | `../design-layer-prompts.md#promptanalyst-template` | `workspace/design_layer/user_requirements.json` |
+| LinearSynopsisDesigner | `design-layer/LinearSynopsisDesigner.md` | `../design-layer-prompts.md#linearsynopsisdesigner-template` | `workspace/design_layer/chapter_linear_synopsis.json` |
+| BranchGraphDesigner | `design-layer/BranchGraphDesigner.md` | `../design-layer-prompts.md#branchgraphdesigner-template` | `workspace/design_layer/branch_graph.json` |
+| BaseGameIRDesigner | `design-layer/BaseGameIRDesigner.md` | `../design-layer-prompts.md#basegameirdesigner-template` | `workspace/design_layer/game_ir.json` |
 
-## Design Layer V2
-
-These agents produce internal V2 source artifacts under `workspace/design_layer_v2/`. The controller validates and compiles those artifacts into the same public runtime interface as V1: `workspace/design_layer/branch_graph.json` and `workspace/design_layer/game_ir.json`. Downstream agents must not receive raw V2 source artifacts unless a repair explicitly requires them; for novel adaptations, the controller may pass only the current node's source segment summary slice to the scene writer.
-
-Minimum V2 input packets:
-
-| Agent | Minimum Packet Contents |
-| --- | --- |
-| InputProfiler | User prompt, source-adaptation brief, production constraints, and source overview from `inputs/source_material/source_index.json`; include `full_text.txt` only when whole-source profiling is feasible and necessary. |
-| SourceSegmenter | Accepted `source_intake/input_profile.json`, source overview, assigned source chunks or chapter excerpts, target language/tone/scale notes. |
-| SourceFactExtractor | Accepted `source_intake/*`, controller-assigned source chunks or segment packet, extraction constraints. |
-| AdaptationPolicyDesigner | Accepted `source_intake/*`, accepted `source_facts/*`, user adaptation brief, optional repair ticket. |
-| StateModelDesigner | Accepted `source_intake/*`, `source_facts/*`, and `adaptation/*`, optional repair ticket. |
-| MacroGraphDesigner | Accepted `source_intake/*`, `source_facts/*`, `adaptation/*`, and `state/*`, optional repair ticket. |
-| MacroContractWriter | Accepted `source_intake/*`, `source_facts/*`, `adaptation/*`, `state/*`, and `macro/macro_story_graph.json`, optional repair ticket. |
-| MeshExpansionPlanner | Accepted source-intake, source-facts, adaptation, state, macro graph, and macro contracts. |
-| MeshLayerDesigner | One parent packet only: parent id/type, root macro contract, assigned source segment slice, accepted macro/control artifacts, required continuity from accepted lower-depth subgraphs when applicable. |
-| DesignV2CompilerReviewer | Validation reports, compile report, compiled public artifacts, and only the contract excerpts needed to explain failures. |
-
-| Agent | Role Card | Canonical Output |
-| --- | --- | --- |
-| InputProfiler | `design-layer-v2/InputProfiler.md` | `workspace/design_layer_v2/source_intake/input_profile.json` |
-| SourceSegmenter | `design-layer-v2/SourceSegmenter.md` | `workspace/design_layer_v2/source_intake/*` |
-| SourceFactExtractor | `design-layer-v2/SourceFactExtractor.md` | `workspace/design_layer_v2/source_facts/*` |
-| AdaptationPolicyDesigner | `design-layer-v2/AdaptationPolicyDesigner.md` | `workspace/design_layer_v2/adaptation/*` |
-| StateModelDesigner | `design-layer-v2/StateModelDesigner.md` | `workspace/design_layer_v2/state/*` |
-| MacroGraphDesigner | `design-layer-v2/MacroGraphDesigner.md` | `workspace/design_layer_v2/macro/macro_story_graph.json`, `workspace/design_layer_v2/control/route_merge_policy.json` |
-| MacroContractWriter | `design-layer-v2/MacroContractWriter.md` | `workspace/design_layer_v2/macro/macro_node_contracts.json` |
-| MeshExpansionPlanner | `design-layer-v2/MeshExpansionPlanner.md` | `workspace/design_layer_v2/control/mesh_expansion_policy.json` |
-| MeshLayerDesigner | `design-layer-v2/MeshLayerDesigner.md` | `workspace/design_layer_v2/subgraphs/subgraph.<parent_ref_id>.json` |
-| DesignV2CompilerReviewer | `design-layer-v2/DesignV2CompilerReviewer.md` | Review findings only |
-
-`MeshLayerDesigner` is intentionally reused for all mesh depths. The
-controller spawns it once for each selected parent in `mesh_expansion_policy`:
-depth 1 parents are macro nodes, while depth 2+ parents are expandable
-`subgraph_node` ids from accepted lower-depth subgraphs. Do not add a separate
-tertiary graph writer role; pass only the current parent packet and its assigned
-source slices to each worker.
+For V1, `branch_graph.edges[*].conditions` and
+`branch_graph.edges[*].effects` are the public runtime transition interface.
+`BranchGraphDesigner` writes edge-local gates/effects directly on the graph;
+`BaseGameIRDesigner` declares the referenced state variables and mirrors
+non-trivial edge semantics in `game_ir.event_rules`.
 
 ## Design Layer V3
 
-V3 replaces the V2 authoring flow with hierarchical story abstraction and
-hierarchical graph/state design. It still compiles into the same public runtime
-interface: `workspace/design_layer/branch_graph.json` and
-`workspace/design_layer/game_ir.json`.
+V3 is the hierarchical source-adaptation design module. It uses hierarchical
+story abstraction and hierarchical graph/state design, then compiles into the
+same public runtime interface as V1: `workspace/design_layer/branch_graph.json`
+and `workspace/design_layer/game_ir.json`.
 The public/runtime `branch_graph.json` is exported from the finest enabled
 design level only, normally `level_01`. Higher-level `story_graph` outputs are
 design/context artifacts for state settlement, parent contracts, trace, and
@@ -87,32 +79,38 @@ For branch-permitted runs, `LevelStateGraphDesigner` task packets must require
 visible network topology rather than a simple story-unit sequence: different
 node orders or access, state gates, optional/revisit/delayed routes, convergence
 with route memory, and downstream contracts that read prior route state.
-Use the `Controller Packet Prompt Template` in
-`design-layer-v3/LevelStateGraphDesigner.md` for each level/shard worker.
-Every story extraction level should support parallel clean-context workers by
-default. For graph/state design, the coarsest enabled level is the exception:
+Use the V3 controller-facing templates in
+`references/design-layer-v3-prompts.md` for each level/shard worker.
+For long novel/VN adaptations, enable three levels by default: L1 source
+scene/chapter chunks, L2 arc packets, and L3 global story/design. Non-coarsest
+story extraction levels use parallel clean-context workers by default and each
+worker receives only its assigned immediate-child slice. The coarsest enabled
+story level must be one global `StoryLevelExtractor` packet that sees every
+immediate child story unit summary and produces the global story line/fact view,
+but it must not receive full source text, all L1 detail, or lower-level design
+artifacts. For graph/state design, the coarsest enabled level is also global:
 the controller must spawn exactly one clean-context `LevelStateGraphDesigner`
 with all coarsest story units so the global graph, global state model,
 route-family consistency, and ending-resolution state are designed coherently.
-Only non-coarsest graph/state levels should be sharded, normally by immediate
-parent packet. The controller stores raw returns under that level's
-`shard_returns/` and performs the deterministic merge into canonical artifacts.
+Every non-coarsest graph/state level must be sharded by immediate parent packet.
+The controller stores raw returns under that level's `shard_returns/` and
+performs the deterministic merge into canonical artifacts.
 
 Minimum V3 input packets:
 
 | Agent | Minimum Packet Contents |
 | --- | --- |
-| StoryLevelExtractor | One story level id, assigned source chunks for the finest level or assigned lower-level story units for higher levels, granularity and scale notes, plus fact-capture requirements. |
+| StoryLevelExtractor | One story level id, scope declaration, assigned source chunks for the finest level or assigned immediate lower-level story-unit slice for higher levels, granularity and scale notes, plus fact-capture requirements. For source-adaptation `level_01`, all shard packets together must cover every chunk/span in `inputs/source_material/source_index.json`; representative chapters are not sufficient. For non-coarsest higher levels, do not pass the full lower-level `linear_story.json`; pass only the assigned child-unit slice. For the coarsest enabled story level, use exactly one global packet containing all immediate lower-level story unit summaries. |
 | AdaptationPolicyDesigner | Coarsest enabled `linear_story.json`, `facts/canonical_fact_graph.json`, user adaptation brief, and global constraints. |
-| LevelStateGraphDesigner | Coarsest level: one global packet containing all same-level story units, same-level fact view, global adaptation policy direction, and no parent context. Non-coarsest levels: one parent packet with immediate parent graph/state/contracts slice, assigned same-level story units, same-level fact view slice, global policy direction, and any controller-selected relevant excerpts. |
+| LevelStateGraphDesigner | Coarsest level: one global packet containing all coarsest same-level story units, same-level fact view, global adaptation policy direction, and no parent context. Non-coarsest levels: one parent packet with immediate parent graph/state/contracts slice, assigned same-level story-unit slice, same-level fact/policy slice, and any controller-selected relevant excerpts. Do not pass all same-level story units or all parent graph/state artifacts to a non-coarsest worker. |
 | DesignV3CompilerReviewer | V3 validation reports, compile report, assembled public artifacts, and only contract excerpts needed to explain failures. |
 
-| Agent | Role Card | Canonical Output |
-| --- | --- | --- |
-| StoryLevelExtractor | `design-layer-v3/StoryLevelExtractor.md` | `workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json`, plus controller-merged `facts/*` payloads |
-| AdaptationPolicyDesigner | `design-layer-v3/AdaptationPolicyDesigner.md` | `workspace/design_layer_v3/adaptation/global_policy.json` |
-| LevelStateGraphDesigner | `design-layer-v3/LevelStateGraphDesigner.md` | `workspace/design_layer_v3/design_levels/level_<NN>/*` |
-| DesignV3CompilerReviewer | `design-layer-v3/DesignV3CompilerReviewer.md` | Review findings only |
+| Agent | Role Card | Prompt Template | Canonical Output |
+| --- | --- | --- | --- |
+| StoryLevelExtractor | `design-layer-v3/StoryLevelExtractor.md` | `../design-layer-v3-prompts.md#storylevelextractor-spawn-prompt-template` | `workspace/design_layer_v3/story_levels/level_<NN>/linear_story.json`, plus controller-merged `facts/*` payloads |
+| AdaptationPolicyDesigner | `design-layer-v3/AdaptationPolicyDesigner.md` | `../design-layer-v3-prompts.md#adaptationpolicydesigner-spawn-prompt-template` | `workspace/design_layer_v3/adaptation/global_policy.json` |
+| LevelStateGraphDesigner | `design-layer-v3/LevelStateGraphDesigner.md` | `../design-layer-v3-prompts.md#levelstategraphdesigner-spawn-prompt-template` | `workspace/design_layer_v3/design_levels/level_<NN>/*` |
+| DesignV3CompilerReviewer | `design-layer-v3/DesignV3CompilerReviewer.md` | `../design-layer-v3-prompts.md#designv3compilerreviewer-spawn-prompt-template` | Review findings only |
 
 Every non-coarsest `LevelStateGraphDesigner` output must include
 `parent_state_settlements.json`, declaring how this level's local state
@@ -141,14 +139,14 @@ This check confirms that every runtime-visible choice button is backed by a
 SceneWriter-authored Yarn `->` label instead of a designer or plan fallback
 label.
 
-| Agent | Role Card | Canonical Output |
-| --- | --- | --- |
-| NodeRealizationPlanner | `post-design/NodeRealizationPlanner.md` | `workspace/realization/node-realization-plans.json` |
-| NodeSceneWriter | `post-design/NodeSceneWriter.md` | `workspace/vn/fragments/<node-id>.yarn` and `.manifest.json` |
-| NodeDialogueWriter | `post-design/NodeDialogueWriter.md` | Legacy alias for `NodeSceneWriter` |
-| BattleRealizationWriter | `post-design/BattleRealizationWriter.md` | `workspace/realization/battles/<node-id>.battle.json` |
-| InteractionRealizationWriter | `post-design/InteractionRealizationWriter.md` | `workspace/realization/interactions/<node-id>.interaction.json` |
-| PuzzleRealizationWriter | `post-design/PuzzleRealizationWriter.md` | `workspace/realization/puzzles/<node-id>.puzzle.json` |
-| ExplorationRealizationWriter | `post-design/ExplorationRealizationWriter.md` | `workspace/realization/explorations/<node-id>.exploration.json` |
-| AssetDirector | `post-design/AssetDirector.md` | `workspace/asset-direction.json` |
-| ReviewSubagent | `post-design/ReviewSubagent.md` | Review findings only |
+| Agent | Role Card | Prompt Template | Canonical Output |
+| --- | --- | --- | --- |
+| NodeRealizationPlanner | `post-design/NodeRealizationPlanner.md` | `../post-design-prompts.md#noderealizationplanner-full-run-template` | `workspace/realization/node-realization-plans.json` |
+| NodeSceneWriter | `post-design/NodeSceneWriter.md` | `../post-design-prompts.md#nodescenewriter-single-node-template` or `../post-design-prompts.md#nodescenewriter-chapter-shard-template` | `workspace/vn/fragments/<node-id>.yarn` and `.manifest.json` |
+| NodeDialogueWriter | `post-design/NodeDialogueWriter.md` | `../post-design-prompts.md#nodedialoguewriter-legacy-alias-template` | Legacy alias for `NodeSceneWriter` |
+| BattleRealizationWriter | `post-design/BattleRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/battles/<node-id>.battle.json` |
+| InteractionRealizationWriter | `post-design/InteractionRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/interactions/<node-id>.interaction.json` |
+| PuzzleRealizationWriter | `post-design/PuzzleRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/puzzles/<node-id>.puzzle.json` |
+| ExplorationRealizationWriter | `post-design/ExplorationRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/explorations/<node-id>.exploration.json` |
+| AssetDirector | `post-design/AssetDirector.md` | `../post-design-prompts.md#assetdirector-template` | `workspace/asset-direction.json` |
+| ReviewSubagent | `post-design/ReviewSubagent.md` | `../post-design-prompts.md#reviewsubagent-template` | Review findings only |

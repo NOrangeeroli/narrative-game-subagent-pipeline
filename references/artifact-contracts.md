@@ -68,7 +68,11 @@ Required shape:
       "from": "node.intro",
       "to": "node.choice",
       "label": "Continue",
-      "condition_type": "unconditional"
+      "condition_type": "player_choice",
+      "conditions": [],
+      "effects": [
+        {"state_variable_id": "state.trust", "operation": "increment", "value": 1, "description": "Trust increases after this visible action."}
+      ]
     }
   ]
 }
@@ -78,11 +82,15 @@ Allowed `node_type`: `start`, `scene`, `choice`, `convergence`, `terminal`.
 
 Allowed `condition_type`: `unconditional`, `player_choice`, `state_gate`, `outcome`, `terminal_resolution`.
 
-Branch graph owns topology and authoring-intent labels, not executable state
-semantics. For VN/cutscene realization, final runtime button text is authored
-in SceneWriter Yarn `->` labels. Branch graph labels are planning/debug
-fallback data, not the authoritative runtime prose. It must not contain Yarn
-text, Unity paths, image-generation prompts, or persistent state effects.
+Branch graph owns public runtime topology plus edge-local transition semantics:
+`conditions` gate edge availability and `effects` apply when that edge is
+chosen or resolved. State variables referenced by edge `conditions` and
+`effects` must be declared in `game_ir.json`, and non-trivial edge semantics
+should be mirrored by `game_ir.event_rules` for auditability. For VN/cutscene
+realization, final runtime button text is authored in SceneWriter Yarn `->`
+labels. Branch graph labels are planning/debug fallback data, not the
+authoritative runtime prose. It must not contain Yarn text, Unity paths, image
+generation prompts, or realization details.
 
 ## `game_ir.json`
 
@@ -125,7 +133,12 @@ Allowed state variable `type`: `boolean`, `integer`, `number`, `string`, `enum`.
 
 Allowed effect `operation`: `set`, `increment`, `decrement`, `append`, `remove`.
 
-Game IR owns conditions, effects, state variables, and progression. It must stay mode-neutral.
+Game IR owns the formal state model, progression stages, durable world
+semantics, and audit rules for edge/node effects. Public runtime transition
+conditions/effects live on `branch_graph.edges[*]` so all design layers compile
+to the same interface; corresponding `event_rules` should preserve the same
+edge ids and state operations for validation and downstream reasoning. Game IR
+must stay mode-neutral.
 
 ## `node-realization-plans.json`
 

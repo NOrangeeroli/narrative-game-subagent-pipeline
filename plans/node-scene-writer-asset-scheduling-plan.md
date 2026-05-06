@@ -81,7 +81,7 @@ Removed or reduced responsibilities:
 
 ### `PresentationDirector`
 
-Remove this role from the V2 workflow. `NodeSceneWriter` now owns scene staging
+Remove this role from the workflow. `NodeSceneWriter` now owns scene staging
 directly, including character presence, expression/action cues, BGM, and SFX.
 If staging is weak, repair the relevant scene fragment instead of adding a
 post-hoc presentation plan.

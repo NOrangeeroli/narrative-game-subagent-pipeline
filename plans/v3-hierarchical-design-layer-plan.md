@@ -11,8 +11,7 @@ workspace/design_layer/branch_graph.json
 workspace/design_layer/game_ir.json
 ```
 
-V3 does not need to preserve the V2 authoring-agent workflow. It only needs to
-compile into the same public graph/state interface consumed by realization,
+V3 compiles into the same public graph/state interface consumed by realization,
 gameplay, asset, and export stages.
 
 ## Core Direction
@@ -32,10 +31,11 @@ Graph/state design starts from the coarsest enabled story level, then expands
 down toward finer playable units. Every design level must declare how its local
 state settlement affects the immediate parent level's state.
 
-Every story extraction level and every graph/state design level should support
-multi-agent parallelism by default. The controller should shard a level into
-independent packets, collect all worker returns, then run a deterministic merge
-step before the next level begins.
+Every story extraction level should support multi-agent parallelism by default.
+For graph/state design, the coarsest enabled level is a single global design
+pass, while lower levels may be sharded by parent packet. The controller should
+collect all worker returns, then run a deterministic merge step before the next
+level begins.
 
 ## Public Interface
 
@@ -165,7 +165,7 @@ level_01 linear_story -> level_02 linear_story
 level_02 linear_story -> level_03 linear_story
 ```
 
-Each level may be sharded:
+Non-coarsest levels may be sharded:
 
 ```text
 controller creates story_levels/level_N/shards/*.json
@@ -176,6 +176,20 @@ deterministic merge writes story_levels/level_N/linear_story.json
 
 Shard workers must only read their assigned packet and the exact role card.
 They must not inspect sibling shards or write canonical artifacts.
+
+For source-adaptation `level_01`, sharding is a full-coverage partition of the
+source inventory, not sampling. The controller must assign every entry in
+`inputs/source_material/source_index.json` to exactly one or more shard packets,
+wait for all shard returns, and reject the merge if any source chunk/span is
+unassigned, unfinished, or absent from accepted extraction trace. Representative
+chapters may be useful for planning, but they are not valid extraction coverage.
+
+The coarsest enabled story level is the global story-line layer. It must be
+produced by one `StoryLevelExtractor` worker with every immediate lower-level
+story unit, not by parallel act/arc/source shards. If a source-adaptation run has
+only one enabled story level, the controller must either use one global extractor
+packet or enable a coarser aggregation level before policy and graph/state
+design.
 
 ### `linear_story.json`
 
@@ -219,8 +233,9 @@ units from the immediate lower level.
 
 ## Facts Flow
 
-`SourceFactExtractor` should use the finest story level as the evidence source,
-not the coarsest summary.
+`StoryLevelExtractor` captures stable facts while extracting story levels. The
+finest story level remains the primary evidence source, not the coarsest
+summary.
 
 Recommended flow:
 
@@ -231,7 +246,7 @@ level_02 fact_view + level_03 linear_story -> level_03 fact_view
 all fact views -> canonical_fact_graph
 ```
 
-Fact extraction and fact aggregation should support parallel sharding by story
+Fact capture and fact aggregation should support parallel sharding by story
 unit or story-unit group. The deterministic merge step is responsible for
 deduplicating facts, reconciling aliases, and preserving fine-grained evidence
 anchors.
@@ -303,8 +318,9 @@ level_01 linear_story + level_01 fact view + level_02 graph/state/contracts + po
 
 If only two levels are enabled, design starts at `level_02`.
 
-Each design level should support multi-agent parallelism by default. The
-controller shards by parent unit or parent graph node:
+Non-coarsest design levels should support multi-agent parallelism by default.
+The coarsest enabled design level is one global graph/state pass. For lower
+levels, the controller shards by parent unit or parent graph node:
 
 ```text
 controller creates design_levels/level_N/shards/*.json
@@ -478,8 +494,7 @@ The assembler must:
 
 ## Graph Assembly Strategy
 
-The assembler can directly generate public `branch_graph.json`; it does not need
-to pass through V2 macro/subgraph files.
+The assembler directly generates public `branch_graph.json`.
 
 Recommended behavior:
 
@@ -561,17 +576,16 @@ Initial roles:
 
 ```text
 StoryLevelExtractor
-SourceFactExtractor
-SourceFactAggregator
 AdaptationPolicyDesigner
-PolicySliceAssembler
 LevelStateGraphDesigner
 DesignV3CompilerReviewer
 ```
 
-The role card index should state that story extraction and level design are
-parallel by default. The controller should spawn one worker per shard or parent
-packet, then merge returns deterministically.
+The role card index should state that non-coarsest story extraction and
+non-coarsest level design are parallel by default, while the coarsest story
+extractor and coarsest graph/state designer are single global workers. The
+controller should spawn one worker per allowed shard or parent packet, then merge
+returns deterministically.
 
 ## Implementation Steps
 
@@ -584,7 +598,7 @@ packet, then merge returns deterministically.
 7. Add `tests/fixtures/v3_hierarchical_minimal/`.
 8. Add `tests/fixtures/v3_contract_violation/`.
 9. Add `tests/run_v3_regression.py`.
-10. Run V2 and V3 regressions.
+10. Run V3 regressions.
 
 ## Regression Tests
 
@@ -610,7 +624,6 @@ parallel shard merge rejects duplicate ids with conflicting payloads
 The V3 implementation is complete when:
 
 ```bash
-python3 tests/run_v2_regression.py
 python3 tests/run_v3_regression.py
 python3 scripts/run_pipeline.py compile-design \
   --run-root tests/fixtures/v3_hierarchical_minimal \

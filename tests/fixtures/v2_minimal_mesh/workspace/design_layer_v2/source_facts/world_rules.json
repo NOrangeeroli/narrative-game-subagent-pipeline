@@ -1,8 +1,0 @@
-{
-  "rules": [
-    {
-      "id": "rule.memory_cost",
-      "summary": "Reading sealed memories changes how much Niko trusts Ara."
-    }
-  ]
-}

@@ -1,1 +1,0 @@
-{"variables":[{"id":"state.key_found","type":"boolean","initial_value":false,"scope":"global","readable_by":["macro.*","subgraph.*","node.*"],"writable_by":["macro.*","subgraph.*","node.*"],"invariants":["state.key_found in [true, false]"]}]}

@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from design_v2_lib import DESIGN_V2_COMPILE_REPORT, DESIGN_V2_ROOT, REQUIRED_V2_FILES
 from design_v3_lib import DESIGN_V3_COMPILE_REPORT, DESIGN_V3_ROOT
 from pipeline_lib import STAGE_PATHS, load_optional_json, path_for, write_json
 
@@ -23,29 +22,8 @@ def write_final_report(run_root: Path) -> Path:
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
-    v2_compile_report = load_optional_json(run_root / DESIGN_V2_COMPILE_REPORT)
     v3_compile_report = load_optional_json(run_root / DESIGN_V3_COMPILE_REPORT)
-    if design_layer_version == "v2":
-        design_layer_report = {
-            "version": "v2",
-            "source_root": str(DESIGN_V2_ROOT),
-            "source_artifacts": [
-                str(DESIGN_V2_ROOT / relative)
-                for relative in REQUIRED_V2_FILES
-                if (run_root / DESIGN_V2_ROOT / relative).exists()
-            ],
-            "subgraph_artifacts": sorted(
-                str(path.relative_to(run_root))
-                for path in (run_root / DESIGN_V2_ROOT / "subgraphs").glob("subgraph.*.json")
-            ) if (run_root / DESIGN_V2_ROOT / "subgraphs").exists() else [],
-            "compile_report": str(DESIGN_V2_COMPILE_REPORT) if (run_root / DESIGN_V2_COMPILE_REPORT).exists() else None,
-            "compile_status": v2_compile_report.get("status") if isinstance(v2_compile_report, dict) else None,
-            "runtime_artifacts": [
-                STAGE_PATHS["branch_graph"],
-                STAGE_PATHS["game_ir"],
-            ],
-        }
-    elif design_layer_version == "v3":
+    if design_layer_version == "v3":
         design_layer_report = {
             "version": "v3",
             "source_root": str(DESIGN_V3_ROOT),
