@@ -456,6 +456,11 @@
     return (bindings[0] && bindings[0].outcome_id) || fallback;
   }
 
+  function labelForRuntimeItem(spec, itemId) {
+    const item = (spec.items || []).find((candidate) => candidate && candidate.id === itemId);
+    return (item && (item.label || item.name)) || itemId;
+  }
+
   function renderBattle(node) {
     const unit = node.gameplay || {};
     const spec = unit.runtime_spec || {};
@@ -535,40 +540,331 @@
   function renderInteraction(node) {
     const unit = node.gameplay || {};
     const spec = unit.runtime_spec || {};
-    const session = ensureSession(node, () => ({ visited: new Set(), log: [unit.entry_text || "Inspect the scene."] }));
+    const itemDefs = new Map((spec.items || []).filter((item) => item && item.id).map((item) => [item.id, item]));
+    const budget = spec.action_budget && typeof spec.action_budget === "object" ? spec.action_budget : null;
+    const session = ensureSession(node, () => ({
+      visited: new Set(),
+      revealed: new Set(),
+      items: new Set((spec.items || []).filter((item) => item && item.initially_owned === true).map((item) => item.id)),
+      completedCombinations: new Set(),
+      selectedItemId: null,
+      budget: budget ? Number(budget.initial ?? 0) : null,
+      log: [unit.entry_text || "Inspect the scene."],
+    }));
     const completion = spec.completion || {};
-    const required = completion.required_hotspots || [];
-    const complete = required.every((id) => session.visited.has(id));
+    const requiredHotspots = completion.required_hotspots || [];
+    const requiredItems = completion.required_items || [];
+    const complete = requiredHotspots.every((id) => session.visited.has(id))
+      && requiredItems.every((id) => session.items.has(id))
+      && (completion.conditions || []).every(conditionPasses);
+
+    function addLog(text) {
+      if (text) session.log.push(text);
+    }
+
+    function collectItems(itemIds, label) {
+      (itemIds || []).forEach((itemId) => {
+        if (!itemId || session.items.has(itemId)) return;
+        session.items.add(itemId);
+        addLog(`${label || "Collected"}: ${labelForRuntimeItem(spec, itemId)}`);
+      });
+    }
+
+    function numericCost(source, key, fallback) {
+      if (!budget) return 0;
+      if (source && typeof source.cost === "number") return Math.max(0, Number(source.cost));
+      if (source && typeof source[key] === "number") return Math.max(0, Number(source[key]));
+      if (typeof budget[key] === "number") return Math.max(0, Number(budget[key]));
+      if (typeof budget.default_cost === "number") return Math.max(0, Number(budget.default_cost));
+      return fallback;
+    }
+
+    function spendBudget(cost, failureText) {
+      if (!budget || !cost) return true;
+      if (Number(session.budget || 0) < cost) {
+        addLog(failureText || budget.depleted_text || "You cannot focus on that now.");
+        return false;
+      }
+      session.budget = Number(session.budget || 0) - cost;
+      return true;
+    }
+
+    function revealHotspots(hotspotIds) {
+      (hotspotIds || []).forEach((hotspotId) => {
+        if (!hotspotId || session.revealed.has(hotspotId)) return;
+        session.revealed.add(hotspotId);
+        const hotspot = (spec.hotspots || []).find((candidate) => candidate && candidate.id === hotspotId);
+        addLog(`New lead: ${(hotspot && (hotspot.label || hotspot.id)) || hotspotId}`);
+      });
+    }
+
+    function hotspotVisible(hotspot) {
+      return hotspot.initially_visible !== false || session.revealed.has(hotspot.id) || session.visited.has(hotspot.id);
+    }
+
+    function hotspotUnlocked(hotspot) {
+      const requiredVisited = [...(hotspot.requires || []), ...(hotspot.requires_hotspots || [])];
+      const requiredLocalItems = hotspot.requires_items || [];
+      return requiredVisited.every((id) => session.visited.has(id)) && requiredLocalItems.every((id) => session.items.has(id));
+    }
+
+    function applyInteractionResult(result, fallbackText) {
+      addLog(result.text || result.reveal_text || result.feedback || fallbackText);
+      const writes = result.state_writes || [];
+      if (!result.outcome_id) {
+        applyWrites(writes);
+      }
+      collectItems(result.collects);
+      collectItems(result.creates_items, "Added evidence");
+      revealHotspots(result.reveals_hotspots);
+      if (result.sfx_asset_id) playSfx(result.sfx_asset_id);
+      if (result.outcome_id) {
+        completeActivity(result.outcome_id, writes);
+        return true;
+      }
+      return false;
+    }
+
+    function inspectHotspot(hotspot) {
+      if (!hotspotUnlocked(hotspot)) {
+        const blockedCost = numericCost(hotspot, "blocked_cost", numericCost(hotspot, "wrong_use_cost", 0));
+        if (!spendBudget(blockedCost, hotspot.blocked_text || budget && budget.depleted_text)) {
+          render();
+          return;
+        }
+        addLog(hotspot.blocked_text || "Something else needs attention first.");
+        render();
+        return;
+      }
+      if ((hotspot.use_results || []).length
+        && !hotspot.reveal_text
+        && !hotspot.description
+        && !(hotspot.collects || []).length
+        && !(hotspot.reveals_hotspots || []).length) {
+        addLog(hotspot.use_prompt || "Select an item to use here.");
+        render();
+        return;
+      }
+      if (!spendBudget(numericCost(hotspot, "inspect_cost", 1), hotspot.depleted_text || budget && budget.depleted_text)) {
+        render();
+        return;
+      }
+      session.visited.add(hotspot.id);
+      addLog(hotspot.reveal_text || hotspot.description || "You notice something useful.");
+      const writes = hotspot.state_writes || [];
+      if (!hotspot.outcome_id) {
+        applyWrites(writes);
+      }
+      collectItems(hotspot.collects);
+      revealHotspots(hotspot.reveals_hotspots);
+      if (hotspot.sfx_asset_id) playSfx(hotspot.sfx_asset_id);
+      if (hotspot.outcome_id) {
+        completeActivity(hotspot.outcome_id, writes);
+        return;
+      }
+      render();
+    }
+
+    function useSelectedItem(hotspot) {
+      const selectedItemId = session.selectedItemId;
+      if (!selectedItemId) {
+        inspectHotspot(hotspot);
+        return;
+      }
+      const result = (hotspot.use_results || []).find((candidate) => candidate && candidate.item_id === selectedItemId);
+      if (!result) {
+        const wrongCost = numericCost(hotspot, "wrong_use_cost", 1);
+        if (!spendBudget(wrongCost, hotspot.default_use_text || spec.default_use_text || budget && budget.depleted_text)) {
+          render();
+          return;
+        }
+        addLog(hotspot.default_use_text || spec.default_use_text || `${labelForRuntimeItem(spec, selectedItemId)} does not help there.`);
+        render();
+        return;
+      }
+      if (!hotspotUnlocked(hotspot)) {
+        const blockedCost = numericCost(hotspot, "blocked_cost", numericCost(hotspot, "wrong_use_cost", 0));
+        if (!spendBudget(blockedCost, hotspot.blocked_text || budget && budget.depleted_text)) {
+          render();
+          return;
+        }
+        addLog(hotspot.blocked_text || "Something else needs attention first.");
+        render();
+        return;
+      }
+      if (!spendBudget(numericCost(result, "use_cost", numericCost(hotspot, "use_cost", 1)), result.depleted_text || budget && budget.depleted_text)) {
+        render();
+        return;
+      }
+      session.visited.add(hotspot.id);
+      session.selectedItemId = null;
+      if (!applyInteractionResult(result, "That worked.")) {
+        render();
+      }
+    }
+
+    function presentSelectedItem(target) {
+      if (!session.selectedItemId) {
+        addLog(target.prompt || "Select an item first.");
+        render();
+        return;
+      }
+      const accepted = (target.accepted_items || []).find((candidate) => candidate && candidate.item_id === session.selectedItemId);
+      if (!accepted) {
+        addLog(target.default_text || `${labelForRuntimeItem(spec, session.selectedItemId)} does not change the conversation.`);
+        render();
+        return;
+      }
+      session.selectedItemId = null;
+      if (!applyInteractionResult(accepted, "The evidence lands.")) {
+        render();
+      }
+    }
+
+    function combinationAvailable(combo) {
+      return !session.completedCombinations.has(combo.id)
+        && (combo.item_ids || []).every((itemId) => session.items.has(itemId));
+    }
+
+    function runCombination(combo) {
+      if (!combinationAvailable(combo)) {
+        addLog(combo.blocked_text || "You do not have the right evidence for that.");
+        render();
+        return;
+      }
+      if (!spendBudget(numericCost(combo, "combine_cost", 1), combo.depleted_text || budget && budget.depleted_text)) {
+        render();
+        return;
+      }
+      session.completedCombinations.add(combo.id);
+      if (!applyInteractionResult(combo, combo.text || combo.feedback || "The evidence fits together.")) {
+        render();
+      }
+    }
 
     choicesEl.innerHTML = "";
     continueButton.hidden = true;
     speakerEl.textContent = "Inspect";
     lineEl.textContent = spec.prompt || unit.entry_text || "Choose what to inspect.";
+    const scene = spec.scene || {};
+    if (scene.background_asset_id) {
+      setBackground(scene.background_asset_id);
+    }
 
     const panel = makeEl("div", "gameplay-panel");
+    if (budget) {
+      const meter = makeEl("div", "budget-strip");
+      meter.appendChild(makeEl("strong", "", budget.label || budget.id || "Focus"));
+      meter.appendChild(makeEl("span", "budget-value", String(session.budget ?? 0)));
+      panel.appendChild(meter);
+    }
     const log = makeEl("div", "activity-log");
-    session.log.slice(-4).forEach((entry) => log.appendChild(makeEl("p", "", entry)));
+    session.log.slice(-5).forEach((entry) => log.appendChild(makeEl("p", "", entry)));
     panel.appendChild(log);
 
-    const grid = makeEl("div", "hotspot-grid");
-    (spec.hotspots || []).forEach((hotspot) => {
-      const requires = hotspot.requires || [];
-      const unlocked = requires.every((id) => session.visited.has(id));
-      const label = session.visited.has(hotspot.id) ? `${hotspot.label || hotspot.id} [done]` : (hotspot.label || hotspot.id);
-      const button = makeButton(label, () => {
-        if (!unlocked) {
-          session.log.push(hotspot.blocked_text || "Something else needs attention first.");
-        } else {
-          session.visited.add(hotspot.id);
-          applyWrites(hotspot.state_writes);
-          session.log.push(hotspot.reveal_text || hotspot.description || "You notice something useful.");
-        }
-        render();
+    if ((spec.items || []).length) {
+      const inventory = makeEl("div", "inventory-strip");
+      inventory.appendChild(makeEl("strong", "", "Inventory"));
+      const itemButtons = makeEl("div", "inventory-items");
+      if (session.items.size === 0) {
+        itemButtons.appendChild(makeEl("span", "empty-inventory", "No items"));
+      }
+      Array.from(session.items).forEach((itemId) => {
+        const item = itemDefs.get(itemId) || {};
+        const button = makeButton(item.label || itemId, () => {
+          session.selectedItemId = session.selectedItemId === itemId ? null : itemId;
+          render();
+        }, session.selectedItemId === itemId ? "inventory-item selected" : "inventory-item");
+        if (item.description) button.title = item.description;
+        itemButtons.appendChild(button);
       });
-      button.disabled = !unlocked;
-      grid.appendChild(button);
+      inventory.appendChild(itemButtons);
+      panel.appendChild(inventory);
+    }
+
+    const availableCombinations = (spec.evidence_combinations || []).filter((combo) => combo && combo.id && combinationAvailable(combo));
+    if (availableCombinations.length) {
+      const combine = makeEl("div", "combine-panel");
+      combine.appendChild(makeEl("strong", "", "Connect Evidence"));
+      const comboGrid = makeEl("div", "gameplay-actions");
+      availableCombinations.forEach((combo) => {
+        comboGrid.appendChild(makeButton(combo.label || combo.id, () => runCombination(combo)));
+      });
+      combine.appendChild(comboGrid);
+      panel.appendChild(combine);
+    }
+
+    const scenePanel = makeEl("div", "interaction-scene");
+    const backgroundAsset = assets.get(scene.background_asset_id);
+    if (backgroundAsset && backgroundAsset.runtime_path) {
+      scenePanel.style.backgroundImage = `linear-gradient(180deg, rgba(8, 9, 12, 0.1), rgba(8, 9, 12, 0.74)), url("${backgroundAsset.runtime_path}")`;
+      scenePanel.classList.add("has-scene-image");
+    }
+    const visibleHotspots = (spec.hotspots || []).filter((hotspot) => hotspot && hotspot.id && hotspotVisible(hotspot));
+    const useOverlay = scene.layout === "overlay" && visibleHotspots.some((hotspot) => hotspot.bounds);
+    if (useOverlay) {
+      scenePanel.classList.add("overlay-mode");
+      scenePanel.classList.add(`labels-${scene.show_hotspot_labels || "hover"}`);
+    }
+    const overlayHotspots = useOverlay ? visibleHotspots.filter((hotspot) => hotspot.bounds) : [];
+    const gridHotspots = useOverlay ? visibleHotspots.filter((hotspot) => !hotspot.bounds) : visibleHotspots;
+
+    function renderHotspotButton(hotspot, overlay) {
+      const unlocked = hotspotUnlocked(hotspot);
+      const done = session.visited.has(hotspot.id);
+      const label = `${hotspot.label || hotspot.id}${done ? " (done)" : ""}`;
+      let button;
+      if (overlay) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.className = unlocked ? "hotspot-button hotspot-region" : "hotspot-button hotspot-region locked";
+        button.addEventListener("click", () => useSelectedItem(hotspot));
+      } else {
+        button = makeButton(label, () => useSelectedItem(hotspot), unlocked ? "hotspot-button" : "hotspot-button locked");
+      }
+      if (overlay) {
+        button.setAttribute("aria-label", label);
+        const bounds = hotspot.bounds || {};
+        button.style.left = `${Number(bounds.x || 0) * 100}%`;
+        button.style.top = `${Number(bounds.y || 0) * 100}%`;
+        button.style.width = `${Number(bounds.w || 0.12) * 100}%`;
+        button.style.height = `${Number(bounds.h || 0.1) * 100}%`;
+        button.appendChild(makeEl("span", "hotspot-label", label));
+      }
+      if (hotspot.description) button.title = hotspot.description;
+      const asset = assets.get(hotspot.asset_id);
+      if (asset && asset.runtime_path) {
+        const image = document.createElement("img");
+        image.src = asset.runtime_path;
+        image.alt = "";
+        button.prepend(image);
+      }
+      return button;
+    }
+
+    overlayHotspots.forEach((hotspot) => {
+      scenePanel.appendChild(renderHotspotButton(hotspot, true));
     });
-    panel.appendChild(grid);
+    const grid = makeEl("div", "hotspot-grid interaction-hotspots");
+    gridHotspots.forEach((hotspot) => {
+      grid.appendChild(renderHotspotButton(hotspot, false));
+    });
+    if (gridHotspots.length) {
+      scenePanel.appendChild(grid);
+    }
+    panel.appendChild(scenePanel);
+
+    if ((spec.present_targets || []).length) {
+      const present = makeEl("div", "present-targets");
+      present.appendChild(makeEl("strong", "", "Present"));
+      const targetGrid = makeEl("div", "hotspot-grid");
+      (spec.present_targets || []).forEach((target) => {
+        targetGrid.appendChild(makeButton(target.label || target.id || "Present", () => presentSelectedItem(target)));
+      });
+      present.appendChild(targetGrid);
+      panel.appendChild(present);
+    }
+
     if (complete) {
       panel.appendChild(makeButton(completion.label || "Continue", () => {
         completeActivity(completion.outcome_id || firstOutcome(unit, "complete"), completion.state_writes || []);
@@ -727,6 +1023,7 @@
     }
     titleEl.textContent = story.title || "Narrative Game";
     nodeTitleEl.textContent = node.title || node.id;
+    stage.classList.toggle("gameplay-active", Boolean(node.gameplay));
     choicesEl.innerHTML = "";
     if (node.gameplay) {
       renderGameplay(node);

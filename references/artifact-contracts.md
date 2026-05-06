@@ -312,12 +312,122 @@ Gameplay units must preserve plan topology. Their `exit_bindings` must cover the
 ```json
 {
   "prompt": "Inspect the area.",
+  "scene": {"background_asset_id": "bg.library_night", "layout": "overlay", "fallback_layout": "grid", "show_hotspot_labels": "hover"},
+  "action_budget": {"id": "focus", "label": "Focus", "initial": 5, "inspect_cost": 1, "use_cost": 1, "wrong_use_cost": 1, "combine_cost": 1, "depleted_text": "You are out of focus."},
   "hotspots": [
-    {"id": "map", "label": "Map", "reveal_text": "A route is marked.", "required_for_completion": true}
+    {
+      "id": "desk",
+      "label": "Desk",
+      "kind": "object",
+      "initially_visible": true,
+      "verbs": ["inspect", "collect"],
+      "bounds": {"x": 0.16, "y": 0.52, "w": 0.28, "h": 0.18},
+      "reveal_text": "A small key is hidden under the blotter.",
+      "collects": ["item.small_key"],
+      "reveals_hotspots": ["locked_drawer"],
+      "state_writes": []
+    },
+    {
+      "id": "locked_drawer",
+      "label": "Locked drawer",
+      "kind": "container",
+      "initially_visible": false,
+      "bounds": {"x": 0.58, "y": 0.56, "w": 0.24, "h": 0.14},
+      "requires_items": ["item.small_key"],
+      "blocked_text": "The drawer will not open without a key.",
+      "use_results": [
+        {
+          "item_id": "item.small_key",
+          "text": "The key turns and the drawer opens.",
+          "reveals_hotspots": ["photo"],
+          "state_writes": []
+        }
+      ]
+    },
+    {
+      "id": "photo",
+      "label": "Photo",
+      "kind": "evidence",
+      "initially_visible": false,
+      "bounds": {"x": 0.48, "y": 0.34, "w": 0.18, "h": 0.14},
+      "verbs": ["inspect", "collect"],
+      "reveal_text": "A torn page is tucked behind the photo.",
+      "collects": ["item.torn_page"]
+    },
+    {
+      "id": "ink_bottle",
+      "label": "Ink bottle",
+      "kind": "evidence",
+      "initially_visible": true,
+      "bounds": {"x": 0.36, "y": 0.48, "w": 0.12, "h": 0.12},
+      "verbs": ["inspect", "collect"],
+      "reveal_text": "The ink is still wet.",
+      "collects": ["item.wet_ink"]
+    }
   ],
+  "items": [
+    {"id": "item.small_key", "label": "Small key", "description": "A brass drawer key."},
+    {"id": "item.wet_ink", "label": "Wet ink", "description": "A fresh ink sample."},
+    {"id": "item.torn_page", "label": "Torn page", "description": "Part of a route map."},
+    {"id": "evidence.recent_forgery", "label": "Recent forgery", "description": "The page and ink belong to the same fresh alteration."}
+  ],
+  "evidence_combinations": [
+    {
+      "id": "deduce_recent_forgery",
+      "label": "Compare ink and torn page",
+      "item_ids": ["item.wet_ink", "item.torn_page"],
+      "creates_items": ["evidence.recent_forgery"],
+      "text": "The torn edge carries the same fresh ink as the bottle.",
+      "state_writes": []
+    }
+  ],
+  "completion": {"required_hotspots": ["photo"], "required_items": ["evidence.recent_forgery"], "outcome_id": "complete", "label": "Move on"}
+}
+```
+
+The minimal legacy shape remains valid:
+
+```json
+{
+  "prompt": "Inspect the area.",
+  "hotspots": [{"id": "map", "label": "Map", "reveal_text": "A route is marked."}],
   "completion": {"required_hotspots": ["map"], "outcome_id": "complete", "label": "Move on"}
 }
 ```
+
+Optional fields:
+
+```text
+scene.background_asset_id: background or CG asset for the interaction panel.
+scene.layout: overlay or grid. Overlay uses hotspot bounds when present.
+scene.show_hotspot_labels: always, hover, or hidden.
+action_budget: optional local action resource such as focus.
+hotspots[].bounds: normalized x/y/w/h values from 0 to 1 for overlay rendering.
+hotspots[].asset_id: prop, hotspot, icon, or UI asset for the hotspot.
+hotspots[].verbs: allowed local verbs. Supported values are inspect, collect, and use.
+hotspots[].requires: hotspot ids that must be visited before this hotspot is actionable.
+hotspots[].requires_items: local item ids needed before this hotspot is actionable.
+hotspots[].collects: local item ids collected by this hotspot.
+hotspots[].reveals_hotspots: hotspot ids revealed after this hotspot is inspected or collected.
+hotspots[].use_results: item-specific use outcomes for this hotspot.
+items[].asset_id: prop or icon asset for the local inventory item.
+use_results[].sfx_asset_id: optional SFX asset when an item works on a hotspot.
+present_targets[]: optional characters or entities that can receive selected local items.
+present_targets[].accepted_items[]: item-specific presentation results, optionally with outcome_id, state_writes, and sfx_asset_id.
+evidence_combinations[]: optional one-shot local deduction rules.
+evidence_combinations[].item_ids: local item ids required to run the combination.
+evidence_combinations[].creates_items: local item ids created by the combination, usually prefixed `evidence.`.
+```
+
+Rules:
+
+- Local `items` are interaction inventory entries, not persistent state variables.
+- `collects`, `requires_items`, `completion.required_items`, and `use_results[].item_id` must reference ids in `runtime_spec.items`.
+- `requires`, `completion.required_hotspots`, and `reveals_hotspots` must reference ids in `runtime_spec.hotspots`.
+- Persistent consequences still use `state_writes` and must reference variables declared in `game_ir.json`.
+- Completion must be reachable from initially visible hotspots, direct hotspot reveals, collected local items, valid use results, and evidence combinations.
+- Evidence presentation should stay small. If `present_targets` becomes the dominant interaction, split the future design into a dedicated adapter instead of expanding this one indefinitely.
+- If `action_budget` is present, required progression should be reachable within the initial budget.
 
 ### `puzzle.sequence_lock`
 

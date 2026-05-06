@@ -137,30 +137,61 @@ def collect_required_assets(run_root: Path) -> list[Json]:
     plans = load_optional_json(path_for(run_root, "realization_plans")) or {"plans": []}
     gameplay_units = load_gameplay_units(run_root)
     required: dict[str, Json] = {}
+
+    def add_asset(asset_id: Any, node_id: Any, description: str) -> None:
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            return
+        required.setdefault(asset_id, {
+            "asset_id": asset_id,
+            "kind": kind_for_asset_id(asset_id),
+            "description": description,
+            "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
+            "provider_hints": [],
+        })
+
+    def collect_interaction_assets(unit: Json) -> None:
+        node_id = unit.get("source_node_id")
+        spec = unit.get("runtime_spec") if isinstance(unit.get("runtime_spec"), dict) else {}
+        scene = spec.get("scene") if isinstance(spec.get("scene"), dict) else {}
+        add_asset(scene.get("background_asset_id"), node_id, f"Interaction scene background required by {node_id}.")
+        for hotspot in as_list(spec.get("hotspots")):
+            if not isinstance(hotspot, dict):
+                continue
+            add_asset(hotspot.get("asset_id"), node_id, f"Interaction hotspot asset required by {node_id}.")
+            add_asset(hotspot.get("sfx_asset_id"), node_id, f"Interaction hotspot SFX required by {node_id}.")
+            for result in as_list(hotspot.get("use_results")):
+                if not isinstance(result, dict):
+                    continue
+                add_asset(result.get("asset_id"), node_id, f"Interaction use-result asset required by {node_id}.")
+                add_asset(result.get("sfx_asset_id"), node_id, f"Interaction use-result SFX required by {node_id}.")
+        for item in as_list(spec.get("items")):
+            if isinstance(item, dict):
+                add_asset(item.get("asset_id"), node_id, f"Interaction inventory item asset required by {node_id}.")
+        for target in as_list(spec.get("present_targets")):
+            if not isinstance(target, dict):
+                continue
+            add_asset(target.get("asset_id"), node_id, f"Interaction presentation target asset required by {node_id}.")
+            for accepted in as_list(target.get("accepted_items")):
+                if isinstance(accepted, dict):
+                    add_asset(accepted.get("sfx_asset_id"), node_id, f"Interaction evidence SFX required by {node_id}.")
+        for combo in as_list(spec.get("evidence_combinations")):
+            if not isinstance(combo, dict):
+                continue
+            add_asset(combo.get("asset_id"), node_id, f"Interaction evidence-combination asset required by {node_id}.")
+            add_asset(combo.get("sfx_asset_id"), node_id, f"Interaction evidence-combination SFX required by {node_id}.")
+
     for plan in as_list(plans.get("plans")):
         if not isinstance(plan, dict):
             continue
         node_id = plan.get("source_node_id")
         for asset_id in as_list(plan.get("required_assets")):
-            if isinstance(asset_id, str):
-                required.setdefault(asset_id, {
-                    "asset_id": asset_id,
-                    "kind": kind_for_asset_id(asset_id),
-                    "description": f"Runtime asset required by {node_id}.",
-                    "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
-                    "provider_hints": [],
-                })
+            add_asset(asset_id, node_id, f"Runtime asset required by {node_id}.")
     for unit in gameplay_units.values():
         node_id = unit.get("source_node_id")
         for asset_id in as_list(unit.get("required_assets")):
-            if isinstance(asset_id, str):
-                required.setdefault(asset_id, {
-                    "asset_id": asset_id,
-                    "kind": kind_for_asset_id(asset_id),
-                    "description": f"Gameplay asset required by {node_id}.",
-                    "source_trace": {"node_ids": [node_id] if isinstance(node_id, str) else []},
-                    "provider_hints": [],
-                })
+            add_asset(asset_id, node_id, f"Gameplay asset required by {node_id}.")
+        if unit.get("adapter_id") == "interaction.inspect_scene":
+            collect_interaction_assets(unit)
     return list(required.values())
 
 

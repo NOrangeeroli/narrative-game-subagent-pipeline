@@ -497,12 +497,328 @@ def validate_gameplay_unit(unit: Json | None, plan: Json, shared_state: Json | N
     trace = unit.get("source_trace") if isinstance(unit.get("source_trace"), dict) else {}
     if source_node_id not in as_list(trace.get("node_ids") if isinstance(trace, dict) else []):
         findings.append(Finding("warning", "source_trace", "Gameplay unit source_trace should include source node id.", f"{artifact_path}.source_trace.node_ids"))
-    findings.extend(validate_gameplay_runtime_spec(unit, artifact_path))
+    findings.extend(validate_gameplay_runtime_spec(unit, artifact_path, state_ids))
     return findings
 
 
-def validate_gameplay_runtime_spec(unit: Json, artifact_path: str) -> list[Finding]:
+def validate_unique_runtime_ids(entries: list[Any], id_label: str, path: str) -> tuple[set[str], list[Finding]]:
     findings: list[Finding] = []
+    ids: set[str] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            findings.append(Finding("error", "schema", f"{id_label} entries must be objects.", f"{path}[{index}]"))
+            continue
+        entry_id = entry.get("id")
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            findings.append(Finding("error", "schema", f"{id_label} entry needs id.", f"{path}[{index}].id"))
+            continue
+        if entry_id in ids:
+            findings.append(Finding("error", "duplicate_id", f"Duplicate {id_label} id: {entry_id}", f"{path}[{index}].id"))
+        ids.add(entry_id)
+    return ids, findings
+
+
+def add_missing_refs(
+    findings: list[Finding],
+    refs: list[Any],
+    known_ids: set[str],
+    kind: str,
+    path: str,
+    severity: str = "error",
+) -> None:
+    for index, ref in enumerate(refs):
+        if not isinstance(ref, str) or not ref:
+            findings.append(Finding(severity, "invalid_reference", f"{kind} reference must be a string.", f"{path}[{index}]"))
+        elif ref not in known_ids:
+            findings.append(Finding(severity, "invalid_reference", f"{kind} references missing id: {ref}", f"{path}[{index}]"))
+
+
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def nonnegative_number(value: Any, path: str, findings: list[Finding], label: str) -> float | None:
+    if value is None:
+        return None
+    if not is_number(value):
+        findings.append(Finding("error", "schema", f"{label} must be a number.", path))
+        return None
+    if value < 0:
+        findings.append(Finding("error", "schema", f"{label} must be non-negative.", path))
+        return None
+    return float(value)
+
+
+def validate_bounds(bounds: Any, path: str, findings: list[Finding]) -> None:
+    if bounds is None:
+        return
+    if not isinstance(bounds, dict):
+        findings.append(Finding("error", "schema", "Hotspot bounds must be an object.", path))
+        return
+    values: dict[str, float] = {}
+    for key in ("x", "y", "w", "h"):
+        value = bounds.get(key)
+        if not is_number(value):
+            findings.append(Finding("error", "schema", f"Hotspot bounds.{key} must be numeric.", f"{path}.{key}"))
+            continue
+        values[key] = float(value)
+    if len(values) != 4:
+        return
+    for key in ("x", "y"):
+        if not 0 <= values[key] <= 1:
+            findings.append(Finding("error", "schema", f"Hotspot bounds.{key} must be between 0 and 1.", f"{path}.{key}"))
+    for key in ("w", "h"):
+        if not 0 < values[key] <= 1:
+            findings.append(Finding("error", "schema", f"Hotspot bounds.{key} must be greater than 0 and at most 1.", f"{path}.{key}"))
+    if values["x"] + values["w"] > 1:
+        findings.append(Finding("warning", "bounds_overflow", "Hotspot bounds extend past the right scene edge.", path))
+    if values["y"] + values["h"] > 1:
+        findings.append(Finding("warning", "bounds_overflow", "Hotspot bounds extend past the bottom scene edge.", path))
+
+
+def interaction_cost(config: Json, key: str, fallback: float = 0) -> float:
+    if not isinstance(config, dict):
+        return 0
+    value = config.get(key)
+    if is_number(value):
+        return max(0.0, float(value))
+    default = config.get("default_cost")
+    if is_number(default):
+        return max(0.0, float(default))
+    return fallback
+
+
+def validate_interaction_runtime_spec(spec: Json, artifact_path: str, state_ids: set[str]) -> list[Finding]:
+    findings: list[Finding] = []
+    hotspots = as_list(spec.get("hotspots"))
+    items = as_list(spec.get("items"))
+    combinations = as_list(spec.get("evidence_combinations"))
+    scene = spec.get("scene") if isinstance(spec.get("scene"), dict) else {}
+    action_budget = spec.get("action_budget") if isinstance(spec.get("action_budget"), dict) else {}
+    if not hotspots:
+        findings.append(Finding("error", "interaction_hotspots", "Interaction runtime_spec needs at least one hotspot.", f"{artifact_path}.runtime_spec.hotspots"))
+    if not isinstance(spec.get("completion"), dict):
+        findings.append(Finding("error", "interaction_completion", "Interaction runtime_spec needs completion.", f"{artifact_path}.runtime_spec.completion"))
+    hotspot_ids, id_findings = validate_unique_runtime_ids(hotspots, "hotspot", f"{artifact_path}.runtime_spec.hotspots")
+    findings.extend(id_findings)
+    item_ids, item_findings = validate_unique_runtime_ids(items, "item", f"{artifact_path}.runtime_spec.items")
+    findings.extend(item_findings)
+    combination_ids, combination_findings = validate_unique_runtime_ids(combinations, "evidence combination", f"{artifact_path}.runtime_spec.evidence_combinations")
+    findings.extend(combination_findings)
+
+    normalized_hotspots: dict[str, Json] = {
+        hotspot["id"]: hotspot
+        for hotspot in hotspots
+        if isinstance(hotspot, dict) and isinstance(hotspot.get("id"), str)
+    }
+    collectable_items: set[str] = {
+        item.get("id")
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("initially_owned") is True
+    }
+    if scene.get("layout") == "overlay":
+        bounded = [hotspot for hotspot in normalized_hotspots.values() if isinstance(hotspot.get("bounds"), dict)]
+        if not bounded:
+            findings.append(Finding("warning", "interaction_overlay_bounds", "Overlay interaction should provide hotspot bounds.", f"{artifact_path}.runtime_spec.hotspots"))
+    if "action_budget" in spec:
+        if not isinstance(spec.get("action_budget"), dict):
+            findings.append(Finding("error", "schema", "action_budget must be an object.", f"{artifact_path}.runtime_spec.action_budget"))
+        else:
+            for key in ("initial", "inspect_cost", "use_cost", "wrong_use_cost", "combine_cost", "default_cost"):
+                if key in action_budget:
+                    nonnegative_number(action_budget.get(key), f"{artifact_path}.runtime_spec.action_budget.{key}", findings, f"action_budget.{key}")
+            if action_budget.get("id") is not None and not isinstance(action_budget.get("id"), str):
+                findings.append(Finding("error", "schema", "action_budget.id must be a string.", f"{artifact_path}.runtime_spec.action_budget.id"))
+
+    for hotspot_index, hotspot in enumerate(hotspots):
+        if not isinstance(hotspot, dict):
+            continue
+        base = f"{artifact_path}.runtime_spec.hotspots[{hotspot_index}]"
+        validate_bounds(hotspot.get("bounds"), f"{base}.bounds", findings)
+        for key in ("cost", "blocked_cost", "wrong_use_cost"):
+            if key in hotspot:
+                nonnegative_number(hotspot.get(key), f"{base}.{key}", findings, f"hotspot.{key}")
+        add_missing_refs(findings, as_list(hotspot.get("requires")), hotspot_ids, "hotspot.requires", f"{base}.requires")
+        add_missing_refs(findings, as_list(hotspot.get("requires_hotspots")), hotspot_ids, "hotspot.requires_hotspots", f"{base}.requires_hotspots")
+        add_missing_refs(findings, as_list(hotspot.get("requires_items")), item_ids, "hotspot.requires_items", f"{base}.requires_items")
+        add_missing_refs(findings, as_list(hotspot.get("collects")), item_ids, "hotspot.collects", f"{base}.collects")
+        collectable_items.update(ref for ref in as_list(hotspot.get("collects")) if isinstance(ref, str) and ref in item_ids)
+        add_missing_refs(findings, as_list(hotspot.get("reveals_hotspots")), hotspot_ids, "hotspot.reveals_hotspots", f"{base}.reveals_hotspots")
+        validate_state_ops(findings, as_list(hotspot.get("state_writes")), state_ids, f"{base}.state_writes")
+        for result_index, result in enumerate(as_list(hotspot.get("use_results"))):
+            if not isinstance(result, dict):
+                findings.append(Finding("error", "schema", "use_results entries must be objects.", f"{base}.use_results[{result_index}]"))
+                continue
+            result_base = f"{base}.use_results[{result_index}]"
+            item_id = result.get("item_id")
+            if not isinstance(item_id, str) or item_id not in item_ids:
+                findings.append(Finding("error", "invalid_reference", f"use_result references missing item: {item_id}", f"{result_base}.item_id"))
+            add_missing_refs(findings, as_list(result.get("reveals_hotspots")), hotspot_ids, "use_result.reveals_hotspots", f"{result_base}.reveals_hotspots")
+            add_missing_refs(findings, as_list(result.get("collects")), item_ids, "use_result.collects", f"{result_base}.collects")
+            collectable_items.update(ref for ref in as_list(result.get("collects")) if isinstance(ref, str) and ref in item_ids)
+            if "cost" in result:
+                nonnegative_number(result.get("cost"), f"{result_base}.cost", findings, "use_result.cost")
+            validate_state_ops(findings, as_list(result.get("state_writes")), state_ids, f"{result_base}.state_writes")
+
+    for combo_index, combo in enumerate(combinations):
+        if not isinstance(combo, dict):
+            continue
+        combo_base = f"{artifact_path}.runtime_spec.evidence_combinations[{combo_index}]"
+        add_missing_refs(findings, as_list(combo.get("item_ids")), item_ids, "evidence_combinations.item_ids", f"{combo_base}.item_ids")
+        add_missing_refs(findings, as_list(combo.get("creates_items")), item_ids, "evidence_combinations.creates_items", f"{combo_base}.creates_items")
+        add_missing_refs(findings, as_list(combo.get("reveals_hotspots")), hotspot_ids, "evidence_combinations.reveals_hotspots", f"{combo_base}.reveals_hotspots")
+        collectable_items.update(ref for ref in as_list(combo.get("creates_items")) if isinstance(ref, str) and ref in item_ids)
+        if "cost" in combo:
+            nonnegative_number(combo.get("cost"), f"{combo_base}.cost", findings, "evidence_combinations.cost")
+        validate_state_ops(findings, as_list(combo.get("state_writes")), state_ids, f"{combo_base}.state_writes")
+
+    completion = spec.get("completion") if isinstance(spec.get("completion"), dict) else {}
+    add_missing_refs(findings, as_list(completion.get("required_hotspots")), hotspot_ids, "completion.required_hotspots", f"{artifact_path}.runtime_spec.completion.required_hotspots")
+    add_missing_refs(findings, as_list(completion.get("required_items")), item_ids, "completion.required_items", f"{artifact_path}.runtime_spec.completion.required_items")
+    validate_state_ops(findings, as_list(completion.get("state_writes")), state_ids, f"{artifact_path}.runtime_spec.completion.state_writes")
+
+    for target_index, target in enumerate(as_list(spec.get("present_targets"))):
+        if not isinstance(target, dict):
+            findings.append(Finding("error", "schema", "present_targets entries must be objects.", f"{artifact_path}.runtime_spec.present_targets[{target_index}]"))
+            continue
+        for accepted_index, accepted in enumerate(as_list(target.get("accepted_items"))):
+            accepted_base = f"{artifact_path}.runtime_spec.present_targets[{target_index}].accepted_items[{accepted_index}]"
+            if not isinstance(accepted, dict):
+                findings.append(Finding("error", "schema", "accepted_items entries must be objects.", accepted_base))
+                continue
+            item_id = accepted.get("item_id")
+            if not isinstance(item_id, str) or item_id not in item_ids:
+                findings.append(Finding("error", "invalid_reference", f"accepted item references missing item: {item_id}", f"{accepted_base}.item_id"))
+            validate_state_ops(findings, as_list(accepted.get("state_writes")), state_ids, f"{accepted_base}.state_writes")
+
+    for item_ref in sorted(item_ids - collectable_items):
+        used_as_gate = False
+        for hotspot in normalized_hotspots.values():
+            if item_ref in as_list(hotspot.get("requires_items")):
+                used_as_gate = True
+            for result in as_list(hotspot.get("use_results")):
+                if isinstance(result, dict) and result.get("item_id") == item_ref:
+                    used_as_gate = True
+        if item_ref in as_list(completion.get("required_items")):
+            used_as_gate = True
+        for target in as_list(spec.get("present_targets")):
+            if not isinstance(target, dict):
+                continue
+            for accepted in as_list(target.get("accepted_items")):
+                if isinstance(accepted, dict) and accepted.get("item_id") == item_ref:
+                    used_as_gate = True
+        for combo in combinations:
+            if not isinstance(combo, dict):
+                continue
+            if item_ref in as_list(combo.get("item_ids")) or item_ref in as_list(combo.get("creates_items")):
+                used_as_gate = True
+        if used_as_gate:
+            findings.append(Finding("warning", "interaction_item_reachability", f"Item is used as a gate but is not collectable in this unit: {item_ref}", f"{artifact_path}.runtime_spec.items"))
+
+    if hotspot_ids:
+        initially_visible = {
+            hotspot_id
+            for hotspot_id, hotspot in normalized_hotspots.items()
+            if hotspot.get("initially_visible") is not False
+        }
+        if not initially_visible:
+            findings.append(Finding("error", "interaction_reachability", "Interaction needs at least one initially visible hotspot.", f"{artifact_path}.runtime_spec.hotspots"))
+        reachable_hotspots = set(initially_visible)
+        visited_hotspots: set[str] = set()
+        reachable_items: set[str] = {
+            item.get("id")
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("initially_owned") is True
+        }
+        completed_combinations: set[str] = set()
+        progress_cost = 0.0
+        changed = True
+        while changed:
+            changed = False
+            for hotspot_id, hotspot in normalized_hotspots.items():
+                if hotspot_id not in reachable_hotspots:
+                    continue
+                required_hotspots = set(ref for ref in [*as_list(hotspot.get("requires")), *as_list(hotspot.get("requires_hotspots"))] if isinstance(ref, str))
+                required_items = set(ref for ref in as_list(hotspot.get("requires_items")) if isinstance(ref, str))
+                can_act = required_hotspots <= visited_hotspots and required_items <= reachable_items
+                if not can_act:
+                    continue
+                if hotspot_id not in visited_hotspots:
+                    visited_hotspots.add(hotspot_id)
+                    if as_list(hotspot.get("collects")) or as_list(hotspot.get("reveals_hotspots")) or hotspot.get("state_writes"):
+                        progress_cost += interaction_cost(action_budget, "inspect_cost", 1.0) if action_budget else 0.0
+                    changed = True
+                for item_id in as_list(hotspot.get("collects")):
+                    if isinstance(item_id, str) and item_id in item_ids and item_id not in reachable_items:
+                        reachable_items.add(item_id)
+                        changed = True
+                for reveal_id in as_list(hotspot.get("reveals_hotspots")):
+                    if isinstance(reveal_id, str) and reveal_id in hotspot_ids and reveal_id not in reachable_hotspots:
+                        reachable_hotspots.add(reveal_id)
+                        changed = True
+                for result in as_list(hotspot.get("use_results")):
+                    if not isinstance(result, dict) or result.get("item_id") not in reachable_items:
+                        continue
+                    result_progressed = False
+                    for item_id in as_list(result.get("collects")):
+                        if isinstance(item_id, str) and item_id in item_ids and item_id not in reachable_items:
+                            reachable_items.add(item_id)
+                            result_progressed = True
+                            changed = True
+                    for reveal_id in as_list(result.get("reveals_hotspots")):
+                        if isinstance(reveal_id, str) and reveal_id in hotspot_ids and reveal_id not in reachable_hotspots:
+                            reachable_hotspots.add(reveal_id)
+                            result_progressed = True
+                            changed = True
+                    if result_progressed:
+                        progress_cost += interaction_cost(action_budget, "use_cost", 1.0) if action_budget else 0.0
+                for combo in combinations:
+                    if not isinstance(combo, dict):
+                        continue
+                    combo_id = combo.get("id")
+                    if not isinstance(combo_id, str) or combo_id in completed_combinations:
+                        continue
+                    needed = set(ref for ref in as_list(combo.get("item_ids")) if isinstance(ref, str))
+                    if not needed <= reachable_items:
+                        continue
+                    combo_progressed = False
+                    completed_combinations.add(combo_id)
+                    for item_id in as_list(combo.get("creates_items")):
+                        if isinstance(item_id, str) and item_id in item_ids and item_id not in reachable_items:
+                            reachable_items.add(item_id)
+                            combo_progressed = True
+                            changed = True
+                    for reveal_id in as_list(combo.get("reveals_hotspots")):
+                        if isinstance(reveal_id, str) and reveal_id in hotspot_ids and reveal_id not in reachable_hotspots:
+                            reachable_hotspots.add(reveal_id)
+                            combo_progressed = True
+                            changed = True
+                    if combo_progressed:
+                        progress_cost += interaction_cost(action_budget, "combine_cost", 1.0) if action_budget else 0.0
+
+        required_hotspots = set(ref for ref in as_list(completion.get("required_hotspots")) if isinstance(ref, str))
+        required_items = set(ref for ref in as_list(completion.get("required_items")) if isinstance(ref, str))
+        if not required_hotspots <= visited_hotspots or not required_items <= reachable_items:
+            missing_hotspots = sorted(required_hotspots - visited_hotspots)
+            missing_items = sorted(required_items - reachable_items)
+            findings.append(Finding(
+                "error",
+                "interaction_reachability",
+                f"Interaction completion is not reachable. Missing hotspots: {missing_hotspots}; missing items: {missing_items}",
+                f"{artifact_path}.runtime_spec.completion",
+            ))
+        for hotspot_id in sorted(hotspot_ids - reachable_hotspots):
+            findings.append(Finding("warning", "interaction_unreachable_hotspot", f"Hotspot is never revealed: {hotspot_id}", f"{artifact_path}.runtime_spec.hotspots"))
+        initial_budget = action_budget.get("initial")
+        if is_number(initial_budget) and progress_cost > float(initial_budget):
+            findings.append(Finding("warning", "interaction_budget_reachability", f"Approximate required progress cost {progress_cost:g} exceeds initial action budget {float(initial_budget):g}.", f"{artifact_path}.runtime_spec.action_budget"))
+
+    return findings
+
+
+def validate_gameplay_runtime_spec(unit: Json, artifact_path: str, state_ids: set[str] | None = None) -> list[Finding]:
+    findings: list[Finding] = []
+    state_ids = state_ids or set()
     kind = unit.get("realization_kind")
     spec = unit.get("runtime_spec") if isinstance(unit.get("runtime_spec"), dict) else {}
     if kind == "battle":
@@ -516,11 +832,7 @@ def validate_gameplay_runtime_spec(unit: Json, artifact_path: str) -> list[Findi
         if not win_conditions:
             findings.append(Finding("error", "battle_victory", "Battle runtime_spec needs at least one win condition.", f"{artifact_path}.runtime_spec.win_conditions"))
     elif kind == "interaction":
-        hotspots = as_list(spec.get("hotspots"))
-        if not hotspots:
-            findings.append(Finding("error", "interaction_hotspots", "Interaction runtime_spec needs at least one hotspot.", f"{artifact_path}.runtime_spec.hotspots"))
-        if not isinstance(spec.get("completion"), dict):
-            findings.append(Finding("error", "interaction_completion", "Interaction runtime_spec needs completion.", f"{artifact_path}.runtime_spec.completion"))
+        findings.extend(validate_interaction_runtime_spec(spec, artifact_path, state_ids))
     elif kind == "puzzle":
         if not as_list(spec.get("solution")):
             findings.append(Finding("error", "puzzle_solution", "Puzzle runtime_spec needs a deterministic solution.", f"{artifact_path}.runtime_spec.solution"))

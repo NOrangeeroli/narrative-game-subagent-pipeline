@@ -109,6 +109,8 @@ Supported gameplay adapters are declarative and fixed by the controller:
 `battle.choice_duel`, `interaction.inspect_scene`, `puzzle.sequence_lock`, and `exploration.room_nav`.
 Subagents do not write runtime code for these adapters.
 
+`interaction.inspect_scene` supports both minimal hotspot inspection and richer scene-local loops: visual hotspot overlays, optional action budgets, local items, item use on gated hotspots, hidden hotspot reveals, evidence combinations, compact evidence presentation, and planned completion outcomes. Local interaction items and evidence are not persistent game state; durable consequences still go through `game_ir.json` variables and validated `state_writes`.
+
 `external_stub` and unsupported adapters become typed not-implemented stubs. Supported `battle`, `interaction`, `puzzle`, and `exploration` plans require matching gameplay unit artifacts.
 
 ## Tools

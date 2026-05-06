@@ -41,6 +41,9 @@ Return only JSON for `node-realization-plans.json`.
 - Every outgoing edge is represented by one planned outcome.
 - Required assets use stable prefixed ids.
 - Continuity summaries are useful to downstream writers.
+- Prefer `interaction` when the node is about inspecting, searching, questioning, handling objects, or uncovering evidence inside one scene.
+- Prefer `exploration` when the main decision is where to go across multiple local areas.
+- Prefer `puzzle` when the main decision is solving a formal rule or input challenge.
 
 ## Spawn Prompt Template
 
@@ -51,6 +54,9 @@ Return only JSON for `node-realization-plans.json`.
 Map every branch graph node to exactly one realization plan.
 Use `vn_yarn` or `cutscene_yarn` for dialogue-first nodes.
 Use `battle`, `interaction`, `puzzle`, or `exploration` when the node is better realized as a typed gameplay unit and the run policy lists a supported adapter for that kind.
+Select `interaction` for nodes centered on inspecting a scene, searching objects, questioning characters, presenting evidence, or uncovering clues inside one location.
+Select `exploration` when the player's main choice is local navigation across multiple rooms or areas.
+Select `puzzle` when the player's main choice is solving a formal sequence, lock, code, ordering, or input rule.
 Use `external_stub` only when the requested realization is intentionally outside the supported adapter set.
 
 Exit bindings must cover every outgoing edge exactly once.

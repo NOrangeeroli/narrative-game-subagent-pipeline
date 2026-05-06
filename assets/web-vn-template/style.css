@@ -12,7 +12,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  overflow: hidden;
+  overflow: auto;
 }
 
 button {
@@ -141,6 +141,27 @@ button {
   line-height: 1.55;
 }
 
+.stage.gameplay-active .dialogue {
+  padding: clamp(14px, 2.4vw, 22px);
+  margin-bottom: 10px;
+}
+
+.stage.gameplay-active #node-title {
+  margin-bottom: 6px;
+  font-size: clamp(20px, 2.4vw, 30px);
+}
+
+.stage.gameplay-active .line {
+  min-height: 0;
+  font-size: clamp(16px, 1.8vw, 21px);
+}
+
+.stage.gameplay-active .activity-log {
+  max-height: 86px;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
 .continue,
 .choices button {
   min-height: 44px;
@@ -176,6 +197,57 @@ button {
   display: grid;
   gap: 14px;
   margin-top: 18px;
+}
+
+.budget-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(244, 199, 107, 0.3);
+  border-radius: 8px;
+  background: rgba(244, 199, 107, 0.11);
+}
+
+.stage.gameplay-active .budget-strip {
+  order: 0;
+}
+
+.stage.gameplay-active .interaction-scene {
+  order: 1;
+}
+
+.stage.gameplay-active .inventory-strip {
+  order: 2;
+}
+
+.stage.gameplay-active .combine-panel {
+  order: 3;
+}
+
+.stage.gameplay-active .present-targets {
+  order: 5;
+}
+
+.stage.gameplay-active .activity-log {
+  order: 6;
+}
+
+.stage.gameplay-active .primary-action {
+  order: 4;
+}
+
+.budget-strip strong,
+.budget-value {
+  color: #f4c76b;
+}
+
+.budget-value {
+  min-width: 34px;
+  text-align: right;
+  font-weight: 800;
 }
 
 .stat-grid {
@@ -215,6 +287,78 @@ button {
   line-height: 1.45;
 }
 
+.inventory-strip,
+.combine-panel,
+.present-targets {
+  display: grid;
+  gap: 8px;
+}
+
+.inventory-strip strong,
+.combine-panel strong,
+.present-targets strong {
+  color: #f4c76b;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.inventory-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inventory-item {
+  width: auto;
+  min-height: 38px;
+  border-color: rgba(118, 197, 182, 0.45);
+  background: rgba(43, 94, 88, 0.34);
+}
+
+.inventory-items .inventory-item {
+  width: auto;
+}
+
+.inventory-item.selected {
+  border-color: rgba(244, 199, 107, 0.78);
+  background: rgba(244, 199, 107, 0.2);
+}
+
+.empty-inventory {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.interaction-scene {
+  position: relative;
+  min-height: 150px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  background-position: center;
+  background-size: cover;
+}
+
+.interaction-scene.has-scene-image {
+  display: grid;
+  align-content: end;
+}
+
+.interaction-scene.overlay-mode {
+  min-height: clamp(130px, 24vh, 260px);
+  overflow: hidden;
+}
+
+.interaction-scene.overlay-mode .interaction-hotspots {
+  position: relative;
+  z-index: 2;
+  align-self: end;
+  margin-top: auto;
+}
+
 .hotspot-grid,
 .gameplay-actions {
   display: grid;
@@ -228,6 +372,82 @@ button {
   min-height: 44px;
   padding: 10px 14px;
   text-align: left;
+}
+
+.hotspot-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hotspot-button img {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.hotspot-button.locked {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.hotspot-region {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid rgba(244, 199, 107, 0.42);
+  border-radius: 6px;
+  background: rgba(244, 199, 107, 0.08);
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.02);
+}
+
+.hotspot-region:hover,
+.hotspot-region:focus-visible {
+  border-color: rgba(244, 199, 107, 0.9);
+  background: rgba(244, 199, 107, 0.18);
+  outline: none;
+}
+
+.hotspot-region.locked {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.hotspot-region img {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+}
+
+.hotspot-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: min(180px, 46vw);
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(10, 12, 14, 0.86);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  white-space: normal;
+}
+
+.labels-hover .hotspot-label,
+.labels-hidden .hotspot-label {
+  opacity: 0;
+}
+
+.labels-hover .hotspot-region:hover .hotspot-label,
+.labels-hover .hotspot-region:focus-visible .hotspot-label {
+  opacity: 1;
 }
 
 .hotspot-grid button:disabled {
@@ -276,5 +496,14 @@ button {
 
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .interaction-scene {
+    min-height: 130px;
+  }
+
+  .inventory-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 }
