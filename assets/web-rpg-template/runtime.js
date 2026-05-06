@@ -1,7 +1,10 @@
 (function () {
   "use strict";
 
+  const TILE_SIZE = 96;
+  const MOVE_MS = 180;
   const data = window.RPG_GAME_DATA || {};
+
   const byId = (items) => {
     const result = {};
     (Array.isArray(items) ? items : []).forEach((item) => {
@@ -51,11 +54,21 @@
   const maxHp = (entity) => Number((entity.stats && (entity.stats.max_hp || entity.stats.hp)) || entity.max_hp || entity.hp || 1);
   const stat = (entity, key, fallback) => Number((entity.stats && entity.stats[key]) || entity[key] || fallback);
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const slug = (value) => String(value || "").split(".").pop().split("_")[0].replace(/[^A-Za-z0-9-]/g, "_");
 
   const state = {
     mapId: firstMapId,
+    renderedMapId: null,
     x: Number((data.start_position && data.start_position.x) || 1),
     y: Number((data.start_position && data.start_position.y) || 1),
+    prevX: null,
+    prevY: null,
+    prevMapId: null,
+    facing: "down",
+    moving: false,
+    cameraX: 0,
+    cameraY: 0,
+    effects: [],
     hero: {
       id: firstActor.id,
       name: firstActor.name || firstActor.display_name || firstActor.id,
@@ -63,7 +76,8 @@
       maxHp: maxHp(firstActor),
       attack: stat(firstActor, "attack", 8),
       defense: stat(firstActor, "defense", 1),
-      speed: stat(firstActor, "speed", 3)
+      speed: stat(firstActor, "speed", 3),
+      spriteAssetId: firstActor.sprite_asset_id || firstActor.spriteAssetId || firstActor.asset_id || `sprite.${slug(firstActor.id)}`
     },
     flags: {},
     inventory: {},
@@ -83,6 +97,7 @@
     questLog: document.getElementById("questLog"),
     messageLog: document.getElementById("messageLog"),
     dialogue: document.getElementById("dialogue"),
+    dialoguePortrait: document.getElementById("dialoguePortrait"),
     dialogueSpeaker: document.getElementById("dialogueSpeaker"),
     dialogueText: document.getElementById("dialogueText"),
     dialogueNext: document.getElementById("dialogueNext"),
@@ -105,9 +120,29 @@
     return maps[state.mapId] || maps[Object.keys(maps)[0]] || fallbackMap;
   }
 
+  function assetPath(assetId) {
+    return assetId && data.assets && data.assets[assetId] ? data.assets[assetId] : "";
+  }
+
+  function firstAssetWithPrefix(prefix) {
+    const refs = Array.isArray(data.asset_refs) ? data.asset_refs : [];
+    return refs.find((assetId) => typeof assetId === "string" && assetId.startsWith(prefix));
+  }
+
   function addLog(message) {
     state.log.unshift(message);
-    state.log = state.log.slice(0, 6);
+    state.log = state.log.slice(0, 7);
+  }
+
+  function queueFloat(text, tone = "good") {
+    state.effects.push({ text, tone });
+  }
+
+  function flashMap(tone = "good") {
+    elements.map.classList.remove("map-flash-good", "map-flash-hit", "map-flash-travel");
+    void elements.map.offsetWidth;
+    elements.map.classList.add(`map-flash-${tone}`);
+    window.setTimeout(() => elements.map.classList.remove(`map-flash-${tone}`), 380);
   }
 
   function tileAt(gameMap, x, y, layer, fallback) {
@@ -146,13 +181,20 @@
 
   function render() {
     const gameMap = currentMap();
+    const mapChanged = state.renderedMapId !== gameMap.id;
     elements.title.textContent = data.title || "Playable Web RPG";
     elements.location.textContent = gameMap.title || gameMap.id;
-    elements.map.style.gridTemplateColumns = `repeat(${gameMap.width}, minmax(24px, 1fr))`;
-    elements.map.style.gridTemplateRows = `repeat(${gameMap.height}, minmax(24px, 1fr))`;
-    const mapBackground = assetPath(gameMap.asset_id || gameMap.map_asset_id || gameMap.id);
-    elements.map.style.backgroundImage = mapBackground ? `url("${encodeURI(mapBackground)}")` : "";
     elements.map.innerHTML = "";
+
+    const world = document.createElement("div");
+    world.className = "map-world";
+    world.style.setProperty("--tile-size", `${TILE_SIZE}px`);
+    world.style.width = `${gameMap.width * TILE_SIZE}px`;
+    world.style.height = `${gameMap.height * TILE_SIZE}px`;
+    world.style.gridTemplateColumns = `repeat(${gameMap.width}, ${TILE_SIZE}px)`;
+    world.style.gridTemplateRows = `repeat(${gameMap.height}, ${TILE_SIZE}px)`;
+    const mapBackground = assetPath(gameMap.asset_id || gameMap.map_asset_id || gameMap.id);
+    world.style.backgroundImage = mapBackground ? `url("${encodeURI(mapBackground)}")` : "";
 
     for (let y = 0; y < gameMap.height; y += 1) {
       for (let x = 0; x < gameMap.width; x += 1) {
@@ -162,51 +204,184 @@
         if (isBlocked(gameMap, x, y)) {
           tile.classList.add("blocked");
         }
-        eventsAt(gameMap, x, y).forEach((event) => {
-          const marker = document.createElement("div");
-          marker.className = `marker ${markerClass(event)}`;
-          marker.textContent = markerText(event);
-          tile.appendChild(marker);
-        });
-        if (state.x === x && state.y === y) {
-          const player = document.createElement("div");
-          player.className = "marker player";
-          player.textContent = "@";
-          tile.appendChild(player);
-        }
-        elements.map.appendChild(tile);
+        world.appendChild(tile);
       }
     }
+
+    const eventLayer = document.createElement("div");
+    eventLayer.className = "event-layer";
+    renderEvents(gameMap, eventLayer);
+    world.appendChild(eventLayer);
+
+    const avatarLayer = document.createElement("div");
+    avatarLayer.className = "avatar-layer";
+    renderAvatar(avatarLayer);
+    world.appendChild(avatarLayer);
+
+    elements.map.appendChild(world);
+    renderInteractionHint();
+    flushFloatingText();
+    applyCamera(world, gameMap, mapChanged);
+    state.renderedMapId = gameMap.id;
+
     renderPanel();
     renderDialogue();
     renderBattle();
     renderEnding();
   }
 
+  function renderEvents(gameMap, layer) {
+    const focus = nearbyEvent();
+    (Array.isArray(gameMap.events) ? gameMap.events : []).forEach((event) => {
+      if (state.flags[`event_done:${event.id}`]) {
+        return;
+      }
+      const marker = document.createElement("div");
+      const type = String(event.type || "npc");
+      marker.className = `event-sprite ${markerClass(event)}${focus && focus.id === event.id ? " nearby" : ""}`;
+      marker.style.left = `${(event.x + 0.5) * TILE_SIZE}px`;
+      marker.style.top = `${(event.y + 0.72) * TILE_SIZE}px`;
+      const sprite = assetPath(eventAssetId(event));
+      if (sprite) {
+        marker.classList.add("has-image");
+        const img = document.createElement("img");
+        img.src = sprite;
+        img.alt = "";
+        marker.appendChild(img);
+      } else {
+        marker.textContent = markerText(type);
+      }
+      layer.appendChild(marker);
+    });
+  }
+
+  function renderAvatar(layer) {
+    const avatar = document.createElement("div");
+    avatar.className = `avatar facing-${state.facing}${state.moving ? " walking" : ""}`;
+    const startX = state.moving && state.prevMapId === state.mapId && Number.isInteger(state.prevX) ? state.prevX : state.x;
+    const startY = state.moving && state.prevMapId === state.mapId && Number.isInteger(state.prevY) ? state.prevY : state.y;
+    avatar.style.left = `${(startX + 0.5) * TILE_SIZE}px`;
+    avatar.style.top = `${(startY + 0.88) * TILE_SIZE}px`;
+
+    const body = document.createElement("div");
+    body.className = "avatar-body";
+    const sprite = assetPath(state.hero.spriteAssetId);
+    if (sprite) {
+      const img = document.createElement("img");
+      img.className = "avatar-sprite";
+      img.src = sprite;
+      img.alt = "";
+      body.appendChild(img);
+    } else {
+      const token = document.createElement("div");
+      token.className = "avatar-token";
+      token.textContent = "@";
+      body.appendChild(token);
+    }
+    avatar.appendChild(body);
+    layer.appendChild(avatar);
+
+    if (state.moving) {
+      window.requestAnimationFrame(() => {
+        avatar.style.left = `${(state.x + 0.5) * TILE_SIZE}px`;
+        avatar.style.top = `${(state.y + 0.88) * TILE_SIZE}px`;
+      });
+      window.setTimeout(() => {
+        state.moving = false;
+        state.prevX = null;
+        state.prevY = null;
+      }, MOVE_MS + 40);
+    }
+  }
+
+  function applyCamera(world, gameMap, immediate) {
+    const viewportWidth = elements.map.clientWidth || 900;
+    const viewportHeight = elements.map.clientHeight || 600;
+    const worldWidth = gameMap.width * TILE_SIZE;
+    const worldHeight = gameMap.height * TILE_SIZE;
+    const playerCenterX = (state.x + 0.5) * TILE_SIZE;
+    const playerCenterY = (state.y + 0.5) * TILE_SIZE;
+    const targetX = clamp(playerCenterX - viewportWidth / 2, 0, Math.max(0, worldWidth - viewportWidth));
+    const targetY = clamp(playerCenterY - viewportHeight / 2, 0, Math.max(0, worldHeight - viewportHeight));
+
+    if (immediate) {
+      state.cameraX = targetX;
+      state.cameraY = targetY;
+      world.style.transform = `translate(${-targetX}px, ${-targetY}px)`;
+      return;
+    }
+
+    world.style.transform = `translate(${-state.cameraX}px, ${-state.cameraY}px)`;
+    window.requestAnimationFrame(() => {
+      world.classList.add("camera-moving");
+      world.style.transform = `translate(${-targetX}px, ${-targetY}px)`;
+    });
+    state.cameraX = targetX;
+    state.cameraY = targetY;
+  }
+
   function markerClass(event) {
     const type = String(event.type || "");
-    if (type === "battle" || type === "encounter") {
-      return "battle-event";
-    }
-    if (type === "rest") {
-      return "rest-event";
-    }
-    if (type === "pickup" || type === "item") {
-      return "item-event";
-    }
-    if (type === "quest") {
-      return "quest-event";
-    }
+    if (type === "battle" || type === "encounter") return "battle-event";
+    if (type === "rest") return "rest-event";
+    if (type === "pickup" || type === "item") return "item-event";
+    if (type === "quest") return "quest-event";
+    if (type === "shop") return "shop-event";
+    if (type === "transfer") return "transfer-event";
     return "npc";
   }
 
-  function markerText(event) {
-    const type = String(event.type || "");
+  function markerText(type) {
     if (type === "battle" || type === "encounter") return "!";
     if (type === "rest") return "+";
     if (type === "pickup" || type === "item") return "*";
     if (type === "quest") return "?";
+    if (type === "shop") return "$";
+    if (type === "transfer") return ">";
     return "i";
+  }
+
+  function eventAssetId(event) {
+    if (!event || typeof event !== "object") return null;
+    if (typeof event.sprite_asset_id === "string") return event.sprite_asset_id;
+    if (typeof event.asset_id === "string") return event.asset_id;
+    const type = String(event.type || "");
+    if ((type === "battle" || type === "encounter") && event.enemy_id && enemies[event.enemy_id]) {
+      return enemies[event.enemy_id].sprite_asset_id || enemies[event.enemy_id].asset_id || event.enemy_id;
+    }
+    if ((type === "pickup" || type === "item") && event.item_id && items[event.item_id]) {
+      return items[event.item_id].icon_asset_id || items[event.item_id].asset_id || `icon.item.${slug(event.item_id)}`;
+    }
+    if (type === "npc" || type === "shop" || type === "quest") {
+      const eventSlug = slug(event.id);
+      const candidate = `sprite.${eventSlug}`;
+      if (assetPath(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  function eventLabel(event) {
+    if (!event) return "";
+    return event.name || event.title || event.id || "Interact";
+  }
+
+  function renderInteractionHint() {
+    const event = nearbyEvent();
+    const hint = document.createElement("div");
+    hint.className = "interaction-hint";
+    hint.textContent = event ? `Space / Enter: ${eventLabel(event)}` : "Move near an object to interact";
+    elements.map.appendChild(hint);
+  }
+
+  function flushFloatingText() {
+    const effects = state.effects.splice(0);
+    effects.forEach((effect, index) => {
+      const label = document.createElement("div");
+      label.className = `float-text ${effect.tone || "good"}`;
+      label.textContent = effect.text;
+      label.style.top = `${42 + index * 6}%`;
+      elements.map.appendChild(label);
+    });
   }
 
   function renderPanel() {
@@ -219,8 +394,9 @@
         <div>ATK ${state.hero.attack} DEF ${state.hero.defense}</div>
       </section>
     `;
-    const questLines = Object.keys(state.quests).length
-      ? Object.entries(state.quests).map(([id, status]) => `<div>${escapeHtml(id)}: ${escapeHtml(status)}</div>`).join("")
+    const questIds = Object.keys(quests);
+    const questLines = questIds.length
+      ? questIds.map((id) => `<div>${escapeHtml(quests[id].title || id)}: ${escapeHtml(state.quests[id] || "locked")}</div>`).join("")
       : "<div>No active quests</div>";
     elements.questLog.innerHTML = `<section class="panel-section"><h2>Quests</h2>${questLines}</section>`;
     const logLines = state.log.length ? state.log.map((line) => `<div>${escapeHtml(line)}</div>`).join("") : "<div>Find someone to talk to.</div>";
@@ -237,70 +413,24 @@
     }[char]));
   }
 
-  function assetPath(assetId) {
-    return data.assets && data.assets[assetId] ? data.assets[assetId] : "";
-  }
-
-  function firstAssetWithPrefix(prefix) {
-    const refs = Array.isArray(data.asset_refs) ? data.asset_refs : [];
-    return refs.find((assetId) => typeof assetId === "string" && assetId.startsWith(prefix));
-  }
-
-  function finalQuestId() {
-    if (data.campaign && typeof data.campaign.final_quest_id === "string") {
-      return data.campaign.final_quest_id;
-    }
-    if (typeof data.final_quest_id === "string") {
-      return data.final_quest_id;
-    }
-    const major = data.campaign && Array.isArray(data.campaign.major_quest_ids) ? data.campaign.major_quest_ids : [];
-    if (major.length) {
-      return major[major.length - 1];
-    }
-    const questList = Array.isArray(data.quests) ? data.quests : [];
-    return questList.length ? questList[questList.length - 1].id : null;
-  }
-
-  function completionReached() {
-    const finalId = finalQuestId();
-    if (finalId) {
-      return state.quests[finalId] === "complete";
-    }
-    const questIds = Object.keys(quests);
-    return questIds.length > 0 && questIds.every((id) => state.quests[id] === "complete");
-  }
-
-  function checkCompletion() {
-    if (state.completed || !completionReached()) {
-      return;
-    }
-    state.completed = true;
-    addLog("Road opened.");
-  }
-
-  function renderEnding() {
-    if (!state.completed || state.endingDismissed || state.dialogue || state.battle) {
-      elements.ending.classList.add("hidden");
-      return;
-    }
-    const campaign = data.campaign || {};
-    elements.endingTitle.textContent = campaign.ending_title || "Quest Complete";
-    elements.endingText.textContent = campaign.ending_text || "The final objective is complete. The road ahead is open.";
-    elements.ending.classList.remove("hidden");
-  }
-
-  function move(dx, dy) {
+  function move(dx, dy, facing) {
     if (state.dialogue || state.battle) return;
+    state.facing = facing;
     const gameMap = currentMap();
     const nx = state.x + dx;
     const ny = state.y + dy;
     if (isBlocked(gameMap, nx, ny)) {
-      addLog("The way is blocked.");
+      queueFloat("Blocked", "hit");
+      flashMap("hit");
       render();
       return;
     }
+    state.prevX = state.x;
+    state.prevY = state.y;
+    state.prevMapId = state.mapId;
     state.x = nx;
     state.y = ny;
+    state.moving = true;
     const event = eventsAt(gameMap, nx, ny)[0];
     if (event && (event.trigger === "touch" || event.type === "transfer")) {
       interact(event);
@@ -312,35 +442,17 @@
   function interact(event) {
     const target = event || nearbyEvent();
     if (!target) {
-      addLog("Nothing responds.");
+      queueFloat("Nothing here", "hit");
       render();
       return;
     }
     const type = String(target.type || "npc");
-    if (type === "battle" || type === "encounter") {
-      startBattle(target);
-      return;
-    }
-    if (type === "rest") {
-      rest(target);
-      return;
-    }
-    if (type === "pickup" || type === "item") {
-      pickup(target);
-      return;
-    }
-    if (type === "transfer") {
-      transfer(target);
-      return;
-    }
-    if (type === "shop") {
-      talk(target, shopLines(target));
-      return;
-    }
-    if (type === "quest") {
-      acceptQuest(target);
-      return;
-    }
+    if (type === "battle" || type === "encounter") return startBattle(target);
+    if (type === "rest") return rest(target);
+    if (type === "pickup" || type === "item") return pickup(target);
+    if (type === "transfer") return transfer(target);
+    if (type === "shop") return talk(target, shopLines(target));
+    if (type === "quest") return acceptQuest(target);
     talk(target, linesFor(target));
   }
 
@@ -363,6 +475,7 @@
     state.dialogue = { event, lines, index: 0 };
     if (event.quest_id && quests[event.quest_id] && !state.quests[event.quest_id]) {
       state.quests[event.quest_id] = "active";
+      queueFloat(`${quests[event.quest_id].title || event.quest_id}: active`, "good");
     }
     render();
   }
@@ -371,6 +484,7 @@
     const questId = event.quest_id || event.id;
     state.quests[questId] = event.complete ? "complete" : "active";
     talk(event, linesFor(event));
+    queueFloat(`${quests[questId] ? quests[questId].title || questId : questId}: ${state.quests[questId]}`, "good");
     addLog(`${questId} updated.`);
     checkCompletion();
   }
@@ -385,6 +499,7 @@
       }
       if (event.complete_quest_id) {
         state.quests[event.complete_quest_id] = "complete";
+        queueFloat(`${event.complete_quest_id}: complete`, "good");
       }
       state.dialogue = null;
       checkCompletion();
@@ -400,6 +515,8 @@
     const line = state.dialogue.lines[state.dialogue.index] || {};
     elements.dialogueSpeaker.textContent = line.speaker || state.dialogue.event.name || "NPC";
     elements.dialogueText.textContent = line.text || String(line);
+    const portrait = assetPath(eventAssetId(state.dialogue.event));
+    elements.dialoguePortrait.innerHTML = portrait ? `<img src="${encodeURI(portrait)}" alt="">` : "";
     elements.dialogue.classList.remove("hidden");
   }
 
@@ -408,6 +525,8 @@
     const cost = Number((restPoint && restPoint.cost) || event.cost || 0);
     state.hero.hp = state.hero.maxHp;
     addLog(cost ? `Rested for ${cost}.` : "Rested and recovered.");
+    queueFloat("HP restored", "good");
+    flashMap("good");
     if (event.once) state.flags[`event_done:${event.id}`] = true;
     render();
   }
@@ -415,28 +534,39 @@
   function pickup(event) {
     const itemId = event.item_id || "item.unknown";
     state.inventory[itemId] = (state.inventory[itemId] || 0) + Number(event.quantity || 1);
-    addLog(`Got ${items[itemId] ? items[itemId].name || itemId : itemId}.`);
+    const label = items[itemId] ? items[itemId].name || itemId : itemId;
+    addLog(`Got ${label}.`);
+    queueFloat(`+ ${label}`, "good");
+    flashMap("good");
     state.flags[`event_done:${event.id}`] = true;
     render();
   }
 
   function transfer(event) {
     if (!event.target_map_id || !maps[event.target_map_id]) {
-      addLog("The exit is not connected.");
+      queueFloat("Exit is not connected", "hit");
       render();
       return;
     }
     state.mapId = event.target_map_id;
     state.x = Number(event.target_x || 1);
     state.y = Number(event.target_y || 1);
+    state.prevX = null;
+    state.prevY = null;
+    state.moving = false;
+    state.renderedMapId = null;
+    state.cameraX = 0;
+    state.cameraY = 0;
     addLog(`Moved to ${maps[state.mapId].title || state.mapId}.`);
+    queueFloat(maps[state.mapId].title || state.mapId, "good");
+    flashMap("travel");
     render();
   }
 
   function startBattle(event) {
     const enemyId = resolveEnemyId(event);
     if (!enemyId || !enemies[enemyId]) {
-      addLog("No enemy is configured here.");
+      queueFloat("No enemy configured", "hit");
       render();
       return;
     }
@@ -454,8 +584,11 @@
         spriteAssetId: source.sprite_asset_id || source.asset_id || source.id
       },
       backgroundAssetId: event.battle_background_asset_id || firstAssetWithPrefix("battlebg."),
-      text: `${source.name || source.id} appears.`
+      text: `${source.name || source.id} appears.`,
+      damageText: "",
+      hitFlash: false
     };
+    flashMap("hit");
     render();
   }
 
@@ -475,6 +608,7 @@
       elements.battle.classList.add("hidden");
       elements.battleVisual.innerHTML = "";
       elements.battleBox.style.backgroundImage = "";
+      elements.battleBox.classList.remove("hit-shake");
       return;
     }
     const enemy = state.battle.enemy;
@@ -483,30 +617,48 @@
     elements.heroStats.textContent = `${state.hero.name}: HP ${Math.ceil(state.hero.hp)} / ${Math.ceil(state.hero.maxHp)}`;
     elements.enemyStats.textContent = `${enemy.name}: HP ${Math.ceil(enemy.hp)} / ${Math.ceil(enemy.maxHp)}`;
     const enemySprite = assetPath(enemy.spriteAssetId);
+    elements.battleVisual.className = `battle-visual${state.battle.hitFlash ? " hit-flash" : ""}`;
     elements.battleVisual.innerHTML = enemySprite ? `<img src="${encodeURI(enemySprite)}" alt="">` : "";
     const battleBackground = assetPath(state.battle.backgroundAssetId);
     elements.battleBox.style.backgroundImage = battleBackground ? `linear-gradient(rgba(26,30,25,0.72), rgba(26,30,25,0.9)), url("${encodeURI(battleBackground)}")` : "";
+    elements.battleBox.querySelectorAll(".battle-damage").forEach((node) => node.remove());
+    elements.battleBox.classList.remove("hit-shake");
+    if (state.battle.hitFlash) {
+      void elements.battleBox.offsetWidth;
+      elements.battleBox.classList.add("hit-shake");
+    }
+    if (state.battle.damageText) {
+      const damage = document.createElement("div");
+      damage.className = "battle-damage";
+      damage.textContent = state.battle.damageText;
+      elements.battleBox.appendChild(damage);
+    }
     elements.battle.classList.remove("hidden");
+    state.battle.hitFlash = false;
+    state.battle.damageText = "";
   }
 
   function battleAction(action) {
     if (!state.battle) return;
     const enemy = state.battle.enemy;
     if (action === "flee") {
-      state.battle.text = "You backed away and reset the encounter.";
       state.battle = null;
       addLog("Fled from battle.");
+      queueFloat("Fled", "hit");
       render();
       return;
     }
     if (action === "item") {
       state.hero.hp = clamp(state.hero.hp + 8, 0, state.hero.maxHp);
       state.battle.text = "Used a field ration and recovered HP.";
+      state.battle.damageText = "+8";
     } else {
       const bonus = action === "skill" ? 4 : 0;
       const damage = Math.max(1, state.hero.attack + bonus - enemy.defense * 0.5);
       enemy.hp -= damage;
       state.battle.text = `${state.hero.name} dealt ${Math.ceil(damage)} damage.`;
+      state.battle.damageText = `-${Math.ceil(damage)}`;
+      state.battle.hitFlash = true;
     }
     if (enemy.hp <= 0) {
       winBattle();
@@ -519,6 +671,7 @@
       state.hero.hp = Math.ceil(state.hero.maxHp * 0.35);
       state.battle = null;
       addLog("Defeated, then recovered at low HP.");
+      queueFloat("Recovered", "hit");
     }
     render();
   }
@@ -526,8 +679,10 @@
   function winBattle() {
     const event = state.battle.event;
     addLog(`Won against ${state.battle.enemy.name}.`);
+    queueFloat("Victory", "good");
     if (event.quest_id) {
       state.quests[event.quest_id] = "complete";
+      queueFloat(`${quests[event.quest_id] ? quests[event.quest_id].title || event.quest_id : event.quest_id}: complete`, "good");
     }
     if (event.once !== false) {
       state.flags[`event_done:${event.id}`] = true;
@@ -535,14 +690,49 @@
     if (event.reward_item_id) {
       state.inventory[event.reward_item_id] = (state.inventory[event.reward_item_id] || 0) + 1;
       addLog(`Got ${event.reward_item_id}.`);
+      queueFloat(`+ ${event.reward_item_id}`, "good");
     }
     state.battle = null;
     checkCompletion();
     render();
   }
 
+  function finalQuestId() {
+    if (data.campaign && typeof data.campaign.final_quest_id === "string") return data.campaign.final_quest_id;
+    if (typeof data.final_quest_id === "string") return data.final_quest_id;
+    const major = data.campaign && Array.isArray(data.campaign.major_quest_ids) ? data.campaign.major_quest_ids : [];
+    if (major.length) return major[major.length - 1];
+    const questList = Array.isArray(data.quests) ? data.quests : [];
+    return questList.length ? questList[questList.length - 1].id : null;
+  }
+
+  function completionReached() {
+    const finalId = finalQuestId();
+    if (finalId) return state.quests[finalId] === "complete";
+    const questIds = Object.keys(quests);
+    return questIds.length > 0 && questIds.every((id) => state.quests[id] === "complete");
+  }
+
+  function checkCompletion() {
+    if (state.completed || !completionReached()) return;
+    state.completed = true;
+    addLog("Road opened.");
+    queueFloat("Quest Complete", "good");
+  }
+
+  function renderEnding() {
+    if (!state.completed || state.endingDismissed || state.dialogue || state.battle) {
+      elements.ending.classList.add("hidden");
+      return;
+    }
+    const campaign = data.campaign || {};
+    elements.endingTitle.textContent = campaign.ending_title || "Quest Complete";
+    elements.endingText.textContent = campaign.ending_text || "The final objective is complete. The road ahead is open.";
+    elements.ending.classList.remove("hidden");
+  }
+
   function save() {
-    localStorage.setItem("web-rpg-save", JSON.stringify(state));
+    localStorage.setItem("web-rpg-save", JSON.stringify({ ...state, effects: [] }));
     addLog("Saved.");
     render();
   }
@@ -556,7 +746,7 @@
     }
     try {
       const loaded = JSON.parse(raw);
-      Object.assign(state, loaded);
+      Object.assign(state, loaded, { effects: [] });
       checkCompletion();
       addLog("Loaded.");
     } catch (error) {
@@ -566,10 +756,10 @@
   }
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowUp" || event.key.toLowerCase() === "w") move(0, -1);
-    else if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") move(1, 0);
-    else if (event.key === "ArrowDown" || event.key.toLowerCase() === "s") move(0, 1);
-    else if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") move(-1, 0);
+    if (event.key === "ArrowUp" || event.key.toLowerCase() === "w") move(0, -1, "up");
+    else if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") move(1, 0, "right");
+    else if (event.key === "ArrowDown" || event.key.toLowerCase() === "s") move(0, 1, "down");
+    else if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") move(-1, 0, "left");
     else if (event.key === " " || event.key === "Enter") {
       if (state.dialogue) nextDialogue();
       else interact();
@@ -590,6 +780,7 @@
     button.addEventListener("click", () => battleAction(button.dataset.action));
   });
 
+  window.addEventListener("resize", render);
   addLog("Game loaded.");
   render();
 }());
