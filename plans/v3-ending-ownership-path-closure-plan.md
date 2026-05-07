@@ -38,6 +38,52 @@ The compiler should not synthesize endings. If an ending family, terminal
 descendant, or path-to-ending closure is missing, validation should fail and
 route the repair to the responsible design level.
 
+## Layered State Model Interpretation
+
+Each V3 level maintains its own state model. A higher-level ending is defined by
+the higher-level state model and represents the global story result. A lower
+level inherits that higher-level result, then introduces finer local state that
+can refine the same ending into concrete variants.
+
+In short:
+
+```text
+higher level = what finally happened
+lower level  = how it specifically happened
+```
+
+For example:
+
+```text
+coarsest state:
+state.l3.return_result = returned_home
+
+coarsest ending family:
+ending.return_home = the protagonist returns to their country
+
+finer local state:
+state.l1.companion = alone | with_friend | with_rival
+
+finest ending variants:
+ending.return_home.alone
+ending.return_home.with_friend
+ending.return_home.with_rival
+```
+
+All three variants preserve the higher-level ending result, `returned_home`,
+but they differ in local payoff: who returns with the protagonist, what
+relationship was settled, and what cost or reconciliation the route produced.
+
+This interpretation should guide both validation and authoring:
+
+- ending families are determined by higher-level state;
+- ending variants are lower-level refinements produced by additional
+  lower-level state;
+- a variant must preserve the higher-level ending result while adding concrete
+  local payoff;
+- if a lower-level designer needs to change the higher-level result itself,
+  that is not a variant and should be routed as a higher-level repair.
+
 ## Target Semantics
 
 ### Ending Family
@@ -64,6 +110,8 @@ An ending family is declared by a coarsest-level terminal graph node:
 Required meaning:
 
 - `ending_id` identifies the top-level ending family.
+- the ending family is backed by coarsest-level result state or
+  ending-resolution state.
 - Coarsest ending nodes have no outgoing graph edges.
 - Every coarsest ending node must have a unique `ending_id`.
 - Every declared `ending_id` must eventually have at least one finest-level
@@ -100,6 +148,8 @@ Required meaning:
 - `ending_id` points to a coarsest ending family.
 - `ending_variant_id` identifies the concrete descendant version.
 - `variant_of_ending_id`, when present, must equal `ending_id`.
+- the variant preserves the higher-level ending result while refining it with
+  lower-level state.
 - The node's `parent_node_id` chain must eventually reach the coarsest
   terminal node with the same `ending_id`.
 - Lower-level designers may add variants, not new ending families.
@@ -139,17 +189,23 @@ Hard rules should be enforced by the validator where practical:
    ending node.
 2. Every coarsest terminal node must declare a non-empty unique `ending_id`.
 3. Coarsest terminal nodes must not have outgoing edges.
-4. Lower-level terminal nodes that declare `ending_id` must reference an
+4. Any coarsest transition that writes `state.game.ending_id` must target a
+   terminal node with the same `ending_id`; multiple distinct ending values
+   must not target the same coarsest terminal node.
+5. Lower-level terminal nodes that declare `ending_id` must reference an
    `ending_id` declared by the coarsest level.
-5. Lower-level `ending_variant_id` values must be unique within a run.
-6. A lower-level ending variant must be traceable through `parent_node_id` to a
+6. Lower-level `ending_variant_id` values must be unique within a run.
+7. A lower-level ending variant must be traceable through `parent_node_id` to a
    coarsest terminal node with the same `ending_id`.
-7. Every coarsest `ending_id` must have at least one finest-level terminal
+8. Every coarsest `ending_id` must have at least one finest-level terminal
    descendant so the public runtime graph can actually end in that family.
-8. Every public terminal node compiled from V3 must have `ending_id`.
-9. Every node reachable from the public `branch_graph.start_node_id` must be
+9. Every finest-level terminal node must declare or inherit `ending_id`; local
+   arc exits must use a non-terminal handoff/boundary marker if they are not
+   real game endings.
+10. Every public terminal node compiled from V3 must have `ending_id`.
+11. Every node reachable from the public `branch_graph.start_node_id` must be
    able to reach at least one public terminal node.
-10. A reachable public sink node must be terminal.
+12. A reachable public sink node must be terminal.
 
 Soft rules should be enforced through prompts, review, and warnings:
 
@@ -226,8 +282,12 @@ Add a `Ending Ownership` section:
   expand them.
 - Coarsest worker should define `state.game.ending_id` or an equivalent
   ending-resolution state when the run has multiple endings.
+- Coarsest worker should explain which high-level state values determine each
+  ending family.
 - Lower-level workers may add terminal variants only under assigned parent
   ending nodes.
+- Lower-level workers should explain which lower-level state variables refine
+  the parent ending into each variant.
 - Lower-level workers must not create new ending families. If needed, they
   should return a repair note requesting a coarsest-level ending-family update.
 - Ending choices must be behavior/state consequences, not final menu labels.
@@ -240,6 +300,7 @@ Coarsest `LevelStateGraphDesigner` packet template should require:
 - ending family catalog
 - terminal coarsest ending nodes with unique ending_id values
 - ending-resolution state and fallback ordering when multiple endings exist
+- high-level state values that define each ending family
 - ending matrix showing route family, preserved canon, cost, unresolved pressure,
   and required prior state
 ```
@@ -250,6 +311,7 @@ Non-coarsest `LevelStateGraphDesigner` packet template should require:
 - parent ending context slice when assigned parent contains or leads to an ending
 - no new ending family ids
 - optional ending_variant_id expansion under a declared ending_id
+- lower-level state variables that refine the inherited ending result
 - parent_state_settlements that write only immediate parent state
 ```
 
@@ -289,7 +351,11 @@ Inside `validate_design_v3`, after graph nodes/edges are loaded:
 - fail if none;
 - fail if any coarsest terminal node lacks `ending_id`;
 - fail on duplicate `ending_id`;
-- fail if a coarsest terminal node has outgoing edges.
+- fail if a coarsest terminal node has outgoing edges;
+- fail if multiple `state.game.ending_id` values target the same coarsest
+  terminal node;
+- fail if a transition writes `state.game.ending_id` to a terminal node whose
+  `ending_id` differs.
 
 Suggested finding kinds:
 
@@ -298,6 +364,8 @@ missing_coarsest_ending
 missing_ending_id
 duplicate_ending_id
 terminal_has_outgoing_edge
+ambiguous_coarsest_ending_node
+ending_transition_mismatch
 ```
 
 ### Validate Lower-Level Ending Variants
@@ -326,12 +394,15 @@ ending_lineage_mismatch
 ### Validate Finest Descendants
 
 For each coarsest `ending_id`, ensure at least one finest-level terminal node
-descends from it and carries the same `ending_id`.
+descends from it and declares or inherits the same `ending_id`. Also fail any
+finest-level terminal node that lacks ending lineage, because that public sink
+would end outside the coarsest ending catalog.
 
 Suggested finding kind:
 
 ```text
 ending_without_finest_terminal
+terminal_without_ending_lineage
 ```
 
 This is important because only finest-level nodes are compiled into the public

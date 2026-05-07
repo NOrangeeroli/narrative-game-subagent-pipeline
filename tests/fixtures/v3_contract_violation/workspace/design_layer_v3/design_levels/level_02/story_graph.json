@@ -10,7 +10,36 @@
       "node_type": "scene",
       "story_unit_ids": ["story.l2.archive_arc"],
       "is_terminal": false
+    },
+    {
+      "id": "v3.l2.ending.archive_remembered",
+      "title": "The Archive Remembers",
+      "summary": "The oath ledger opens and the archive truth survives as the top-level ending result.",
+      "node_type": "terminal",
+      "story_unit_ids": ["story.l2.archive_arc"],
+      "is_terminal": true,
+      "ending_id": "ending.archive_remembered",
+      "source_derivation": {
+        "kind": "canon",
+        "base_story_unit_ids": ["story.l2.archive_arc"],
+        "canon_function": "Resolve the archive-oath route family with the ledger opened.",
+        "required_prior_state": ["state.l2.truth_pressure"],
+        "divergence_from_source": "",
+        "invented_content_scope": "ending family only"
+      }
     }
   ],
-  "edges": []
+  "edges": [
+    {
+      "id": "edge.v3.l2.archive_to_ending",
+      "from": "v3.l2.archive_arc",
+      "to": "v3.l2.ending.archive_remembered",
+      "label": "Let the archive remember",
+      "condition_type": "outcome",
+      "conditions": [],
+      "effects": [
+        {"state_variable_id": "state.game.ending_id", "operation": "set", "value": "ending.archive_remembered"}
+      ]
+    }
+  ]
 }

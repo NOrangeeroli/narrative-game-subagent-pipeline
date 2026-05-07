@@ -351,6 +351,10 @@
         state[id] = Number(state[id] || 0) - Number(value || 1);
       } else if (operation === "append") {
         state[id] = Array.isArray(state[id]) ? state[id].concat([value]) : [value];
+      } else if (operation === "append_unique") {
+        const existing = Array.isArray(state[id]) ? state[id].slice() : (state[id] == null || state[id] === "" ? [] : [state[id]]);
+        if (!existing.includes(value)) existing.push(value);
+        state[id] = existing;
       } else if (operation === "remove") {
         state[id] = Array.isArray(state[id]) ? state[id].filter((item) => item !== value) : state[id];
       } else {
@@ -377,6 +381,22 @@
     switch (condition.operator) {
       case "!=":
       case "not_equals": return actual !== expected;
+      case "in":
+      case "one_of": return Array.isArray(expected) ? expected.includes(actual) : actual === expected;
+      case "not_in":
+      case "not_one_of": return Array.isArray(expected) ? !expected.includes(actual) : actual !== expected;
+      case "contains":
+      case "includes":
+        if (Array.isArray(actual)) return actual.includes(expected);
+        if (typeof actual === "string") return actual.includes(String(expected));
+        return false;
+      case "not_contains":
+      case "excludes":
+        if (Array.isArray(actual)) return !actual.includes(expected);
+        if (typeof actual === "string") return !actual.includes(String(expected));
+        return true;
+      case "exists": return actual !== undefined && actual !== null && actual !== "";
+      case "not_exists": return actual === undefined || actual === null || actual === "";
       case ">":
       case "greater_than": return Number(actual) > Number(expected);
       case ">=":

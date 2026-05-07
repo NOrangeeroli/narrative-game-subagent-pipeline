@@ -204,6 +204,37 @@ Runtime export boundary:
   shards, so global state and route-family consistency are designed in one
   place.
 
+Layered refinement:
+- each level owns a state model. Higher levels define coarser story results,
+  route functions, pressure, and contracts; lower levels refine those parent
+  results with concrete event-space, local state, route memory, and visible
+  consequences;
+- this applies to every graph node, not only endings. Preserve the assigned
+  `parent_node_id` meaning: higher level says what happened or what role the
+  unit serves; lower level says how it specifically happens and which local
+  route produced it;
+- use local result state and route memory to distinguish child variants that
+  still settle to the same parent result;
+- if this packet needs to change the parent result, parent state model, or
+  parent contract itself, return a repair note for the higher level instead of
+  inventing a contradictory child node.
+
+Ending ownership:
+- ending ownership is the terminal case of layered refinement: higher-level
+  endings are defined by higher-level state, while lower-level variants refine
+  that inherited result with additional lower-level state;
+- for the coarsest enabled level, design every terminal ending family node,
+  unique `ending_id`, high-level state values that determine each family,
+  fallback ordering, and an ending matrix covering route family, preserved
+  canon, cost, unresolved pressure, and required prior state;
+- for non-coarsest levels, do not invent new ending family ids. If this packet
+  expands an inherited ending, keep the parent `ending_id`, add an
+  `ending_variant_id` only for the local refinement, and name the lower-level
+  state variables that make the variant distinct;
+- if a lower-level packet needs to change the higher-level ending result
+  itself, return a repair note for the higher level instead of creating a new
+  `ending_id`.
+
 Packet contents:
 - role card: references/subagents/design-layer-v3/LevelStateGraphDesigner.md
 - scope declaration: <SCOPE>
@@ -227,6 +258,8 @@ Design order:
 4. Build one or more graph nodes for each assigned same-level story unit.
 5. Write contracts that make state-dependent variation visible downstream.
 6. Write parent settlements for the immediate parent level only.
+7. When applicable, bind terminal nodes to declared ending families and local
+   variants without changing the inherited high-level ending result.
 
 For branch-permitted packets, include the mandatory network target block from
 this file. If the packet can affect endings, define explicit ending resolution
