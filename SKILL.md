@@ -73,6 +73,8 @@ workspace/asset-manifest.json
 workspace/generated-assets/
 build/web-vn/
 build/unity-project/
+build/web-adventure/
+build/unity-adventure/
 reports/asset-generation-report.json
 reports/asset-validation.json
 reports/gameplay-validation.json
@@ -217,6 +219,7 @@ Subagents do not write runtime code for these adapters.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
 - `scripts/validate_adventure.py`: validate side-scroller adventure artifacts.
 - `scripts/compile_adventure_manifest.py`: compile adventure artifacts into `workspace/adventure/adventure-manifest.json`.
+- `scripts/export_web_adventure.py`: export a self-contained browser-playable side-scroller adventure.
 - `scripts/export_unity_adventure.py`: generate a Unity 2D side-scroller adventure project.
 - `scripts/simulate_adventure_paths.py`: simulate adventure bindings across public graph paths and ending families.
 - `scripts/capture_unity_adventure.py`: run route simulation and record Unity availability for adventure playtests.
@@ -253,6 +256,7 @@ Controller commands:
 python3 scripts/run_pipeline.py plan-adventure --run-root <run-root>
 python3 scripts/run_pipeline.py compile-adventure --run-root <run-root>
 python3 scripts/run_pipeline.py validate-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py export-adventure-web --run-root <run-root>
 python3 scripts/run_pipeline.py export-adventure-unity --run-root <run-root>
 python3 scripts/run_pipeline.py build-adventure --run-root <run-root> --platform desktop
 python3 scripts/run_pipeline.py test-adventure --run-root <run-root>
@@ -263,12 +267,18 @@ Generated artifacts:
 ```text
 workspace/adventure/
 workspace/assets/adventure/
+build/web-adventure/
 build/unity-adventure/
 reports/adventure-validation.json
 reports/adventure-coverage.json
 reports/adventure-playtest.json
 reports/adventure-export.json
+reports/web-adventure-export-report.json
 ```
+
+Web adventure export is manifest-driven and self-contained. It writes an
+`index.html` side-scroller under `build/web-adventure/` that can be opened
+directly in a browser without Unity or a local server.
 
 Unity adventure export is manifest-driven. It produces a runnable project
 scaffold with 2D movement, camera follow, interactions, mobile controls, and

@@ -357,6 +357,7 @@ Required controller checks:
 ```bash
 python3 scripts/run_pipeline.py compile-adventure --run-root <run-root>
 python3 scripts/run_pipeline.py validate-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py export-adventure-web --run-root <run-root>
 python3 scripts/run_pipeline.py export-adventure-unity --run-root <run-root>
 python3 scripts/run_pipeline.py test-adventure --run-root <run-root>
 ```

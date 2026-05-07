@@ -23,6 +23,7 @@ def write_final_report(run_root: Path) -> Path:
     adventure_coverage = load_optional_json(path_for(run_root, "adventure_coverage_report")) or {"status": "missing"}
     adventure_playtest = load_optional_json(path_for(run_root, "adventure_playtest_report")) or {"status": "missing"}
     adventure_export = load_optional_json(path_for(run_root, "adventure_export_report")) or {"status": "missing"}
+    adventure_web_export = load_optional_json(path_for(run_root, "adventure_web_export_report")) or {"status": "missing"}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
@@ -61,6 +62,7 @@ def write_final_report(run_root: Path) -> Path:
             ],
         }
     web_path = run_root / "build" / "web-vn" / "index.html"
+    web_adventure_path = run_root / "build" / "web-adventure" / "index.html"
     unity_path = run_root / "build" / "unity-project"
     unity_adventure_path = run_root / "build" / "unity-adventure"
     web_asset_root = run_root / "build" / "web-vn" / "assets"
@@ -83,7 +85,7 @@ def write_final_report(run_root: Path) -> Path:
         or adventure_validation.get("status") == "fail"
         or adventure_playtest.get("status") == "fail"
         or asset_validation.get("status") == "fail"
-        or not web_path.exists()
+        or not (web_path.exists() or web_adventure_path.exists())
     ):
         status = "failed"
     payload = {
@@ -95,6 +97,7 @@ def write_final_report(run_root: Path) -> Path:
         "asset_validation_status": asset_validation.get("status"),
         "playable_exports": {
             "web_vn": str(web_path) if web_path.exists() else None,
+            "web_adventure": str(web_adventure_path) if web_adventure_path.exists() else None,
             "unity_project": str(unity_path) if unity_path.exists() and any(unity_path.iterdir()) else None,
             "unity_adventure": str(unity_adventure_path) if unity_adventure_path.exists() and any(unity_adventure_path.iterdir()) else None,
         },
@@ -117,10 +120,12 @@ def write_final_report(run_root: Path) -> Path:
             "coverage_report": STAGE_PATHS["adventure_coverage_report"] if (run_root / STAGE_PATHS["adventure_coverage_report"]).exists() else None,
             "playtest_report": STAGE_PATHS["adventure_playtest_report"] if (run_root / STAGE_PATHS["adventure_playtest_report"]).exists() else None,
             "export_report": STAGE_PATHS["adventure_export_report"] if (run_root / STAGE_PATHS["adventure_export_report"]).exists() else None,
+            "web_export_report": STAGE_PATHS["adventure_web_export_report"] if (run_root / STAGE_PATHS["adventure_web_export_report"]).exists() else None,
             "validation_status": adventure_validation.get("status"),
             "coverage": adventure_coverage,
             "playtest": adventure_playtest,
             "export": adventure_export,
+            "web_export": adventure_web_export,
         },
         "design_layer": design_layer_report,
         "artifacts": {
@@ -131,6 +136,7 @@ def write_final_report(run_root: Path) -> Path:
         "notes": [
             "Subagents author typed payloads only; this controller validates, persists, assembles, and exports.",
             "Web VN export is directly playable in a browser.",
+            "Web adventure export is directly playable in a browser.",
             "Unity export is a generated project; compiling it requires a local Unity Editor.",
             "Unity adventure export is manifest-driven; engine build and capture require a local Unity Editor.",
         ],

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>横版冒险</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="title-block">
+          <div id="game-title" class="game-title"></div>
+          <div id="level-title" class="level-title"></div>
+        </div>
+        <button id="restart" class="icon-button" title="重新开始" aria-label="重新开始">↻</button>
+      </header>
+
+      <section class="playfield" aria-label="横版冒险场景">
+        <canvas id="game-canvas"></canvas>
+        <div id="level-summary" class="level-summary"></div>
+        <div id="action-prompt" class="action-prompt" hidden></div>
+        <section id="ending-panel" class="ending-panel" aria-live="polite" hidden>
+          <div id="ending-kicker" class="ending-kicker"></div>
+          <h1 id="ending-title"></h1>
+          <p id="ending-body"></p>
+          <button id="ending-restart" class="restart-button">重新开始</button>
+        </section>
+      </section>
+
+      <nav class="mobile-controls" aria-label="移动控制">
+        <button data-control="left" title="向左" aria-label="向左">←</button>
+        <button data-control="action" title="互动" aria-label="互动">◆</button>
+        <button data-control="right" title="向右" aria-label="向右">→</button>
+      </nav>
+    </main>
+    <script src="./adventure-data.js"></script>
+    <script src="./runtime.js"></script>
+  </body>
+</html>

@@ -913,8 +913,8 @@ def build_adventure_manifest(run_root: Path) -> Json:
             for node in terminal_nodes(branch_graph)
         ],
         "build_settings": {
-            "engine": "unity",
-            "template": "assets/unity-adventure-template",
+            "engine": "manifest_driven_side_scroller",
+            "templates": ["assets/web-adventure-template", "assets/unity-adventure-template"],
             "supported_platforms": ["desktop", "webgl", "android", "ios"],
         },
     }

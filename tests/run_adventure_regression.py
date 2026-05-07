@@ -146,11 +146,16 @@ def main() -> None:
         run([sys.executable, "scripts/run_pipeline.py", "plan-adventure", "--run-root", str(run_root)])
         run([sys.executable, "scripts/run_pipeline.py", "compile-adventure", "--run-root", str(run_root)])
         run([sys.executable, "scripts/run_pipeline.py", "validate-adventure", "--run-root", str(run_root)])
+        run([sys.executable, "scripts/run_pipeline.py", "export-adventure-web", "--run-root", str(run_root)])
         run([sys.executable, "scripts/run_pipeline.py", "export-adventure-unity", "--run-root", str(run_root)])
         run([sys.executable, "scripts/run_pipeline.py", "test-adventure", "--run-root", str(run_root)])
         manifest = read_json(run_root / "workspace" / "adventure" / "adventure-manifest.json")
         if not manifest.get("unity_runtime", {}).get("interactions"):
             raise SystemExit("Adventure manifest did not include Unity runtime interactions.")
+        if not (run_root / "build" / "web-adventure" / "index.html").exists():
+            raise SystemExit("Web adventure export did not write index.html.")
+        if not (run_root / "build" / "web-adventure" / "adventure-data.js").exists():
+            raise SystemExit("Web adventure export did not write adventure-data.js.")
         if not (run_root / "build" / "unity-adventure" / "Assets" / "StreamingAssets" / "adventure-runtime.json").exists():
             raise SystemExit("Unity adventure export did not write runtime manifest.")
 

@@ -611,6 +611,8 @@ workspace/adventure/bindings/narrative-bindings.json
 workspace/adventure/adventure-manifest.json
 workspace/assets/adventure/asset-direction.json
 workspace/assets/adventure/asset-manifest.json
+build/web-adventure/
+build/unity-adventure/
 ```
 
 The graph remains narrative authority. Adventure artifacts bind that graph into
@@ -627,6 +629,8 @@ bindings, when spatial blockouts make required interactions unreachable, when
 state gates reference undeclared variables, or when terminal ending nodes lack
 ending bindings.
 
-The Unity adventure export consumes `workspace/adventure/adventure-manifest.json`
-and writes a generated project under `build/unity-adventure/`. Runtime code is
-template-owned; subagents author typed JSON artifacts only.
+The Web adventure export consumes `workspace/adventure/adventure-manifest.json`
+and writes a self-contained browser side-scroller under `build/web-adventure/`.
+The Unity adventure export consumes the same manifest and writes a generated
+project under `build/unity-adventure/`. Runtime code is template-owned;
+subagents author typed JSON artifacts only.

@@ -36,6 +36,7 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | adventure state gate is impossible or references undeclared state | `AdventureNarrativeBinder`, then V3 design repair if the public graph state is wrong |
 | terminal ending node has no adventure ending binding or mismatched ending id | `AdventureNarrativeBinder`, then V3 ending repair if public metadata is wrong |
 | missing adventure tileset, sprite, UI, audio, or ending still direction | `AdventureAssetDirector` |
+| Web adventure export/runtime failure | controller/runtime template bug first |
 | Unity adventure export/runtime failure | controller/runtime template bug first |
 
 ## Repair Ticket Shape

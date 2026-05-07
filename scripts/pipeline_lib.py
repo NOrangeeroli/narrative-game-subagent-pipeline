@@ -39,6 +39,7 @@ STAGE_PATHS = {
     "adventure_coverage_report": "reports/adventure-coverage.json",
     "adventure_playtest_report": "reports/adventure-playtest.json",
     "adventure_export_report": "reports/adventure-export.json",
+    "adventure_web_export_report": "reports/web-adventure-export-report.json",
     "story_yarn": "workspace/vn/story.yarn",
     "story_ir": "workspace/vn/story.storyir.json",
     "validation_report": "reports/validation-report.json",
@@ -138,6 +139,7 @@ def ensure_run_layout(run_root: Path) -> None:
         "build/web-vn",
         "build/unity-project",
         "build/unity-adventure",
+        "build/web-adventure",
         "reports",
         "graph",
     ]:

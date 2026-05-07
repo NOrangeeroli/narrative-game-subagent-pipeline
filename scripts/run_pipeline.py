@@ -12,6 +12,7 @@ from pathlib import Path
 from adventure_schema import build_adventure_manifest, plan_default_adventure, simulate_adventure_routes, validate_adventure_artifacts
 from export_unity_project import export_unity_project
 from export_unity_adventure import export_unity_adventure
+from export_web_adventure import export_web_adventure
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
 from design_v3_lib import compile_design_v3, ensure_design_v3_layout
@@ -327,9 +328,19 @@ def export_adventure_unity_run(args: argparse.Namespace) -> None:
     print(json.dumps({"status": "exported", "unity_adventure": str(project)}, ensure_ascii=False, indent=2))
 
 
+def export_adventure_web_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    index = export_web_adventure(run_root)
+    print(json.dumps({"status": "exported", "web_adventure": str(index)}, ensure_ascii=False, indent=2))
+
+
 def build_adventure_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
+    if args.skip_web and args.skip_unity:
+        raise SystemExit("No adventure exporter selected.")
+    if args.skip_unity and args.run_unity_build:
+        raise SystemExit("--run-unity-build requires Unity export.")
     if args.plan:
         plan_default_adventure(run_root)
     validation = validate_adventure_artifacts(run_root, write_report=True)
@@ -337,12 +348,14 @@ def build_adventure_run(args: argparse.Namespace) -> None:
         print(json.dumps(validation.to_json(), ensure_ascii=False, indent=2))
         raise SystemExit(1)
     build_adventure_manifest(run_root)
-    project = export_unity_adventure(run_root)
+    web_path = None if args.skip_web else export_web_adventure(run_root)
+    project = None if args.skip_unity else export_unity_adventure(run_root)
     unity = args.unity_executable or shutil.which("Unity") or shutil.which("unity")
     build_report = {
         "status": "exported",
         "platform": args.platform,
-        "unity_project": str(project),
+        "web_adventure": str(web_path) if web_path else None,
+        "unity_project": str(project) if project else None,
         "unity_executable": unity,
         "unity_build_attempted": False,
         "unity_build_status": "skipped",
@@ -370,6 +383,9 @@ def build_adventure_run(args: argparse.Namespace) -> None:
             build_report["stderr_tail"] = completed.stderr[-4000:]
             if completed.returncode != 0:
                 build_report["status"] = "failed"
+    write_json(run_root / "reports" / "adventure-build-report.json", build_report)
+    final_report = write_final_report(run_root)
+    build_report["final_report"] = str(final_report)
     write_json(run_root / "reports" / "adventure-build-report.json", build_report)
     print(json.dumps(build_report, ensure_ascii=False, indent=2))
     if build_report["status"] == "failed":
@@ -440,10 +456,16 @@ def main() -> None:
     export_adventure_parser.add_argument("--run-root", required=True)
     export_adventure_parser.set_defaults(func=export_adventure_unity_run)
 
+    export_adventure_web_parser = subparsers.add_parser("export-adventure-web")
+    export_adventure_web_parser.add_argument("--run-root", required=True)
+    export_adventure_web_parser.set_defaults(func=export_adventure_web_run)
+
     build_adventure_parser = subparsers.add_parser("build-adventure")
     build_adventure_parser.add_argument("--run-root", required=True)
     build_adventure_parser.add_argument("--platform", choices=["desktop", "webgl", "android", "ios"], default="desktop")
     build_adventure_parser.add_argument("--plan", action="store_true")
+    build_adventure_parser.add_argument("--skip-web", action="store_true")
+    build_adventure_parser.add_argument("--skip-unity", action="store_true")
     build_adventure_parser.add_argument("--run-unity-build", action="store_true")
     build_adventure_parser.add_argument("--unity-executable", default=None)
     build_adventure_parser.set_defaults(func=build_adventure_run)
