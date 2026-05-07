@@ -16,11 +16,11 @@ public sealed class AdventureRuntime : MonoBehaviour
     private readonly Dictionary<string, string> nodeToLevel = new Dictionary<string, string>();
     private readonly List<GameObject> spawned = new List<GameObject>();
     private GameObject player;
+    private RuntimeLevel currentLevel;
     private string currentLevelId;
     private string currentNodeId;
     private string message;
     private bool showHelp = true;
-    private float moveInput;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Bootstrap()
@@ -99,6 +99,7 @@ public sealed class AdventureRuntime : MonoBehaviour
             message = "Missing level: " + levelId;
             return;
         }
+        currentLevel = level;
         message = string.IsNullOrEmpty(level.summary) ? level.title : level.summary;
         BuildLevel(level);
         SpawnInteractions(level.level_id);
@@ -108,19 +109,18 @@ public sealed class AdventureRuntime : MonoBehaviour
     {
         var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
         floor.name = "Floor";
-        floor.transform.position = new Vector3(level.width * 0.5f, -0.5f, 0);
-        floor.transform.localScale = new Vector3(level.width, 1, 1);
+        floor.transform.position = new Vector3(level.width * 0.5f, level.height * 0.5f, 0.35f);
+        floor.transform.localScale = new Vector3(level.width, level.height, 0.1f);
         floor.GetComponent<Renderer>().material.color = new Color(0.24f, 0.33f, 0.24f);
+        Destroy(floor.GetComponent<Collider>());
         spawned.Add(floor);
 
         player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         player.name = "Player";
-        player.transform.position = new Vector3(level.spawn_x, level.spawn_y, 0);
+        player.transform.position = new Vector3(level.spawn_x, Mathf.Clamp(level.spawn_y, 1.0f, Mathf.Max(1.0f, level.height - 1.0f)), -0.1f);
         player.transform.localScale = new Vector3(0.7f, 1.1f, 0.7f);
         player.GetComponent<Renderer>().material.color = new Color(0.78f, 0.32f, 0.28f);
-        var body = player.AddComponent<Rigidbody>();
-        body.constraints = RigidbodyConstraints.FreezeRotation | RigidbodyConstraints.FreezePositionZ;
-        body.useGravity = true;
+        Destroy(player.GetComponent<Collider>());
         spawned.Add(player);
     }
 
@@ -132,11 +132,23 @@ public sealed class AdventureRuntime : MonoBehaviour
             if (interaction == null || interaction.level_id != levelId) continue;
             var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
             obj.name = "Interaction:" + interaction.interaction_id;
-            obj.transform.position = new Vector3(interaction.x, interaction.y, 0);
-            obj.transform.localScale = new Vector3(0.75f, 0.75f, 0.75f);
+            obj.transform.position = new Vector3(interaction.x, interaction.y, -0.2f);
+            obj.transform.localScale = InteractionScale(interaction.kind);
             obj.GetComponent<Renderer>().material.color = ColorForKind(interaction.kind);
+            Destroy(obj.GetComponent<Collider>());
             obj.AddComponent<AdventureInteractionMarker>().interaction = interaction;
             spawned.Add(obj);
+        }
+    }
+
+    private Vector3 InteractionScale(string kind)
+    {
+        switch (kind)
+        {
+            case "talk": return new Vector3(0.55f, 1.0f, 0.55f);
+            case "open": return new Vector3(0.85f, 1.15f, 0.45f);
+            case "tend_garden": return new Vector3(1.05f, 0.55f, 0.45f);
+            default: return new Vector3(0.62f, 0.62f, 0.62f);
         }
     }
 
@@ -154,20 +166,38 @@ public sealed class AdventureRuntime : MonoBehaviour
 
     private void Update()
     {
-        moveInput = Input.GetAxisRaw("Horizontal");
         if (player != null)
         {
-            player.transform.position += new Vector3(moveInput * 4.0f * Time.deltaTime, 0, 0);
+            var move = ReadMovement();
+            if (move.sqrMagnitude > 1f) move.Normalize();
+            var pos = player.transform.position + new Vector3(move.x, move.y, 0) * 4.0f * Time.deltaTime;
+            if (currentLevel != null)
+            {
+                pos.x = Mathf.Clamp(pos.x, 0.6f, Mathf.Max(0.6f, currentLevel.width - 0.6f));
+                pos.y = Mathf.Clamp(pos.y, 1.0f, Mathf.Max(1.0f, currentLevel.height - 0.6f));
+            }
+            player.transform.position = pos;
             if (Camera.main != null)
             {
-                var pos = Camera.main.transform.position;
-                pos.x = Mathf.Lerp(pos.x, player.transform.position.x, Time.deltaTime * 5f);
-                pos.y = 3.0f;
-                pos.z = -10f;
-                Camera.main.transform.position = pos;
+                var cam = Camera.main.transform.position;
+                cam.x = Mathf.Lerp(cam.x, player.transform.position.x, Time.deltaTime * 5f);
+                cam.y = Mathf.Lerp(cam.y, player.transform.position.y + 1.2f, Time.deltaTime * 5f);
+                cam.z = -10f;
+                Camera.main.transform.position = cam;
             }
         }
         if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Space)) ActivateNearestInteraction();
+    }
+
+    private Vector2 ReadMovement()
+    {
+        var x = 0f;
+        var y = 0f;
+        if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow)) x -= 1f;
+        if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) x += 1f;
+        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) y += 1f;
+        if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) y -= 1f;
+        return new Vector2(x, y);
     }
 
     private void ActivateNearestInteraction()
@@ -205,18 +235,28 @@ public sealed class AdventureRuntime : MonoBehaviour
         GUI.Box(new Rect(16, 16, Screen.width - 32, 104), "");
         GUI.Label(new Rect(32, 28, Screen.width - 64, 24), currentLevelId ?? "No level");
         GUI.Label(new Rect(32, 54, Screen.width - 64, 54), message ?? "");
-        if (showHelp) GUI.Label(new Rect(32, 92, Screen.width - 64, 24), "Keyboard: A/D or arrows move, E/Space interact. Mobile: use buttons below.");
+        if (showHelp) GUI.Label(new Rect(32, 92, Screen.width - 64, 24), "Keyboard: WASD/arrows move, E/Space interact. Mobile: use buttons below.");
 
         var buttonY = Screen.height - 88;
-        if (GUI.RepeatButton(new Rect(24, buttonY, 72, 56), "<")) MoveTouch(-1);
-        if (GUI.RepeatButton(new Rect(108, buttonY, 72, 56), ">")) MoveTouch(1);
+        if (GUI.RepeatButton(new Rect(24, buttonY, 64, 56), "<")) MoveTouch(new Vector2(-1, 0));
+        if (GUI.RepeatButton(new Rect(96, buttonY, 64, 56), ">")) MoveTouch(new Vector2(1, 0));
+        if (GUI.RepeatButton(new Rect(168, buttonY - 60, 64, 56), "^")) MoveTouch(new Vector2(0, 1));
+        if (GUI.RepeatButton(new Rect(168, buttonY, 64, 56), "v")) MoveTouch(new Vector2(0, -1));
         if (GUI.Button(new Rect(Screen.width - 124, buttonY, 96, 56), "Action")) ActivateNearestInteraction();
         if (GUI.Button(new Rect(Screen.width - 232, buttonY, 96, 56), "Help")) showHelp = !showHelp;
     }
 
-    private void MoveTouch(float direction)
+    private void MoveTouch(Vector2 direction)
     {
-        if (player != null) player.transform.position += new Vector3(direction * 4.0f * Time.deltaTime, 0, 0);
+        if (player == null) return;
+        if (direction.sqrMagnitude > 1f) direction.Normalize();
+        var pos = player.transform.position + new Vector3(direction.x, direction.y, 0) * 4.0f * Time.deltaTime;
+        if (currentLevel != null)
+        {
+            pos.x = Mathf.Clamp(pos.x, 0.6f, Mathf.Max(0.6f, currentLevel.width - 0.6f));
+            pos.y = Mathf.Clamp(pos.y, 1.0f, Mathf.Max(1.0f, currentLevel.height - 0.6f));
+        }
+        player.transform.position = pos;
     }
 }
 

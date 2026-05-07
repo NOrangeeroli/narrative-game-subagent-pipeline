@@ -14,6 +14,10 @@ Rules:
 
 - Preserve V3 ending families and path closure.
 - Prefer spatial actions over long menu-only branching.
-- Keep movement modest unless the source brief explicitly asks for platforming.
+- Default movement is a 2D walkable scene with WASD/arrow movement on a shallow
+  exploration plane; keep platform jumping optional unless the source brief
+  explicitly asks for platforming.
 - Identify which narrative choices should become inspect, listen, open,
   pickup, talk, tend_garden, or wait/hide interactions.
+- Treat item, prop, door, sound, garden, and NPC targets as distinct spatial
+  interactables, not abstract menu buttons.

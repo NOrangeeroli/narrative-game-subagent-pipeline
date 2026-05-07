@@ -623,6 +623,10 @@ space:
   automatic trigger;
 - state conditions/effects -> copied from public graph semantics;
 - terminal node -> ending binding preserving `ending_id` and variant metadata.
+- level blockout -> `walk_bounds`, camera bounds, optional collision blockers,
+  spawn points, and interaction/NPC/item slots for a WASD exploration plane;
+- interaction target -> concrete `target_kind` such as `item`, `npc`, `door`,
+  `sound`, `garden`, or `prop`.
 
 Validators must fail when public graph nodes or edges are missing adventure
 bindings, when spatial blockouts make required interactions unreachable, when
@@ -630,7 +634,8 @@ state gates reference undeclared variables, or when terminal ending nodes lack
 ending bindings.
 
 The Web adventure export consumes `workspace/adventure/adventure-manifest.json`
-and writes a self-contained browser side-scroller under `build/web-adventure/`.
+and writes a self-contained browser WASD exploration scene under
+`build/web-adventure/`.
 The Unity adventure export consumes the same manifest and writes a generated
 project under `build/unity-adventure/`. Runtime code is template-owned;
 subagents author typed JSON artifacts only.

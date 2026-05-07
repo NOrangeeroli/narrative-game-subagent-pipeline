@@ -154,6 +154,110 @@ def classify_interaction_kind(edge: Json) -> str:
     return "inspect"
 
 
+def target_kind_for_interaction(kind: str) -> str:
+    if kind == "talk":
+        return "npc"
+    if kind == "pick_up":
+        return "item"
+    if kind == "open":
+        return "door"
+    if kind == "tend_garden":
+        return "garden"
+    if kind == "listen":
+        return "sound"
+    return "item"
+
+
+def web_walk_area_for_level(level: Json) -> Json:
+    dimensions = level.get("dimensions") if isinstance(level.get("dimensions"), dict) else {}
+    width = float(dimensions.get("width") or 34)
+    height = float(dimensions.get("height") or 8)
+    walk_bounds = as_list(level.get("walk_bounds"))
+    if walk_bounds and isinstance(walk_bounds[0], dict):
+        bound = walk_bounds[0]
+        return {
+            "x": float(bound.get("x") or 1),
+            "y": float(bound.get("y") or 1),
+            "width": float(bound.get("width") or bound.get("w") or max(1, width - 2)),
+            "height": float(bound.get("height") or bound.get("h") or max(2.4, height - 2)),
+        }
+    surfaces = as_list(level.get("walkable_surfaces"))
+    if surfaces:
+        min_x = math.inf
+        max_x = -math.inf
+        base_y = math.inf
+        for surface in surfaces:
+            if not isinstance(surface, dict):
+                continue
+            start = surface.get("from") if isinstance(surface.get("from"), dict) else {}
+            end = surface.get("to") if isinstance(surface.get("to"), dict) else {}
+            try:
+                x1, y1 = float(start.get("x")), float(start.get("y"))
+                x2, y2 = float(end.get("x")), float(end.get("y"))
+            except (TypeError, ValueError):
+                continue
+            min_x = min(min_x, x1, x2)
+            max_x = max(max_x, x1, x2)
+            base_y = min(base_y, y1, y2)
+        if math.isfinite(min_x) and math.isfinite(max_x):
+            y = base_y if math.isfinite(base_y) else 1
+            return {
+                "x": min_x,
+                "y": y,
+                "width": max(1.0, max_x - min_x),
+                "height": max(2.4, min(5.4, height - y - 0.6)),
+            }
+    return {"x": 1, "y": 1, "width": max(3.0, width - 2), "height": max(2.4, height - 2)}
+
+
+def enrich_interactions_for_scene_runtime(interactions: list[Json], levels: list[Json]) -> list[Json]:
+    level_by_id = {
+        level.get("level_id"): level
+        for level in levels
+        if isinstance(level, dict) and isinstance(level.get("level_id"), str)
+    }
+    grouped_index: dict[tuple[str, str], int] = collections.defaultdict(int)
+    enriched: list[Json] = []
+    for interaction in interactions:
+        if not isinstance(interaction, dict):
+            continue
+        item = json.loads(json.dumps(interaction, ensure_ascii=False))
+        kind = str(item.get("kind") or "inspect")
+        level_id = str(item.get("level_id") or "")
+        source_node_id = str(item.get("source_node_id") or "")
+        group_key = (level_id, source_node_id)
+        index = grouped_index[group_key]
+        grouped_index[group_key] += 1
+        level = level_by_id.get(level_id, {})
+        walk = web_walk_area_for_level(level)
+        position = item.get("position") if isinstance(item.get("position"), dict) else {}
+        try:
+            x = float(position.get("x"))
+        except (TypeError, ValueError):
+            x = walk["x"] + walk["width"] * 0.5
+        try:
+            y = float(position.get("y"))
+        except (TypeError, ValueError):
+            y = walk["y"] + walk["height"] * 0.5
+        if y <= walk["y"] + 0.75 and walk["height"] > 2.2:
+            row_fractions = [0.32, 0.58, 0.78, 0.44]
+            y = walk["y"] + walk["height"] * row_fractions[index % len(row_fractions)]
+            if index:
+                x += (-1 if index % 2 == 0 else 1) * min(3.2, walk["width"] * 0.16)
+        item["position"] = {
+            "x": max(walk["x"] + 0.45, min(walk["x"] + walk["width"] - 0.45, x)),
+            "y": max(walk["y"] + 0.45, min(walk["y"] + walk["height"] - 0.45, y)),
+        }
+        item.setdefault("target_kind", target_kind_for_interaction(kind))
+        item.setdefault("display", {})
+        if isinstance(item["display"], dict):
+            item["display"].setdefault("position", item["position"])
+            item["display"].setdefault("target_kind", item["target_kind"])
+            item["display"].setdefault("sort_y", item["position"]["y"])
+        enriched.append(item)
+    return enriched
+
+
 def read_public_runtime_inputs(run_root: Path) -> tuple[Json, Json, Json]:
     branch_graph = read_json(path_for(run_root, "branch_graph"))
     game_ir = read_json(path_for(run_root, "game_ir"))
@@ -215,11 +319,11 @@ def plan_default_adventure(run_root: Path) -> Json:
         "metadata": {"schema_version": "0.1.0", "generated_by": "AdventureGenrePlanner"},
         "genre_id": GENRE_ID,
         "engine_target": "unity_2d_mobile",
-        "camera_style": "horizontal_follow",
+        "camera_style": "2d_follow",
         "movement_model": {
-            "walk": True,
+            "walk": "four_direction_wasd",
             "run": False,
-            "jump": "limited_contextual",
+            "jump": "not_primary",
             "climb": "contextual",
             "crouch": "contextual",
         },
@@ -235,7 +339,7 @@ def plan_default_adventure(run_root: Path) -> Json:
             "hide_or_wait",
         ],
         "mobile_controls": {
-            "left": "virtual_joystick",
+            "move": "virtual_dpad",
             "primary": "context_action",
             "secondary": "listen_or_observe",
             "pause": "menu",
@@ -269,7 +373,8 @@ def plan_default_adventure(run_root: Path) -> Json:
             edge_id = str(edge["id"])
             interaction_id = interaction_id_for_edge(edge_id)
             kind = classify_interaction_kind(edge)
-            x = min(30, 16 + index * 3)
+            x = min(30, 12 + index * 5)
+            y = 2.4 + (index % 3) * 1.25
             interaction_refs.append(interaction_id)
             interactions.append({
                 "metadata": {"schema_version": "0.1.0", "generated_by": "InteractionQuestDesigner"},
@@ -277,8 +382,14 @@ def plan_default_adventure(run_root: Path) -> Json:
                 "source_node_id": node_id,
                 "level_id": level_id,
                 "kind": kind,
+                "target_kind": target_kind_for_interaction(kind),
                 "label": edge.get("label") or "Continue",
-                "position": {"x": x, "y": 1.5},
+                "position": {"x": x, "y": y},
+                "display": {
+                    "target_kind": target_kind_for_interaction(kind),
+                    "position": {"x": x, "y": y},
+                    "sort_y": y,
+                },
                 "activation": {
                     "input": "secondary" if kind == "listen" else "primary",
                     "radius": 2.0,
@@ -333,11 +444,14 @@ def plan_default_adventure(run_root: Path) -> Json:
             "title": node.get("title") or node_id,
             "summary": source_text,
             "dimensions": {"width": 34, "height": 8, "unit": "tile"},
+            "exploration_model": "2d_walkable_scene",
             "layers": [
                 {"layer_id": "background", "kind": "background_layer", "asset_id": f"bg.{safe_token(region_id)}"},
                 {"layer_id": "ground", "kind": "collision_visual", "asset_id": "tileset.adventure.default"},
             ],
             "collision": [{"shape": "rect", "x": 0, "y": 0, "width": 34, "height": 1}],
+            "walk_bounds": [{"id": "walk.main", "x": 1, "y": 1, "width": 32, "height": 5.4}],
+            "collision_blocks": [],
             "walkable_surfaces": [{"surface_id": "floor.main", "from": {"x": 1, "y": 1}, "to": {"x": 32, "y": 1}}],
             "camera_bounds": [{"x": 0, "y": 0, "width": 34, "height": 8}],
             "spawn_points": [{"spawn_id": "spawn.default", "role": "player", "x": 2, "y": 1.5}],
@@ -881,12 +995,14 @@ def build_adventure_manifest(run_root: Path) -> Json:
     branch_graph, game_ir, shared_state = read_public_runtime_inputs(run_root)
     artifacts = load_adventure_artifacts(run_root)
     adventure_asset_manifest = build_adventure_asset_manifest(run_root, artifacts.get("asset_direction") or {})
+    levels = as_list(artifacts.get("levels"))
+    interactions = enrich_interactions_for_scene_runtime(as_list(artifacts.get("interactions")), levels)
     manifest = {
         "metadata": {"schema_version": "0.1.0", "generated_by": "compile_adventure_manifest.py"},
         "genre_policy": artifacts["genre_policy"] or {},
         "world_map": artifacts["world_map"] or {},
-        "levels": artifacts["levels"],
-        "interactions": artifacts["interactions"],
+        "levels": levels,
+        "interactions": interactions,
         "quests": artifacts["quests"],
         "dialogue": artifacts["dialogue"],
         "bindings": artifacts["bindings"] or {},

@@ -152,6 +152,11 @@ def main() -> None:
         manifest = read_json(run_root / "workspace" / "adventure" / "adventure-manifest.json")
         if not manifest.get("unity_runtime", {}).get("interactions"):
             raise SystemExit("Adventure manifest did not include Unity runtime interactions.")
+        interaction = manifest.get("interactions", [{}])[0]
+        if interaction.get("target_kind") != "door":
+            raise SystemExit("Adventure manifest did not classify open interaction as a door target.")
+        if float(interaction.get("position", {}).get("y", 0)) <= 1.5:
+            raise SystemExit("Adventure manifest did not place interactions inside the 2D walkable scene.")
         if not (run_root / "build" / "web-adventure" / "index.html").exists():
             raise SystemExit("Web adventure export did not write index.html.")
         if not (run_root / "build" / "web-adventure" / "adventure-data.js").exists():

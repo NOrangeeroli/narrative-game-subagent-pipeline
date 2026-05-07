@@ -236,9 +236,9 @@ Final responses should include the run root, final report path, playable export 
 ## Side-Scroller Adventure Workflow
 
 Use `side_scroller_adventure` when the same V3 narrative graph should become a
-2D horizontal mobile adventure instead of a visual novel. The genre adds a
-spatial layer while preserving `branch_graph.json`, `game_ir.json`, shared
-state, and V3 ending path closure.
+2D walkable adventure instead of a visual novel. The genre adds a spatial layer
+with WASD/arrow movement, item/NPC/door/prop interactions, shared state, and V3
+ending path closure while preserving `branch_graph.json` and `game_ir.json`.
 
 Adventure roles live under `references/subagents/adventure/`:
 
@@ -277,8 +277,10 @@ reports/web-adventure-export-report.json
 ```
 
 Web adventure export is manifest-driven and self-contained. It writes an
-`index.html` side-scroller under `build/web-adventure/` that can be opened
-directly in a browser without Unity or a local server.
+`index.html` 2D walkable scene under `build/web-adventure/` that can be opened
+directly in a browser without Unity or a local server. The browser runtime uses
+WASD/arrow movement, click-to-walk, interaction markers, and distinct visual
+treatments for item, NPC, door, sound, and garden targets.
 
 Unity adventure export is manifest-driven. It produces a runnable project
 scaffold with 2D movement, camera follow, interactions, mobile controls, and

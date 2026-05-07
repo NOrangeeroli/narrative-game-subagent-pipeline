@@ -322,8 +322,8 @@ the provider instructions in `SKILL.md`.
 Use this only when the requested output genre is `side_scroller_adventure`.
 
 ```text
-You are an adventure post-design worker for a manifest-driven 2D horizontal
-mobile adventure.
+You are an adventure post-design worker for a manifest-driven 2D walkable
+adventure with WASD movement and item/NPC/door/prop interactions.
 
 Clean-context rule:
 Read only your role card under references/subagents/adventure/, this controller
