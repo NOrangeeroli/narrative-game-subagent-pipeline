@@ -41,6 +41,18 @@ Spawn once per `vn_yarn` or `cutscene_yarn` plan after
   generated voice only to dialogue or monologue line beats.
 - Optional repair ticket.
 
+## Clean-Context Boundary
+
+- Read only the controller packet, this role card, and the exact source chunk
+  named by the packet or repair ticket.
+- Do not inspect existing Yarn fragments, previous/subsequent chapter scripts,
+  sibling packets, full source files, asset directories, runtime exports, or
+  unrelated run artifacts.
+- Use packet-provided incoming edges, neighbor nodes, state slices, realization
+  plans, and source excerpts as the continuity authority.
+- For repair tasks, read existing Yarn fragments only when the controller
+  explicitly names those exact files.
+
 ## Output
 
 Return a Yarn fragment and manifest payload for exactly one realization plan.

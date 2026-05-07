@@ -131,6 +131,15 @@ Read exactly:
 - packet: <run-root>/workspace/controller-packets/postdesign/node_scene_writer_ch<NN>.json
 - source chunk specified inside the packet, and only that source chunk.
 
+Clean-context boundary:
+- Do not inspect existing Yarn fragments, previous/subsequent chapter scripts,
+  sibling packets, full source files, asset directories, runtime exports, or
+  unrelated run artifacts.
+- Use the packet's `incoming_edges`, `neighbor_nodes`, state slices,
+  realization plans, and source chunk as the only continuity context.
+- If this is a repair task, read existing Yarn fragments only when the controller
+  explicitly names those exact files in the prompt.
+
 Output: for every assigned plan in the packet, write:
 - <run-root>/workspace/vn/fragments/<source_node_id>.yarn
 - <run-root>/workspace/vn/fragments/<source_node_id>.manifest.json
