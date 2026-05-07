@@ -215,6 +215,11 @@ Subagents do not write runtime code for these adapters.
 - `scripts/validate_assets.py`: verify generated asset files and portrait transparency.
 - `scripts/export_web_vn.py`: export a self-contained browser-playable VN.
 - `scripts/export_unity_project.py`: generate a minimal Unity project from accepted artifacts.
+- `scripts/validate_adventure.py`: validate side-scroller adventure artifacts.
+- `scripts/compile_adventure_manifest.py`: compile adventure artifacts into `workspace/adventure/adventure-manifest.json`.
+- `scripts/export_unity_adventure.py`: generate a Unity 2D side-scroller adventure project.
+- `scripts/simulate_adventure_paths.py`: simulate adventure bindings across public graph paths and ending families.
+- `scripts/capture_unity_adventure.py`: run route simulation and record Unity availability for adventure playtests.
 - `scripts/write_report.py`: write or refresh `reports/final-report.json`.
 
 Controller reads `references/artifact-contracts.md` only when exact V1 payload shapes are needed and `references/design-layer-v3-contracts.md` only when exact V3 payload shapes are needed for validation, repair, or packet preparation. Controller reads `references/repair-routing.md` only when validation fails. For subagent dispatch, read `references/subagents/README.md`, then only the specific subagent role card and separate prompt template needed for the current spawn. V1 design role cards live under `references/subagents/design-layer/`, with templates in `references/design-layer-prompts.md`; V3 design role cards live under `references/subagents/design-layer-v3/`, with templates in `references/design-layer-v3-prompts.md`.
@@ -224,3 +229,47 @@ Controller reads `references/artifact-contracts.md` only when exact V1 payload s
 A run is complete when `reports/final-report.json` exists, required validation reports pass, and at least one playable export path exists.
 
 Final responses should include the run root, final report path, playable export path, Unity export path if requested, skipped steps, and residual risks such as unrun Unity compilation.
+
+## Side-Scroller Adventure Workflow
+
+Use `side_scroller_adventure` when the same V3 narrative graph should become a
+2D horizontal mobile adventure instead of a visual novel. The genre adds a
+spatial layer while preserving `branch_graph.json`, `game_ir.json`, shared
+state, and V3 ending path closure.
+
+Adventure roles live under `references/subagents/adventure/`:
+
+- `AdventureGenrePlanner`
+- `WorldMapDesigner`
+- `LevelBlockoutDesigner`
+- `InteractionQuestDesigner`
+- `AdventureNarrativeBinder`
+- `AdventureAssetDirector`
+- `AdventureCompilerReviewer`
+
+Controller commands:
+
+```bash
+python3 scripts/run_pipeline.py plan-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py compile-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py validate-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py export-adventure-unity --run-root <run-root>
+python3 scripts/run_pipeline.py build-adventure --run-root <run-root> --platform desktop
+python3 scripts/run_pipeline.py test-adventure --run-root <run-root>
+```
+
+Generated artifacts:
+
+```text
+workspace/adventure/
+workspace/assets/adventure/
+build/unity-adventure/
+reports/adventure-validation.json
+reports/adventure-coverage.json
+reports/adventure-playtest.json
+reports/adventure-export.json
+```
+
+Unity adventure export is manifest-driven. It produces a runnable project
+scaffold with 2D movement, camera follow, interactions, mobile controls, and
+ending route bindings; compiling the player still requires a local Unity Editor.

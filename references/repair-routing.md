@@ -28,6 +28,15 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | Runtime-visible choice button has no SceneWriter-authored Yarn `->` label, uses a generic label, or falls back to designer/plan text | affected `NodeSceneWriter`; if the edge is not in the realization plan, repair V3 compile/export first |
 | Runtime Yarn replaces character interaction or concrete scene action with generic summary, visible placeholders, or table-like prose | affected `NodeSceneWriter` |
 | Runtime Yarn reads like mechanical excerpt stitching, lacks viewpoint orientation, active tension, emotional turn, or transition hook | affected `NodeSceneWriter`, or `NodeRealizationPlanner` if continuity summaries are too thin |
+| missing adventure genre policy | `AdventureGenrePlanner` |
+| missing world region or invalid world start level | `WorldMapDesigner` |
+| missing level binding, spawn, walkable surface, camera bounds, or blocked spatial path | `LevelBlockoutDesigner` |
+| missing interaction binding, invalid interaction completion, or quest step without a trigger | `InteractionQuestDesigner` |
+| public graph edge has no adventure trigger binding | `AdventureNarrativeBinder` |
+| adventure state gate is impossible or references undeclared state | `AdventureNarrativeBinder`, then V3 design repair if the public graph state is wrong |
+| terminal ending node has no adventure ending binding or mismatched ending id | `AdventureNarrativeBinder`, then V3 ending repair if public metadata is wrong |
+| missing adventure tileset, sprite, UI, audio, or ending still direction | `AdventureAssetDirector` |
+| Unity adventure export/runtime failure | controller/runtime template bug first |
 
 ## Repair Ticket Shape
 

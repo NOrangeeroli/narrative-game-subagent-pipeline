@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
+from adventure_schema import build_adventure_manifest, plan_default_adventure, simulate_adventure_routes, validate_adventure_artifacts
 from export_unity_project import export_unity_project
+from export_unity_adventure import export_unity_adventure
 from export_web_vn import export_web_vn
 from generate_assets import generate_assets
 from design_v3_lib import compile_design_v3, ensure_design_v3_layout
@@ -280,6 +284,106 @@ def check_v3_scene_choice_labels_run(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def plan_adventure_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    ensure_run_layout(run_root)
+    validation = validate_all(run_root, write_projections=True)
+    if validation.status == "fail":
+        print(json.dumps(validation.to_json(), ensure_ascii=False, indent=2))
+        raise SystemExit(1)
+    report = plan_default_adventure(run_root)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def compile_adventure_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    ensure_run_layout(run_root)
+    if not args.skip_validation:
+        validation = validate_adventure_artifacts(run_root, write_report=True)
+        if validation.status == "fail":
+            print(json.dumps(validation.to_json(), ensure_ascii=False, indent=2))
+            raise SystemExit(1)
+    manifest = build_adventure_manifest(run_root)
+    print(json.dumps({
+        "status": "compiled",
+        "manifest": "workspace/adventure/adventure-manifest.json",
+        "levels": len(manifest.get("levels", [])),
+        "interactions": len(manifest.get("interactions", [])),
+        "ending_catalog": len(manifest.get("ending_catalog", [])),
+    }, ensure_ascii=False, indent=2))
+
+
+def validate_adventure_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    result = validate_adventure_artifacts(run_root, write_report=True)
+    print(json.dumps(result.to_json(), ensure_ascii=False, indent=2))
+    if result.status == "fail":
+        raise SystemExit(1)
+
+
+def export_adventure_unity_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    project = export_unity_adventure(run_root)
+    print(json.dumps({"status": "exported", "unity_adventure": str(project)}, ensure_ascii=False, indent=2))
+
+
+def build_adventure_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    ensure_run_layout(run_root)
+    if args.plan:
+        plan_default_adventure(run_root)
+    validation = validate_adventure_artifacts(run_root, write_report=True)
+    if validation.status == "fail":
+        print(json.dumps(validation.to_json(), ensure_ascii=False, indent=2))
+        raise SystemExit(1)
+    build_adventure_manifest(run_root)
+    project = export_unity_adventure(run_root)
+    unity = args.unity_executable or shutil.which("Unity") or shutil.which("unity")
+    build_report = {
+        "status": "exported",
+        "platform": args.platform,
+        "unity_project": str(project),
+        "unity_executable": unity,
+        "unity_build_attempted": False,
+        "unity_build_status": "skipped",
+        "notes": [],
+    }
+    if args.run_unity_build:
+        if not unity:
+            build_report["status"] = "failed"
+            build_report["unity_build_status"] = "missing_unity"
+            build_report["notes"].append("Unity executable was not found.")
+        else:
+            command = [
+                unity,
+                "-batchmode",
+                "-quit",
+                "-projectPath",
+                str(project),
+                "-executeMethod",
+                "BuildAutomation.BuildDesktop",
+            ]
+            build_report["unity_build_attempted"] = True
+            completed = subprocess.run(command, text=True, capture_output=True)
+            build_report["unity_build_status"] = "pass" if completed.returncode == 0 else "fail"
+            build_report["stdout_tail"] = completed.stdout[-4000:]
+            build_report["stderr_tail"] = completed.stderr[-4000:]
+            if completed.returncode != 0:
+                build_report["status"] = "failed"
+    write_json(run_root / "reports" / "adventure-build-report.json", build_report)
+    print(json.dumps(build_report, ensure_ascii=False, indent=2))
+    if build_report["status"] == "failed":
+        raise SystemExit(1)
+
+
+def test_adventure_run(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    report = simulate_adventure_routes(run_root)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if report["status"] == "fail":
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -318,6 +422,35 @@ def main() -> None:
     check_v3_choices_parser = subparsers.add_parser("check-v3-scene-choice-labels")
     check_v3_choices_parser.add_argument("--run-root", required=True)
     check_v3_choices_parser.set_defaults(func=check_v3_scene_choice_labels_run)
+
+    plan_adventure_parser = subparsers.add_parser("plan-adventure")
+    plan_adventure_parser.add_argument("--run-root", required=True)
+    plan_adventure_parser.set_defaults(func=plan_adventure_run)
+
+    compile_adventure_parser = subparsers.add_parser("compile-adventure")
+    compile_adventure_parser.add_argument("--run-root", required=True)
+    compile_adventure_parser.add_argument("--skip-validation", action="store_true")
+    compile_adventure_parser.set_defaults(func=compile_adventure_run)
+
+    validate_adventure_parser = subparsers.add_parser("validate-adventure")
+    validate_adventure_parser.add_argument("--run-root", required=True)
+    validate_adventure_parser.set_defaults(func=validate_adventure_run)
+
+    export_adventure_parser = subparsers.add_parser("export-adventure-unity")
+    export_adventure_parser.add_argument("--run-root", required=True)
+    export_adventure_parser.set_defaults(func=export_adventure_unity_run)
+
+    build_adventure_parser = subparsers.add_parser("build-adventure")
+    build_adventure_parser.add_argument("--run-root", required=True)
+    build_adventure_parser.add_argument("--platform", choices=["desktop", "webgl", "android", "ios"], default="desktop")
+    build_adventure_parser.add_argument("--plan", action="store_true")
+    build_adventure_parser.add_argument("--run-unity-build", action="store_true")
+    build_adventure_parser.add_argument("--unity-executable", default=None)
+    build_adventure_parser.set_defaults(func=build_adventure_run)
+
+    test_adventure_parser = subparsers.add_parser("test-adventure")
+    test_adventure_parser.add_argument("--run-root", required=True)
+    test_adventure_parser.set_defaults(func=test_adventure_run)
 
     args = parser.parse_args()
     args.func(args)

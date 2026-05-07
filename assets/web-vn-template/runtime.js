@@ -355,6 +355,10 @@
         const existing = Array.isArray(state[id]) ? state[id].slice() : (state[id] == null || state[id] === "" ? [] : [state[id]]);
         if (!existing.includes(value)) existing.push(value);
         state[id] = existing;
+      } else if (operation === "set_if_unset") {
+        if (state[id] === undefined || state[id] === null || state[id] === "") state[id] = value;
+      } else if (operation === "set_if_unset_or_unformed") {
+        if (state[id] === undefined || state[id] === null || state[id] === "" || state[id] === "unformed" || state[id] === "unstarted") state[id] = value;
       } else if (operation === "remove") {
         state[id] = Array.isArray(state[id]) ? state[id].filter((item) => item !== value) : state[id];
       } else {

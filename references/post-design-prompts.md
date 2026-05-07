@@ -316,3 +316,47 @@ python3 scripts/run_pipeline.py build --run-root <run-root> --skip-assets
 
 For final/runtime visual or audio production, omit `--skip-assets` and follow
 the provider instructions in `SKILL.md`.
+
+## Adventure Post-Design Template
+
+Use this only when the requested output genre is `side_scroller_adventure`.
+
+```text
+You are an adventure post-design worker for a manifest-driven 2D horizontal
+mobile adventure.
+
+Clean-context rule:
+Read only your role card under references/subagents/adventure/, this controller
+packet, and the public graph/state excerpts included in the packet. Do not read
+private V3 artifacts, Unity runtime code, generated exports, or sibling packets.
+
+Inputs:
+- branch_graph node/edge slice
+- game_ir/shared-state slice
+- genre policy or world/level packet as relevant
+- upstream adventure artifacts assigned to this role
+- optional repair ticket
+
+Task:
+Return only the assigned typed JSON artifact. Preserve graph node ids, edge ids,
+state variable ids, ending ids, and source trace. Do not write Unity C#, scene
+files, generated assets, Yarn, or new persistent state variables.
+
+Output locations by role:
+- AdventureGenrePlanner: workspace/adventure/genre-policy.json
+- WorldMapDesigner: workspace/adventure/world-map.json
+- LevelBlockoutDesigner: workspace/adventure/levels/*.level.json
+- InteractionQuestDesigner: workspace/adventure/interactions/*.interaction.json,
+  workspace/adventure/quests/*.quest.json, workspace/adventure/dialogue/*.dialogue.json
+- AdventureNarrativeBinder: workspace/adventure/bindings/narrative-bindings.json
+- AdventureAssetDirector: workspace/assets/adventure/asset-direction.json
+```
+
+Required controller checks:
+
+```bash
+python3 scripts/run_pipeline.py compile-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py validate-adventure --run-root <run-root>
+python3 scripts/run_pipeline.py export-adventure-unity --run-root <run-root>
+python3 scripts/run_pipeline.py test-adventure --run-root <run-root>
+```

@@ -586,3 +586,47 @@ Audio generation details:
 - BGM prompts are instrumental, dialogue-safe, and loop-friendly. `minimax-ppio` uses MiniMax music generation and downloads the returned audio URL.
 - SFX assets are one-shot cues, not loops or ambience beds. The audio generator trims WAV SFX to a short maximum duration and asset validation fails SFX that remain too long.
 - Voice prompts are the exact dialogue or monologue text. `minimax-ppio` uses MiniMax TTS and downloads the returned audio URL. Voice assets are bound to line beats by `export_web_vn.py`; they are not Yarn commands.
+
+## Side-Scroller Adventure Artifacts
+
+`side_scroller_adventure` is a first-class post-design genre. It uses the same
+public narrative contract as VN export:
+
+```text
+workspace/design_layer/branch_graph.json
+workspace/design_layer/game_ir.json
+workspace/state/shared-state.schema.json
+```
+
+Adventure-specific artifacts live under:
+
+```text
+workspace/adventure/genre-policy.json
+workspace/adventure/world-map.json
+workspace/adventure/levels/*.level.json
+workspace/adventure/interactions/*.interaction.json
+workspace/adventure/quests/*.quest.json
+workspace/adventure/dialogue/*.dialogue.json
+workspace/adventure/bindings/narrative-bindings.json
+workspace/adventure/adventure-manifest.json
+workspace/assets/adventure/asset-direction.json
+workspace/assets/adventure/asset-manifest.json
+```
+
+The graph remains narrative authority. Adventure artifacts bind that graph into
+space:
+
+- node binding -> playable level, quest, dialogue, or ending sequence;
+- edge binding -> interaction completion, quest step, dialogue decision, or
+  automatic trigger;
+- state conditions/effects -> copied from public graph semantics;
+- terminal node -> ending binding preserving `ending_id` and variant metadata.
+
+Validators must fail when public graph nodes or edges are missing adventure
+bindings, when spatial blockouts make required interactions unreachable, when
+state gates reference undeclared variables, or when terminal ending nodes lack
+ending bindings.
+
+The Unity adventure export consumes `workspace/adventure/adventure-manifest.json`
+and writes a generated project under `build/unity-adventure/`. Runtime code is
+template-owned; subagents author typed JSON artifacts only.
