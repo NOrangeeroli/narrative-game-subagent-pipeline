@@ -598,6 +598,26 @@ def normalize_effect(effect: Any) -> Json:
     return normalized
 
 
+def effect_state_id(effect: Any) -> str | None:
+    if not isinstance(effect, dict):
+        return None
+    state_id = effect.get("state_variable_id") or effect.get("state")
+    return state_id if isinstance(state_id, str) else None
+
+
+def edge_game_ending_values(edge: Json) -> list[str]:
+    values: list[str] = []
+    for effect in as_list(edge.get("effects")):
+        if effect_state_id(effect) != "state.game.ending_id":
+            continue
+        if not isinstance(effect, dict):
+            continue
+        value = effect.get("value")
+        if isinstance(value, str) and value.strip():
+            values.append(value)
+    return values
+
+
 def state_refs_from_ops(items: Any) -> set[str]:
     refs: set[str] = set()
     for item in as_list(items):
@@ -825,6 +845,21 @@ def validate_design_v3(run_root: Path, write_report: bool = True) -> ValidationR
                 if state_id not in state_defs and not any(state_id in ids for ids in state_ids_by_level.values()):
                     result.add("error", "invalid_reference", f"Graph edge references missing state variable: {state_id}", f"design_levels.{lid}.story_graph.edges[{edge_index}]")
 
+        validate_graph_path_closure(
+            result,
+            nodes=graph_nodes_by_level[level],
+            edges=edges,
+            start_node_id=graph.get("start_node_id"),
+            path=f"design_levels.{lid}.story_graph",
+        )
+
+    validate_ending_ownership(
+        result,
+        levels=levels,
+        graph_nodes_by_level=graph_nodes_by_level,
+        graph_edges_by_level=graph_edges_by_level,
+    )
+
     all_state_ids = set(state_defs)
     all_node_ids = set().union(*graph_node_ids_by_level.values()) if graph_node_ids_by_level else set()
     for level in levels:
@@ -893,6 +928,307 @@ def graph_order(graph: Json) -> dict[str, int]:
     }
 
 
+def is_terminal_node(node: Json) -> bool:
+    return bool(node.get("is_terminal") is True or node.get("node_type") == "terminal")
+
+
+def graph_adjacency(edges: list[Json]) -> dict[str, list[str]]:
+    adjacency: dict[str, list[str]] = {}
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = edge.get("from")
+        target = edge.get("to")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, []).append(target)
+    return adjacency
+
+
+def reachable_nodes(start_node_id: str, adjacency: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    stack = [start_node_id]
+    while stack:
+        node_id = stack.pop()
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        stack.extend(adjacency.get(node_id, []))
+    return seen
+
+
+def nodes_that_can_reach_terminals(nodes: dict[str, Json], adjacency: dict[str, list[str]]) -> set[str]:
+    reverse: dict[str, list[str]] = {}
+    for source, targets in adjacency.items():
+        for target in targets:
+            reverse.setdefault(target, []).append(source)
+    terminals = {node_id for node_id, node in nodes.items() if is_terminal_node(node)}
+    can_reach = set(terminals)
+    stack = list(terminals)
+    while stack:
+        node_id = stack.pop()
+        for predecessor in reverse.get(node_id, []):
+            if predecessor in can_reach:
+                continue
+            can_reach.add(predecessor)
+            stack.append(predecessor)
+    return can_reach
+
+
+def validate_graph_path_closure(
+    result: ValidationResult,
+    *,
+    nodes: dict[str, Json],
+    edges: list[Json],
+    start_node_id: Any,
+    path: str,
+    path_without_terminal_kind: str = "path_without_terminal",
+    nonterminal_sink_kind: str = "nonterminal_sink",
+) -> None:
+    if not isinstance(start_node_id, str) or start_node_id not in nodes:
+        return
+    adjacency = graph_adjacency(edges)
+    reachable = reachable_nodes(start_node_id, adjacency)
+    can_reach_terminal = nodes_that_can_reach_terminals(nodes, adjacency)
+    for node_id in sorted(reachable):
+        node = nodes.get(node_id, {})
+        if node_id not in can_reach_terminal:
+            result.add(
+                "error",
+                path_without_terminal_kind,
+                f"Reachable graph node cannot reach a terminal ending node: {node_id}",
+                path,
+            )
+        if not adjacency.get(node_id) and not is_terminal_node(node):
+            result.add(
+                "error",
+                nonterminal_sink_kind,
+                f"Reachable graph sink must be terminal: {node_id}",
+                path,
+            )
+
+
+def parent_chain_for_node(node_id: str, all_nodes: dict[str, Json]) -> list[str]:
+    chain = [node_id]
+    seen = {node_id}
+    current = all_nodes.get(node_id, {})
+    while isinstance(current, dict):
+        parent = current.get("parent_node_id")
+        if not isinstance(parent, str) or not parent or parent in seen:
+            break
+        chain.append(parent)
+        seen.add(parent)
+        current = all_nodes.get(parent, {})
+    return chain
+
+
+def validate_ending_ownership(
+    result: ValidationResult,
+    *,
+    levels: list[int],
+    graph_nodes_by_level: dict[int, dict[str, Json]],
+    graph_edges_by_level: dict[int, list[Json]],
+) -> None:
+    if not levels:
+        return
+    finest = min(levels)
+    coarsest = max(levels)
+    coarsest_nodes = graph_nodes_by_level.get(coarsest, {})
+    coarsest_edges = graph_edges_by_level.get(coarsest, [])
+    coarsest_terminal_nodes = {
+        node_id: node
+        for node_id, node in coarsest_nodes.items()
+        if is_terminal_node(node)
+    }
+    if not coarsest_terminal_nodes:
+        result.add(
+            "error",
+            "missing_coarsest_ending",
+            "Coarsest V3 story_graph must declare at least one terminal ending node.",
+            f"design_levels.{level_id(coarsest)}.story_graph.nodes",
+        )
+
+    outgoing_by_node = graph_adjacency(coarsest_edges)
+    incoming_game_endings: dict[str, set[str]] = {}
+    for edge in coarsest_edges:
+        if not isinstance(edge, dict):
+            continue
+        target = edge.get("to")
+        if not isinstance(target, str) or target not in coarsest_terminal_nodes:
+            continue
+        values = set(edge_game_ending_values(edge))
+        if values:
+            incoming_game_endings.setdefault(target, set()).update(values)
+
+    ending_ids: dict[str, str] = {}
+    ending_id_to_node: dict[str, str] = {}
+    for node_id, node in coarsest_terminal_nodes.items():
+        edge_ending_values = incoming_game_endings.get(node_id, set())
+        if len(edge_ending_values) > 1:
+            result.add(
+                "error",
+                "ambiguous_coarsest_ending_node",
+                f"Multiple state.game.ending_id values target one coarsest terminal node {node_id}: {sorted(edge_ending_values)}",
+                f"design_levels.{level_id(coarsest)}.story_graph.edges",
+            )
+        ending_id = node.get("ending_id")
+        if not isinstance(ending_id, str) or not ending_id.strip():
+            result.add(
+                "error",
+                "missing_ending_id",
+                f"Coarsest terminal node must declare ending_id: {node_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.nodes.{node_id}.ending_id",
+            )
+            continue
+        if ending_id in ending_id_to_node:
+            result.add(
+                "error",
+                "duplicate_ending_id",
+                f"Duplicate coarsest ending_id: {ending_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.nodes.{node_id}.ending_id",
+            )
+        else:
+            ending_id_to_node[ending_id] = node_id
+        ending_ids[node_id] = ending_id
+        for edge_ending_id in sorted(edge_ending_values):
+            if edge_ending_id != ending_id:
+                result.add(
+                    "error",
+                    "ending_transition_mismatch",
+                    f"Edge writes state.game.ending_id={edge_ending_id} into coarsest ending node {node_id}, but node ending_id is {ending_id}.",
+                    f"design_levels.{level_id(coarsest)}.story_graph.edges",
+                )
+        if outgoing_by_node.get(node_id):
+            result.add(
+                "error",
+                "terminal_has_outgoing_edge",
+                f"Coarsest terminal ending node must not have outgoing edges: {node_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.edges",
+            )
+
+    all_nodes: dict[str, Json] = {}
+    node_level: dict[str, int] = {}
+    for level in levels:
+        for node_id, node in graph_nodes_by_level.get(level, {}).items():
+            all_nodes[node_id] = node
+            node_level[node_id] = level
+
+    variant_ids: dict[str, str] = {}
+    finest_terminal_endings: dict[str, set[str]] = {ending_id: set() for ending_id in ending_id_to_node}
+    for level in levels:
+        if level == coarsest:
+            continue
+        for node_id, node in graph_nodes_by_level.get(level, {}).items():
+            if not is_terminal_node(node):
+                continue
+            ending_id = node.get("ending_id")
+            variant_id = node.get("ending_variant_id")
+            if isinstance(ending_id, str) and ending_id:
+                if ending_id not in ending_id_to_node:
+                    result.add(
+                        "error",
+                        "unknown_ending_id",
+                        f"Lower-level terminal references undeclared coarsest ending_id: {ending_id}",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                    )
+                    continue
+                variant_of = node.get("variant_of_ending_id")
+                if isinstance(variant_of, str) and variant_of and variant_of != ending_id:
+                    result.add(
+                        "error",
+                        "ending_variant_mismatch",
+                        f"variant_of_ending_id must match ending_id on {node_id}: {variant_of} != {ending_id}",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.variant_of_ending_id",
+                    )
+                if isinstance(variant_id, str) and variant_id:
+                    if variant_id in variant_ids:
+                        result.add(
+                            "error",
+                            "duplicate_ending_variant_id",
+                            f"Duplicate ending_variant_id: {variant_id}",
+                            f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_variant_id",
+                        )
+                    else:
+                        variant_ids[variant_id] = node_id
+                chain = parent_chain_for_node(node_id, all_nodes)
+                coarsest_ending_match = any(
+                    ancestor_id in ending_ids and ending_ids[ancestor_id] == ending_id
+                    for ancestor_id in chain
+                )
+                if not coarsest_ending_match:
+                    result.add(
+                        "error",
+                        "ending_lineage_mismatch",
+                        f"Ending variant {node_id} must descend from coarsest ending_id {ending_id}.",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.parent_node_id",
+                    )
+                elif level == finest:
+                    finest_terminal_endings.setdefault(ending_id, set()).add(node_id)
+                continue
+
+            chain = parent_chain_for_node(node_id, all_nodes)
+            inherited_ending_id = next(
+                (
+                    ending_ids[ancestor_id]
+                    for ancestor_id in chain
+                    if ancestor_id in ending_ids
+                ),
+                None,
+            )
+            if inherited_ending_id and level == finest:
+                finest_terminal_endings.setdefault(inherited_ending_id, set()).add(node_id)
+            elif isinstance(variant_id, str) and variant_id:
+                result.add(
+                    "error",
+                    "missing_ending_id",
+                    f"Terminal node with ending_variant_id must also declare ending_id: {node_id}",
+                    f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                )
+            elif level == finest:
+                result.add(
+                    "error",
+                    "terminal_without_ending_lineage",
+                    f"Finest-level terminal node must declare or inherit an ending_id: {node_id}",
+                    f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                )
+
+    for ending_id, node_id in sorted(ending_id_to_node.items()):
+        if not finest_terminal_endings.get(ending_id):
+            result.add(
+                "error",
+                "ending_without_finest_terminal",
+                f"Coarsest ending_id has no finest-level terminal descendant: {ending_id}",
+                f"design_levels.{level_id(finest)}.story_graph.nodes",
+            )
+
+
+def validate_public_v3_graph(branch_graph: Json) -> ValidationResult:
+    result = ValidationResult()
+    nodes = {
+        node["id"]: node
+        for node in as_list(branch_graph.get("nodes"))
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    edges = [edge for edge in as_list(branch_graph.get("edges")) if isinstance(edge, dict)]
+    for node_id, node in nodes.items():
+        if is_terminal_node(node) and not isinstance(node.get("ending_id"), str):
+            result.add(
+                "error",
+                "public_terminal_missing_ending_id",
+                f"V3 public terminal node must carry ending_id: {node_id}",
+                f"branch_graph.nodes.{node_id}.ending_id",
+            )
+    validate_graph_path_closure(
+        result,
+        nodes=nodes,
+        edges=edges,
+        start_node_id=branch_graph.get("start_node_id"),
+        path="branch_graph",
+        path_without_terminal_kind="public_path_without_terminal",
+        nonterminal_sink_kind="public_nonterminal_sink",
+    )
+    return result
+
+
 def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Json]]:
     levels: list[int] = artifacts["levels"]
     design = artifacts["design_levels"]
@@ -921,6 +1257,47 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
 
     def sort_nodes(ids: list[str]) -> list[str]:
         return sorted(ids, key=lambda node_id: (node_level.get(node_id, 999), level_orders.get(node_level.get(node_id, 0), {}).get(node_id, 9999), node_id))
+
+    def ending_metadata_for(node_id: str) -> Json:
+        node = all_nodes.get(node_id, {})
+        chain = parent_chain_for_node(node_id, all_nodes)
+        lineage = list(reversed(chain))
+        inherited_ending_id = next(
+            (
+                str(all_nodes[ancestor_id].get("ending_id"))
+                for ancestor_id in lineage
+                if isinstance(all_nodes.get(ancestor_id, {}).get("ending_id"), str)
+                and str(all_nodes[ancestor_id].get("ending_id")).strip()
+            ),
+            None,
+        )
+        explicit_ending_id = node.get("ending_id")
+        ending_id = explicit_ending_id if isinstance(explicit_ending_id, str) and explicit_ending_id.strip() else inherited_ending_id
+        explicit_variant_id = node.get("ending_variant_id")
+        variant_id = explicit_variant_id if isinstance(explicit_variant_id, str) and explicit_variant_id.strip() else None
+        if not ending_id:
+            return {}
+        should_publish = (
+            is_terminal_node(node)
+            or isinstance(node.get("ending_id"), str)
+            or isinstance(node.get("ending_variant_id"), str)
+            or isinstance(node.get("variant_of_ending_id"), str)
+        )
+        if not should_publish:
+            return {}
+        if not variant_id and is_terminal_node(node):
+            variant_id = f"{ending_id}.{safe_suffix(node_id)}"
+        metadata: Json = {
+            "ending_id": ending_id,
+            "ending_lineage": lineage,
+        }
+        if variant_id:
+            metadata["ending_variant_id"] = variant_id
+            variant_of = node.get("variant_of_ending_id")
+            metadata["variant_of_ending_id"] = (
+                variant_of if isinstance(variant_of, str) and variant_of.strip() else ending_id
+            )
+        return metadata
 
     def entry_for(node_id: str, seen: set[str] | None = None) -> str | None:
         if node_id in public_node_ids:
@@ -983,6 +1360,7 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
         }
         if isinstance(node.get("source_derivation"), dict):
             public_node["source_derivation"] = node["source_derivation"]
+        public_node.update(ending_metadata_for(node_id))
         public_nodes.append(public_node)
 
     public_edges: list[Json] = []
@@ -1353,6 +1731,9 @@ def validate_compiled_public(requirements: Json, synopsis: Json, branch_graph: J
     result.extend(validate_branch_graph(branch_graph))
     result.extend(validate_game_ir(game_ir, branch_graph))
     result.extend(validate_graph_ir_consistency(branch_graph, game_ir))
+    design_layer = game_ir.get("design_layer") if isinstance(game_ir.get("design_layer"), dict) else {}
+    if design_layer.get("version") == "v3":
+        result.extend(validate_public_v3_graph(branch_graph).findings)
     return result
 
 

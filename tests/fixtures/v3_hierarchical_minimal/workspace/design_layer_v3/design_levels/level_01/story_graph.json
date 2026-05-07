@@ -18,8 +18,11 @@
       "summary": "Niko helps Ara turn the key and the oath ledger opens.",
       "node_type": "terminal",
       "story_unit_ids": ["story.l1.ch02"],
-      "parent_node_id": "v3.l2.archive_arc",
-      "is_terminal": true
+      "parent_node_id": "v3.l2.ending.archive_remembered",
+      "is_terminal": true,
+      "ending_id": "ending.archive_remembered",
+      "ending_variant_id": "ending.archive_remembered.key_found",
+      "variant_of_ending_id": "ending.archive_remembered"
     }
   ],
   "edges": [

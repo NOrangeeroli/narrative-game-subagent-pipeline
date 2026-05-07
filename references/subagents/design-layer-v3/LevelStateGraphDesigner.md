@@ -63,6 +63,88 @@ affects the immediate parent level state through `parent_state_settlements`.
 `effects_on_parent_state` may only write state variables owned by the immediate
 parent level.
 
+## Layered Refinement Principle
+
+Every enabled level owns its own state model. Higher levels define coarser story
+results, route functions, pressure, and contracts. Lower levels refine those
+parent results with more concrete event-space, local state, route memory, and
+visible consequences.
+
+This principle applies to all graph nodes, not only endings:
+
+```text
+higher level = what happened / what role this story unit serves
+lower level  = how it specifically happens / which local route produced it
+```
+
+A non-coarsest graph node must preserve the meaning of its `parent_node_id`.
+It may split that parent context into canon, variant, failure, delayed,
+revisit, bridge, or consequence nodes when lower-level state makes those
+versions materially different. It must not silently change the parent result
+itself. If local design evidence shows that the parent result, parent state
+model, or parent contract is wrong, return a repair note for the higher level
+instead of inventing a contradictory child node.
+
+Use lower-level state to explain the refinement:
+
+- local result state records which concrete child result occurred;
+- route memory records how multiple child paths reached the same parent result;
+- access, knowledge, relationship, risk, cost, and interpretation state record
+  why the refined version should change later content;
+- `parent_state_settlements` summarize the child result back into immediate
+  parent state.
+
+## Ending Ownership
+
+Ending ownership is the terminal case of the layered refinement principle.
+Higher-level endings are defined by higher-level state and represent the global
+story result. Lower levels inherit that result and may add finer local state to
+produce concrete variants.
+
+```text
+higher level = what finally happened
+lower level  = how it specifically happened
+```
+
+For example, a coarsest ending family may be:
+
+```text
+ending.return_home = the protagonist returns to their country
+```
+
+A lower level may refine it with local state:
+
+```text
+state.l1.companion = alone | with_friend | with_rival
+```
+
+and produce variants:
+
+```text
+ending.return_home.alone
+ending.return_home.with_friend
+ending.return_home.with_rival
+```
+
+All variants preserve the high-level return-home result. They differ only in
+the lower-level payoff: who returns with the protagonist, what relationship was
+settled, what cost was paid, or what route memory is visible.
+
+The coarsest enabled worker must design every top-level ending family before
+lower levels expand them. It should define terminal coarsest-level ending nodes,
+unique `ending_id` values, ending-resolution state such as
+`state.game.ending_id`, fallback ordering when multiple endings exist, and an
+ending matrix that explains route family, preserved canon, cost, unresolved
+pressure, and required prior state.
+
+Non-coarsest workers may add terminal variants only under an assigned parent
+ending node or parent context that leads to a declared ending. They must keep
+the inherited `ending_id` and may add `ending_variant_id` for the finer version.
+They must explain which lower-level state variables refine the inherited result.
+If a lower-level worker needs to change the higher-level result itself, that is
+not a variant; return a repair note requesting a higher-level ending-family
+update instead of inventing a new `ending_id`.
+
 ## Coarsest-Level Global Design
 
 The coarsest enabled level is the global coordination layer. It must be produced
@@ -72,7 +154,8 @@ must see every coarsest same-level story unit and design:
 - a single connected top-level event space;
 - all global route-family state needed by lower levels;
 - cross-act route memory and convergence expectations;
-- ending-resolution state, if the run has multiple ending families;
+- all terminal ending family nodes, their unique `ending_id` values, and
+  ending-resolution state, if the run has multiple ending families;
 - the top-level contracts that tell child levels which state reads and writes
   must remain meaningful.
 

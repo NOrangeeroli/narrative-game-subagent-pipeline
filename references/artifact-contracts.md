@@ -92,6 +92,21 @@ labels. Branch graph labels are planning/debug fallback data, not the
 authoritative runtime prose. It must not contain Yarn text, Unity paths, image
 generation prompts, or realization details.
 
+Compiled V3 terminal nodes may include ending metadata:
+
+```json
+{
+  "ending_id": "ending.return_home",
+  "ending_variant_id": "ending.return_home.with_friend",
+  "variant_of_ending_id": "ending.return_home",
+  "ending_lineage": ["v3.l2.ending.return_home", "v3.l1.ending.return_home.with_friend"]
+}
+```
+
+These fields are optional for V1. In V3 they identify the coarsest ending family
+and the lower-level terminal variant without requiring downstream agents to read
+private `workspace/design_layer_v3/` artifacts.
+
 ## `game_ir.json`
 
 Required shape:

@@ -12,6 +12,17 @@
       "owner_story_unit_id": "story.l2.archive_arc",
       "readable_by": ["level_02.*", "level_01.*"],
       "writable_by": ["level_02.*", "level_01.*"]
+    },
+    {
+      "id": "state.game.ending_id",
+      "scope": "global",
+      "type": "enum",
+      "initial_value": "ending.unresolved",
+      "allowed_values": ["ending.unresolved", "ending.archive_remembered"],
+      "description": "The top-level ending family selected by the coarsest V3 design.",
+      "owner_story_unit_id": "story.l2.archive_arc",
+      "readable_by": ["level_02.*", "level_01.*"],
+      "writable_by": ["level_02.*"]
     }
   ]
 }

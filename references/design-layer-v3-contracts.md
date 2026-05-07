@@ -334,6 +334,81 @@ primarily name an internal mood, belief, interpretation, preference, or abstract
 stance. Psychological or interpretive consequences belong in edge `effects`,
 state variables, contracts, node summaries, and later visible payoff.
 
+### Ending Ownership
+
+Each enabled design level owns its own state model. A higher-level ending is
+defined by higher-level state and represents the global story result. Lower
+levels inherit that result and may add finer local state to produce concrete
+ending variants.
+
+```text
+higher level = what finally happened
+lower level  = how it specifically happened
+```
+
+The coarsest enabled `LevelStateGraphDesigner` owns every top-level ending
+family. It must create terminal coarsest-level `story_graph.nodes[*]` with
+stable `ending_id` values and ending-resolution state such as
+`state.game.ending_id` or a run-specific equivalent. Coarsest terminal ending
+nodes must not have outgoing edges. If a coarsest transition writes
+`state.game.ending_id`, the target terminal node's `ending_id` must be the same
+value; multiple top-level ending values must not collapse into one terminal
+node.
+
+Lower levels may expand a declared coarsest ending into more specific terminal
+variants. They must not invent a new ending family. A lower-level variant keeps
+the inherited `ending_id` and may add `ending_variant_id`:
+
+```json
+{
+  "id": "v3.l1.ending.return_home.with_friend",
+  "title": "Return Home With A Friend",
+  "summary": "The protagonist returns to their country with a companion made possible by the lower-level route.",
+  "node_type": "terminal",
+  "story_unit_ids": ["story.l1.final_scene"],
+  "parent_node_id": "v3.l2.ending.return_home",
+  "is_terminal": true,
+  "ending_id": "ending.return_home",
+  "ending_variant_id": "ending.return_home.with_friend",
+  "variant_of_ending_id": "ending.return_home",
+  "source_derivation": {
+    "kind": "consequence",
+    "base_story_unit_ids": ["story.l1.final_scene"],
+    "canon_function": "Preserve the high-level return-home result while refining who returns with the protagonist.",
+    "required_prior_state": ["state.l1.companion"],
+    "divergence_from_source": "Companion payoff differs by route memory.",
+    "invented_content_scope": "ending variant payoff"
+  }
+}
+```
+
+Required ending rules:
+
+- every coarsest terminal node must declare a unique `ending_id`;
+- every distinct coarsest `state.game.ending_id` result must target its own
+  matching coarsest ending node;
+- every lower-level `ending_id` must match a coarsest ending family;
+- `variant_of_ending_id`, when present, must equal `ending_id`;
+- lower-level ending variants must trace through `parent_node_id` to a coarsest
+  terminal node with the same `ending_id`;
+- every coarsest `ending_id` must have at least one finest-level terminal
+  descendant;
+- every finest-level terminal node must declare or inherit `ending_id`; use a
+  non-terminal handoff/boundary marker for local arc exits that are not real
+  game endings;
+- every public V3 terminal node compiled into `branch_graph.json` must carry
+  `ending_id`;
+- every public path reachable from `branch_graph.start_node_id` must be able to
+  reach a terminal ending node.
+
+The coarsest design should also provide an ending matrix in
+`adaptation/global_policy.json`, coarsest `contracts.json`, or coarsest
+terminal-node metadata. The matrix should explain the high-level state values
+that determine each ending family, preserved canon, route family, cost,
+unresolved pressure, and emotional resolution. Validators may enforce structural
+ending rules, while reviewers should check whether endings are accumulated
+outcomes rather than final arbitrary menu choices.
+
 ### `contracts.json`
 
 ```json
@@ -418,3 +493,23 @@ Finest-level edge `conditions` and `effects` are copied into public
 `branch_graph.edges[*].conditions` and `branch_graph.edges[*].effects`. Runtime
 exporters should read these public edge fields and must not recover transition
 state by reopening private V3 `design_levels/*/story_graph.json` files.
+
+For V3 public terminal nodes, the compiler preserves ending metadata derived
+from the private hierarchy:
+
+```json
+{
+  "ending_id": "ending.return_home",
+  "ending_variant_id": "ending.return_home.with_friend",
+  "variant_of_ending_id": "ending.return_home",
+  "ending_lineage": [
+    "v3.l2.ending.return_home",
+    "v3.l1.ending.return_home.with_friend"
+  ]
+}
+```
+
+These fields let post-design and runtime export understand the terminal result
+without reopening private V3 artifacts. The compiler may inherit ending metadata
+from an ancestor, but it must not synthesize missing ending nodes or missing
+ending families.

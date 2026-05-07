@@ -152,6 +152,58 @@ def assert_public_edge_effects(run_root: Path) -> None:
         raise SystemExit("Compiled V3 public branch_graph edge did not preserve finest-level edge effects.")
 
 
+def assert_public_ending_metadata_and_closure(run_root: Path) -> None:
+    branch_graph = read_json(run_root / "workspace" / "design_layer" / "branch_graph.json")
+    nodes = {
+        node["id"]: node
+        for node in branch_graph.get("nodes", [])
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    edges = [
+        edge for edge in branch_graph.get("edges", [])
+        if isinstance(edge, dict) and isinstance(edge.get("from"), str) and isinstance(edge.get("to"), str)
+    ]
+    terminal = nodes.get("v3.l1.ch02.resolve")
+    if not isinstance(terminal, dict):
+        raise SystemExit("Compiled V3 public branch_graph is missing terminal v3.l1.ch02.resolve.")
+    if terminal.get("ending_id") != "ending.archive_remembered":
+        raise SystemExit("Compiled V3 public terminal did not preserve ending_id.")
+    if terminal.get("ending_variant_id") != "ending.archive_remembered.key_found":
+        raise SystemExit("Compiled V3 public terminal did not preserve ending_variant_id.")
+    if "v3.l2.ending.archive_remembered" not in terminal.get("ending_lineage", []):
+        raise SystemExit("Compiled V3 public terminal did not preserve ending lineage.")
+
+    adjacency: dict[str, list[str]] = {}
+    reverse: dict[str, list[str]] = {}
+    for edge in edges:
+        adjacency.setdefault(edge["from"], []).append(edge["to"])
+        reverse.setdefault(edge["to"], []).append(edge["from"])
+    terminals = {
+        node_id
+        for node_id, node in nodes.items()
+        if node.get("is_terminal") is True or node.get("node_type") == "terminal"
+    }
+    can_reach_terminal = set(terminals)
+    stack = list(terminals)
+    while stack:
+        node_id = stack.pop()
+        for predecessor in reverse.get(node_id, []):
+            if predecessor not in can_reach_terminal:
+                can_reach_terminal.add(predecessor)
+                stack.append(predecessor)
+    reachable = set()
+    stack = [branch_graph.get("start_node_id")]
+    while stack:
+        node_id = stack.pop()
+        if not isinstance(node_id, str) or node_id in reachable:
+            continue
+        reachable.add(node_id)
+        stack.extend(adjacency.get(node_id, []))
+    missing = sorted(node_id for node_id in reachable if node_id not in can_reach_terminal)
+    if missing:
+        raise SystemExit(f"Compiled V3 public reachable nodes cannot reach terminal endings: {missing}")
+
+
 def assert_exported_choice_effects(run_root: Path) -> None:
     text = (run_root / "build" / "web-vn" / "story-data.js").read_text(encoding="utf-8")
     prefix = "window.NARRATIVE_GAME_STORY = "
@@ -166,6 +218,18 @@ def assert_exported_choice_effects(run_root: Path) -> None:
         raise SystemExit("Exported V3 story is missing runtime choice edge.v3.l1.search_to_open.")
     if not any(effect.get("state_variable_id") == "state.l1.key_found" and effect.get("value") is True for effect in choice.get("effects", []) if isinstance(effect, dict)):
         raise SystemExit("Exported V3 runtime choice did not read effects from public branch_graph.")
+
+
+def assert_web_runtime_state_semantics() -> None:
+    runtime = (ROOT / "assets" / "web-vn-template" / "runtime.js").read_text(encoding="utf-8")
+    required_snippets = [
+        'operation === "append_unique"',
+        'case "in":',
+        'case "contains":',
+    ]
+    for snippet in required_snippets:
+        if snippet not in runtime:
+            raise SystemExit(f"Web VN runtime is missing state semantic support: {snippet}")
 
 
 def write_source_anchor_expansion_fixture(run_root: Path) -> None:
@@ -207,6 +271,8 @@ def write_source_anchor_expansion_fixture(run_root: Path) -> None:
 
 
 def main() -> None:
+    assert_web_runtime_state_semantics()
+
     with tempfile.TemporaryDirectory(prefix="narrative-v3-regression-") as temp:
         temp_root = Path(temp)
         minimal = copy_fixture("v3_hierarchical_minimal", temp_root)
@@ -216,6 +282,7 @@ def main() -> None:
         assert_public_no_private_v3_paths(minimal)
         assert_settlement_compiled(minimal)
         assert_public_edge_effects(minimal)
+        assert_public_ending_metadata_and_closure(minimal)
 
         write_realization_artifacts(minimal)
         shutil.move(minimal / "workspace" / "design_layer_v3" / "design_levels", minimal / "workspace" / "design_layer_v3" / "design_levels.hidden")
@@ -297,6 +364,133 @@ def main() -> None:
         failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(packet_scope)], expect_success=False)
         if "packet_scope_leak" not in failure.stdout:
             raise SystemExit("Expected packet_scope_leak failure when a non-coarsest design packet reads full level artifacts.")
+
+        missing_coarsest_ending = temp_root / "v3_missing_coarsest_ending"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", missing_coarsest_ending)
+        graph_path = missing_coarsest_ending / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        graph["nodes"] = [node for node in graph["nodes"] if node.get("id") != "v3.l2.ending.archive_remembered"]
+        graph["edges"] = []
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(missing_coarsest_ending)], expect_success=False)
+        if "missing_coarsest_ending" not in failure.stdout:
+            raise SystemExit("Expected missing_coarsest_ending failure when top-level ending nodes are absent.")
+
+        missing_ending_id = temp_root / "v3_coarsest_terminal_missing_ending_id"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", missing_ending_id)
+        graph_path = missing_ending_id / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l2.ending.archive_remembered":
+                node.pop("ending_id", None)
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(missing_ending_id)], expect_success=False)
+        if "missing_ending_id" not in failure.stdout:
+            raise SystemExit("Expected missing_ending_id failure when a top-level terminal lacks ending_id.")
+
+        ending_transition_mismatch = temp_root / "v3_ending_transition_mismatch"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", ending_transition_mismatch)
+        graph_path = ending_transition_mismatch / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l2.ending.archive_remembered":
+                node["ending_id"] = "ending.other"
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(ending_transition_mismatch)], expect_success=False)
+        if "ending_transition_mismatch" not in failure.stdout:
+            raise SystemExit("Expected ending_transition_mismatch when state.game.ending_id disagrees with the target ending node.")
+
+        ambiguous_ending_target = temp_root / "v3_ambiguous_coarsest_ending_node"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", ambiguous_ending_target)
+        graph_path = ambiguous_ending_target / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        alternate_edge = dict(graph["edges"][0])
+        alternate_edge["id"] = "edge.v3.l2.archive_to_alternate_ending"
+        alternate_edge["effects"] = [{
+            "state_variable_id": "state.game.ending_id",
+            "operation": "set",
+            "value": "ending.alternate",
+        }]
+        graph["edges"].append(alternate_edge)
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(ambiguous_ending_target)], expect_success=False)
+        if "ambiguous_coarsest_ending_node" not in failure.stdout:
+            raise SystemExit("Expected ambiguous_coarsest_ending_node when multiple ending ids target one top-level ending node.")
+
+        duplicate_ending = temp_root / "v3_duplicate_ending_id"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", duplicate_ending)
+        graph_path = duplicate_ending / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        duplicate_node = dict(next(node for node in graph["nodes"] if node.get("id") == "v3.l2.ending.archive_remembered"))
+        duplicate_node["id"] = "v3.l2.ending.archive_remembered_duplicate"
+        graph["nodes"].append(duplicate_node)
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(duplicate_ending)], expect_success=False)
+        if "duplicate_ending_id" not in failure.stdout:
+            raise SystemExit("Expected duplicate_ending_id failure for repeated coarsest ending ids.")
+
+        lower_invents_ending = temp_root / "v3_lower_invents_ending"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", lower_invents_ending)
+        graph_path = lower_invents_ending / "workspace" / "design_layer_v3" / "design_levels" / "level_01" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l1.ch02.resolve":
+                node["ending_id"] = "ending.invented_by_lower_level"
+                node["variant_of_ending_id"] = "ending.invented_by_lower_level"
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(lower_invents_ending)], expect_success=False)
+        if "unknown_ending_id" not in failure.stdout:
+            raise SystemExit("Expected unknown_ending_id failure when a lower level invents an ending family.")
+
+        lineage_mismatch = temp_root / "v3_ending_lineage_mismatch"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", lineage_mismatch)
+        graph_path = lineage_mismatch / "workspace" / "design_layer_v3" / "design_levels" / "level_02" / "story_graph.json"
+        graph = read_json(graph_path)
+        other_node = dict(next(node for node in graph["nodes"] if node.get("id") == "v3.l2.ending.archive_remembered"))
+        other_node["id"] = "v3.l2.ending.other"
+        other_node["ending_id"] = "ending.other"
+        graph["nodes"].append(other_node)
+        write_json(graph_path, graph)
+        graph_path = lineage_mismatch / "workspace" / "design_layer_v3" / "design_levels" / "level_01" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l1.ch02.resolve":
+                node["ending_id"] = "ending.other"
+                node["variant_of_ending_id"] = "ending.other"
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(lineage_mismatch)], expect_success=False)
+        if "ending_lineage_mismatch" not in failure.stdout:
+            raise SystemExit("Expected ending_lineage_mismatch failure when variant parent chain reaches a different ending.")
+
+        ending_without_finest = temp_root / "v3_ending_without_finest_terminal"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", ending_without_finest)
+        graph_path = ending_without_finest / "workspace" / "design_layer_v3" / "design_levels" / "level_01" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l1.ch02.resolve":
+                node["parent_node_id"] = "v3.l2.archive_arc"
+                node.pop("ending_id", None)
+                node.pop("ending_variant_id", None)
+                node.pop("variant_of_ending_id", None)
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(ending_without_finest)], expect_success=False)
+        if "ending_without_finest_terminal" not in failure.stdout:
+            raise SystemExit("Expected ending_without_finest_terminal failure when top-level ending has no finest terminal descendant.")
+        if "terminal_without_ending_lineage" not in failure.stdout:
+            raise SystemExit("Expected terminal_without_ending_lineage failure when a finest terminal is not under an ending.")
+
+        public_path_without_terminal = temp_root / "v3_public_path_without_terminal"
+        shutil.copytree(FIXTURES / "v3_hierarchical_minimal", public_path_without_terminal)
+        graph_path = public_path_without_terminal / "workspace" / "design_layer_v3" / "design_levels" / "level_01" / "story_graph.json"
+        graph = read_json(graph_path)
+        for node in graph["nodes"]:
+            if node.get("id") == "v3.l1.ch02.resolve":
+                node["node_type"] = "scene"
+                node["is_terminal"] = False
+        write_json(graph_path, graph)
+        failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(public_path_without_terminal)], expect_success=False)
+        if "path_without_terminal" not in failure.stdout and "nonterminal_sink" not in failure.stdout:
+            raise SystemExit("Expected path closure failure when the finest public path has no terminal.")
 
         violation = copy_fixture("v3_contract_violation", temp_root)
         failure = run([sys.executable, "scripts/design_v3_validate.py", "--run-root", str(violation)], expect_success=False)
