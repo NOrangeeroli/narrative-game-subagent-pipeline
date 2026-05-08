@@ -19,6 +19,7 @@ from pipeline_lib import (
     path_for,
     read_json,
     validate_all,
+    validate_advanced_vn_run,
     write_json,
     write_not_implemented_stubs,
     write_text,
@@ -78,7 +79,9 @@ def init_run(args: argparse.Namespace) -> None:
                 "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
                 "Run run_pipeline.py compile-design --design-layer v3.",
                 "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
-                "Use references/post-design-prompts.md when spawning NodeRealizationPlanner and large-run NodeSceneWriter chapter/source-chunk shards.",
+                "Choose a post-design branch. Standard vn uses role cards under references/subagents/post-design/vn/ and writes Yarn fragments; advanced-vn uses references/subagents/post-design/advanced-vn/ and writes typed Scene IR under workspace/advanced-vn/.",
+                "Use references/post-design-prompts.md when spawning branch-specific post-design workers, including NodeRealizationPlanner/NodeSceneWriter for standard vn or AdvancedVNRealizationPlanner/AdvancedVNSceneDesigner for advanced-vn.",
+                "After AdvancedVNSceneDesigner scene files are accepted, run run_pipeline.py validate-advanced-vn --run-root <run-root>.",
                 "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
             ]
             if design_layer == "v3"
@@ -89,6 +92,8 @@ def init_run(args: argparse.Namespace) -> None:
                 "For V1 public runtime semantics, put transition gates/effects on branch_graph.edges[*].conditions/effects; BaseGameIRDesigner must declare the referenced state variables and mirror non-trivial edges in game_ir.event_rules.",
                 "Write accepted payloads to workspace/design_layer/.",
                 "Run validate_artifacts.py --write-projections.",
+                "Choose a post-design branch. Standard vn uses role cards under references/subagents/post-design/vn/ and writes Yarn fragments; advanced-vn uses references/subagents/post-design/advanced-vn/ and writes typed Scene IR under workspace/advanced-vn/.",
+                "After AdvancedVNSceneDesigner scene files are accepted, run run_pipeline.py validate-advanced-vn --run-root <run-root>.",
                 ]
         ),
     })
@@ -280,6 +285,15 @@ def check_v3_scene_choice_labels_run(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def validate_advanced_vn_command(args: argparse.Namespace) -> None:
+    run_root = Path(args.run_root).resolve()
+    ensure_run_layout(run_root)
+    result = validate_advanced_vn_run(run_root, write_reports=True)
+    print(json.dumps(result.to_json(), ensure_ascii=False, indent=2))
+    if result.status == "fail":
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -318,6 +332,10 @@ def main() -> None:
     check_v3_choices_parser = subparsers.add_parser("check-v3-scene-choice-labels")
     check_v3_choices_parser.add_argument("--run-root", required=True)
     check_v3_choices_parser.set_defaults(func=check_v3_scene_choice_labels_run)
+
+    validate_advanced_vn_parser = subparsers.add_parser("validate-advanced-vn")
+    validate_advanced_vn_parser.add_argument("--run-root", required=True)
+    validate_advanced_vn_parser.set_defaults(func=validate_advanced_vn_command)
 
     args = parser.parse_args()
     args.func(args)

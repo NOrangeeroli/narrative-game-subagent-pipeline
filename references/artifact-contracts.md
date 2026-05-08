@@ -297,6 +297,113 @@ intent for ambience, UI prompts, SFX, BGM, or unspoken scene description.
 `generated_by: NodeDialogueWriter` remains accepted as a legacy alias during
 the migration, but new fragments should use `NodeSceneWriter`.
 
+## Advanced VN Scene Plan
+
+Advanced VN post-design is a parallel branch to standard Yarn VN post-design.
+It keeps the public `branch_graph.json` and `game_ir.json` as authority, but
+authors typed scene contracts before runtime export.
+
+Scene plan path:
+
+```text
+workspace/advanced-vn/scene-plan.json
+```
+
+Required shape:
+
+```json
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "AdvancedVNRealizationPlanner", "notes": []},
+  "plans": [
+    {
+      "source_node_id": "node.example",
+      "advanced_unit_id": "advanced_vn.node_example",
+      "scene_function": "investigation",
+      "scene_goal": "The player connects the locked room with the hidden crying.",
+      "allowed_verbs": ["inspect", "listen", "ask"],
+      "required_state_reads": [],
+      "state_writes": [],
+      "required_clues": [],
+      "planned_interactables": [],
+      "planned_micro_activities": [],
+      "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue"}],
+      "entry_variant_notes": [],
+      "terminal_variant_notes": [],
+      "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+    }
+  ]
+}
+```
+
+Every public branch graph node must have exactly one advanced VN scene plan.
+Every public outgoing edge from that node must appear exactly once in
+`outcomes[*].edge_id`.
+
+## Advanced VN Scene IR
+
+For every accepted advanced VN scene plan, write:
+
+```text
+workspace/advanced-vn/scenes/<node-id>.scene.json
+```
+
+Required shape:
+
+```json
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "AdvancedVNSceneDesigner", "notes": []},
+  "source_node_id": "node.example",
+  "advanced_unit_id": "advanced_vn.node_example",
+  "scene_title": "Scene Title",
+  "scene_function": "investigation",
+  "scene_goal": "What the player is actively doing.",
+  "entry_variants": [],
+  "presentation": {
+    "background_id": "bg.example",
+    "bgm_id": "bgm.example",
+    "characters": [],
+    "camera_beats": []
+  },
+  "state_reads": [],
+  "state_writes": [],
+  "beats": [],
+  "interactables": [],
+  "clues": [],
+  "micro_activities": [],
+  "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue", "conditions": [], "state_writes": []}],
+  "terminal_variants": [],
+  "asset_refs": [],
+  "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+}
+```
+
+Scene IR rules:
+
+- `beats` hold ordered visible narration, dialogue, monologue, commands,
+  interaction results, and transition beats.
+- `interactables` hold clickable or selectable people, objects, places, sounds,
+  clues, or focus targets. Each interactable must provide visible feedback or
+  unlock a clue, state change, micro-activity, or outcome.
+- `clues` are discoverable facts that can be carried, combined, presented, or
+  used as route memory.
+- `micro_activities` are VN-native activities such as inspect sequence, clue
+  combination, evidence presentation, dialogue pressure, or limited action
+  choice.
+- `outcomes[*].edge_id` must reference a public branch graph edge from
+  `source_node_id`.
+- State reads/writes may reference only declared shared state variables.
+- Terminal variants resolve from state automatically unless the graph explicitly
+  asks for a visible ending menu.
+
+Validation command:
+
+```bash
+python3 scripts/run_pipeline.py validate-advanced-vn --run-root <run-root>
+```
+
+This writes `reports/advanced-vn-validation.json` and
+`workspace/advanced-vn/scenes/scene-manifest.json`.
+
 ## Gameplay Realization Units
 
 For non-VN playable plans, write exactly one unit artifact:

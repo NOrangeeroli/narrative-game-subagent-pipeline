@@ -1,6 +1,6 @@
 ---
 agent_id: NodeDialogueWriter
-stage: post-design
+stage: post-design/vn
 canonical_output:
   - workspace/vn/fragments/<node-id>.yarn
   - workspace/vn/fragments/<node-id>.manifest.json
@@ -14,7 +14,7 @@ deprecated_by: NodeSceneWriter
 `NodeSceneWriter` instead:
 
 ```text
-references/subagents/post-design/NodeSceneWriter.md
+references/subagents/post-design/vn/NodeSceneWriter.md
 ```
 
 If an existing controller or repair ticket still asks for `NodeDialogueWriter`,

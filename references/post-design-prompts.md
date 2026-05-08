@@ -2,8 +2,11 @@
 
 These templates are controller-facing dispatch scaffolds for clean-context
 post-design subagents. Role behavior still lives in the role cards under
-`references/subagents/post-design/`; these templates define the packet shape,
-run policy, and self-checks the controller should include when spawning workers.
+`references/subagents/post-design/`; standard VN role cards live under
+`references/subagents/post-design/vn/`, and Advanced VN role cards live under
+`references/subagents/post-design/advanced-vn/`. These templates define the
+packet shape, run policy, and self-checks the controller should include when
+spawning workers.
 
 Do not set a subagent `model` override unless the user explicitly asks for one.
 
@@ -24,7 +27,7 @@ Task: generate the canonical post-design realization plan for the current run.
 Write the file directly; do not just describe it.
 
 Read exactly these inputs:
-- role card: references/subagents/post-design/NodeRealizationPlanner.md
+- role card: references/subagents/post-design/vn/NodeRealizationPlanner.md
 - artifact contract: references/artifact-contracts.md#node-realization-plansjson
 - accepted branch graph: <run-root>/workspace/design_layer/branch_graph.json
 - accepted game IR: <run-root>/workspace/design_layer/game_ir.json
@@ -126,7 +129,7 @@ Task: write all assigned <target-language> VN fragments for chapter <NN>.
 Write files directly.
 
 Read exactly:
-- role card: references/subagents/post-design/NodeSceneWriter.md
+- role card: references/subagents/post-design/vn/NodeSceneWriter.md
 - contract: references/artifact-contracts.md#yarn-fragment-pair
 - packet: <run-root>/workspace/controller-packets/postdesign/node_scene_writer_ch<NN>.json
 - source chunk specified inside the packet, and only that source chunk.
@@ -193,7 +196,7 @@ packets, unrelated run files, global contracts, runtime code, assets, or source
 chunks not named in the packet.
 
 Inputs:
-- role card: references/subagents/post-design/NodeSceneWriter.md
+- role card: references/subagents/post-design/vn/NodeSceneWriter.md
 - contract excerpt: references/artifact-contracts.md#yarn-fragment-pair
 - one realization plan
 - branch_graph slice for the source node and neighboring nodes
@@ -212,6 +215,153 @@ acts, not internal moods.
 Output:
 - <run-root>/workspace/vn/fragments/<source_node_id>.yarn
 - <run-root>/workspace/vn/fragments/<source_node_id>.manifest.json
+```
+
+## AdvancedVNRealizationPlanner Full-Run Template
+
+Use this when the selected post-design branch is `advanced-vn`. It is parallel
+to the standard `NodeRealizationPlanner` path and writes typed scene plans
+instead of Yarn realization plans.
+
+```text
+You are AdvancedVNRealizationPlanner for this repo. You are not alone in the
+codebase; do not revert or overwrite unrelated edits. Use the inherited/default
+model.
+
+Work in repo:
+<repo-root>
+
+Task: generate the canonical Advanced VN scene plan for the current run. Write
+the file directly; do not just describe it.
+
+Read exactly these inputs:
+- role card: references/subagents/post-design/advanced-vn/AdvancedVNRealizationPlanner.md
+- artifact contract: references/artifact-contracts.md#advanced-vn-scene-plan
+- accepted branch graph: <run-root>/workspace/design_layer/branch_graph.json
+- accepted game IR: <run-root>/workspace/design_layer/game_ir.json
+- shared state: <run-root>/workspace/state/shared-state.schema.json
+- optional V3 assembled branch graph if needed for provenance only:
+  <run-root>/workspace/design_layer_v3/assembled/branch_graph.json
+
+Do not read stale Yarn fragments or existing Advanced VN scene files. They are
+not source authority.
+
+Run policy:
+- Target branch is `advanced-vn`.
+- Preserve public branch graph topology.
+- Every public branch_graph node must have exactly one scene plan.
+- Every outgoing public edge from each node must appear exactly once in
+  outcomes.
+- Convert abstract branch meanings into concrete VN verbs such as inspect,
+  listen, ask, present_clue, combine_clues, use_item, wait, move_focus,
+  choose_speech, or commit_choice.
+- State reads/writes may only reference variables declared in shared state or
+  game_ir.
+- For branching nodes, planned interactables, clues, micro-activities, or
+  speech/action choices must make the branch playable before the outcome.
+- For multi-incoming nodes, include entry variant handling.
+- For terminal nodes, include terminal variant notes when graph state exposes
+  ending, route-family, or other final-resolution state.
+
+Output:
+- Write only this canonical JSON:
+  <run-root>/workspace/advanced-vn/scene-plan.json
+- Include metadata.generated_by = AdvancedVNRealizationPlanner.
+- Keep JSON valid and parseable.
+
+Before finishing, self-validate:
+- JSON parses.
+- plan count equals branch_graph node count.
+- no missing or duplicate source_node_id.
+- each plan outcome set exactly covers outgoing edges.
+- all state refs exist in shared state.
+
+Return a short feedback summary with counts, changed path, and residual risks.
+```
+
+## AdvancedVNSceneDesigner Single-Node Template
+
+Use when the controller assigns one accepted Advanced VN scene plan. Each
+worker writes exactly one typed Scene IR JSON file.
+
+```text
+You are AdvancedVNSceneDesigner for a self-contained narrative game pipeline.
+You are not alone in the codebase; do not revert or overwrite unrelated edits.
+Use the inherited/default model.
+
+Clean-context rule:
+Read only the role card and this controller packet. Do not inspect sibling
+scene files, Yarn fragments, runtime code, generated exports, source chunks not
+named in the packet, or unrelated run files.
+
+Inputs:
+- role card: references/subagents/post-design/advanced-vn/AdvancedVNSceneDesigner.md
+- contract excerpt: references/artifact-contracts.md#advanced-vn-scene-ir
+- one Advanced VN scene plan
+- branch_graph slice for the source node and neighboring nodes
+- shared state slice
+- optional source excerpt or exact assigned source chunk
+- optional accepted standard VN prose fragment when migrating a run
+- optional asset/character/background inventory selected by the controller
+
+Task:
+Write exactly one Advanced VN Scene IR payload for the assigned source node.
+The file should define visible beats, presentation, interactables, clues,
+micro-activities, state reads/writes, outcome bindings, and terminal variants.
+Do not write Yarn, JavaScript, CSS, engine code, or runtime UI implementation.
+
+Hard requirements:
+- Preserve source_node_id and advanced_unit_id from the scene plan.
+- Every outgoing public edge in the plan must appear exactly once in outcomes.
+- Every interactable must produce visible feedback or unlock a clue, state
+  change, micro-activity, or outcome.
+- Every required clue and micro-activity from the plan must be represented.
+- Every state read must affect visible variation, available interaction,
+  unlocked clue, outcome condition, or terminal variant.
+- State writes may only reference declared state variables.
+- Terminal variants resolve from state unless the plan explicitly requires a
+  visible ending menu.
+- Player-visible text must be <target-language> and must not expose workflow
+  terms such as state, route, branch, source detail, coverage id, or design
+  level.
+
+Output:
+- <run-root>/workspace/advanced-vn/scenes/<source_node_id>.scene.json
+
+Before finishing, self-check:
+- JSON parses.
+- output path matches source_node_id.
+- outcomes cover the planned public edges exactly once.
+- all state refs are declared.
+- every planned interactable, clue, micro-activity, and terminal variant is
+  represented or explicitly justified in metadata.notes.
+
+Return changed path and feedback.
+```
+
+## AdvancedVNCompilerReviewer Template
+
+```text
+You are AdvancedVNCompilerReviewer for a generated narrative game run.
+
+Clean-context rule:
+Read only the AdvancedVNCompilerReviewer role card, the scene plan, selected
+scene IR files, validation reports, and graph/state excerpts provided in this
+controller packet. Do not inspect the run directory or rewrite artifacts.
+
+Inputs:
+- role card: references/subagents/post-design/advanced-vn/AdvancedVNCompilerReviewer.md
+- scene plan: <run-root>/workspace/advanced-vn/scene-plan.json
+- selected scene IR files from <run-root>/workspace/advanced-vn/scenes/
+- validation reports or compiler diagnostics
+- public branch_graph/game_ir/shared-state excerpts when included
+
+Inspect for missing Scene IR, outcome coverage gaps, unreachable outcomes,
+state misuse, fake interactivity, weak feedback, terminal variant collapse, and
+runtime/export risks.
+
+Return findings with severity, artifact path, evidence, and concrete repair
+owner. Do not author replacement content.
 ```
 
 ## Gameplay Realization Writer Templates
@@ -312,6 +462,12 @@ After accepted `NodeSceneWriter` fragments are present, run:
 ```bash
 python3 scripts/run_pipeline.py check-v3-scene-choice-labels --run-root <run-root>
 python3 scripts/run_pipeline.py build --run-root <run-root> --skip-assets
+```
+
+After accepted `AdvancedVNSceneDesigner` Scene IR files are present, run:
+
+```bash
+python3 scripts/run_pipeline.py validate-advanced-vn --run-root <run-root>
 ```
 
 For final/runtime visual or audio production, omit `--skip-assets` and follow

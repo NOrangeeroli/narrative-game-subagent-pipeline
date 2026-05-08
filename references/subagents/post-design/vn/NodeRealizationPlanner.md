@@ -1,6 +1,6 @@
 ---
 agent_id: NodeRealizationPlanner
-stage: post-design
+stage: post-design/vn
 canonical_output: workspace/realization/node-realization-plans.json
 contract: references/artifact-contracts.md#node-realization-plansjson
 ---

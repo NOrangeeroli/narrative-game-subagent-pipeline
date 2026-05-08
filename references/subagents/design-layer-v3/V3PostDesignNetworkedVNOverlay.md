@@ -3,8 +3,11 @@
 Use this overlay only as a Design Layer V3 adapter when spawning shared
 post-design agents. Generic networked VN realization rules, terminal ending
 variants, source-adaptation writing order, and player-visible choice-label
-requirements live in `post-design/NodeRealizationPlanner.md` and
-`post-design/NodeSceneWriter.md`.
+requirements for the standard VN branch live in
+`post-design/vn/NodeRealizationPlanner.md` and
+`post-design/vn/NodeSceneWriter.md`. The Advanced VN branch uses
+`post-design/advanced-vn/AdvancedVNRealizationPlanner.md` and
+`post-design/advanced-vn/AdvancedVNSceneDesigner.md` for typed Scene IR.
 
 This overlay only defines how V3 design artifacts should be interpreted by
 post-design agents.
@@ -26,7 +29,7 @@ post-design agents.
   they are not player-facing text.
 - If a V3 trace implies route memory or a parent-level payoff, the controller
   should pass the relevant settlement, contract, or fact excerpt as context so
-  the shared post-design role card can realize it on public graph nodes.
+  the selected branch role card can realize it on public graph nodes.
 - If the public graph lacks the node, edge, state variable, or settlement needed
   to make a V3 trace playable, request V3 design/compile repair instead of
   inventing topology in post-design.
@@ -54,3 +57,16 @@ When writing from V3 artifacts:
 - if a public edge cannot be labeled from the scene's own visible choice
   structure, request controller repair instead of using V3 designer labels as
   fallback button text.
+
+## Advanced VN V3 Addendum
+
+When writing Advanced VN Scene IR from V3 artifacts:
+
+- write scene plans and scene IR only for public graph nodes selected by the
+  controller;
+- bind every Scene IR outcome to a public graph edge from the source node;
+- treat higher-level V3 state and settlements as context for visible route
+  memory, entry variants, clue availability, micro-activity unlocks, and
+  terminal variants;
+- request V3 design/compile repair if the public graph lacks the state,
+  outcome, or edge needed to make the advanced scene playable.

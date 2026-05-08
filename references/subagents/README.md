@@ -120,13 +120,27 @@ must not skip levels.
 ## Post Design
 
 These agents run after the design layer. They should not reopen requirements or synopsis by default; use the durable downstream context in `game_ir.design_brief`, the graph topology in `branch_graph.json`, and controller-provided slices.
-For networked outputs, `NodeRealizationPlanner` must preserve visible branch
-structure in the realization plan: choice placement, state-gated beat changes,
-route-memory payoff, and entry variants for nodes reached from different routes.
-`NodeSceneWriter` owns runtime-visible Yarn `->` choice labels and terminal
-variant prose. For V3 runs, pass
-`design-layer-v3/V3PostDesignNetworkedVNOverlay.md` only to preserve the
-finest-level public graph boundary and treat L2/L3 artifacts as trace context.
+
+Post-design now has two parallel VN branches:
+
+- Standard `vn`: Yarn-first browser VN realization. Previous VN role cards live
+  under `post-design/vn/`.
+- `advanced-vn`: typed Scene IR realization for richer VN scenes. It writes
+  `workspace/advanced-vn/scene-plan.json` and
+  `workspace/advanced-vn/scenes/*.scene.json` instead of Yarn fragments.
+
+For standard networked VN outputs, `NodeRealizationPlanner` must preserve
+visible branch structure in the realization plan: choice placement,
+state-gated beat changes, route-memory payoff, and entry variants for nodes
+reached from different routes. `NodeSceneWriter` owns runtime-visible Yarn `->`
+choice labels and terminal variant prose. For Advanced VN outputs,
+`AdvancedVNRealizationPlanner` owns node-level playable intent, and
+`AdvancedVNSceneDesigner` owns typed scene semantics: beats, interactables,
+clues, micro-activities, outcomes, and terminal variants.
+
+For V3 runs, pass `design-layer-v3/V3PostDesignNetworkedVNOverlay.md` only to
+preserve the finest-level public graph boundary and treat L2/L3 artifacts as
+trace context.
 Use `references/post-design-prompts.md` for controller-facing dispatch
 templates. For large source-adaptation VN runs, the controller may batch
 multiple `vn_yarn` or `cutscene_yarn` plans into a chapter/source-chunk shard
@@ -139,11 +153,32 @@ This check confirms that every runtime-visible choice button is backed by a
 SceneWriter-authored Yarn `->` label instead of a designer or plan fallback
 label.
 
+### Standard VN Branch
+
 | Agent | Role Card | Prompt Template | Canonical Output |
 | --- | --- | --- | --- |
-| NodeRealizationPlanner | `post-design/NodeRealizationPlanner.md` | `../post-design-prompts.md#noderealizationplanner-full-run-template` | `workspace/realization/node-realization-plans.json` |
-| NodeSceneWriter | `post-design/NodeSceneWriter.md` | `../post-design-prompts.md#nodescenewriter-single-node-template` or `../post-design-prompts.md#nodescenewriter-chapter-shard-template` | `workspace/vn/fragments/<node-id>.yarn` and `.manifest.json` |
-| NodeDialogueWriter | `post-design/NodeDialogueWriter.md` | `../post-design-prompts.md#nodedialoguewriter-legacy-alias-template` | Legacy alias for `NodeSceneWriter` |
+| NodeRealizationPlanner | `post-design/vn/NodeRealizationPlanner.md` | `../post-design-prompts.md#noderealizationplanner-full-run-template` | `workspace/realization/node-realization-plans.json` |
+| NodeSceneWriter | `post-design/vn/NodeSceneWriter.md` | `../post-design-prompts.md#nodescenewriter-single-node-template` or `../post-design-prompts.md#nodescenewriter-chapter-shard-template` | `workspace/vn/fragments/<node-id>.yarn` and `.manifest.json` |
+| NodeDialogueWriter | `post-design/vn/NodeDialogueWriter.md` | `../post-design-prompts.md#nodedialoguewriter-legacy-alias-template` | Legacy alias for `NodeSceneWriter` |
+
+### Advanced VN Branch
+
+| Agent | Role Card | Prompt Template | Canonical Output |
+| --- | --- | --- | --- |
+| AdvancedVNRealizationPlanner | `post-design/advanced-vn/AdvancedVNRealizationPlanner.md` | `../post-design-prompts.md#advancedvnrealizationplanner-full-run-template` | `workspace/advanced-vn/scene-plan.json` |
+| AdvancedVNSceneDesigner | `post-design/advanced-vn/AdvancedVNSceneDesigner.md` | `../post-design-prompts.md#advancedvnscenedesigner-single-node-template` | `workspace/advanced-vn/scenes/<node-id>.scene.json` |
+| AdvancedVNCompilerReviewer | `post-design/advanced-vn/AdvancedVNCompilerReviewer.md` | `../post-design-prompts.md#advancedvncompilerreviewer-template` | Review findings only |
+
+After Advanced VN scene files are accepted, the controller should run
+`scripts/run_pipeline.py validate-advanced-vn --run-root <run-root>`. This
+check confirms that the scene plan covers every public node, Scene IR files
+exist for planned nodes, outcomes cover public edges, and state refs are
+declared.
+
+### Shared Post-Design Roles
+
+| Agent | Role Card | Prompt Template | Canonical Output |
+| --- | --- | --- | --- |
 | BattleRealizationWriter | `post-design/BattleRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/battles/<node-id>.battle.json` |
 | InteractionRealizationWriter | `post-design/InteractionRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/interactions/<node-id>.interaction.json` |
 | PuzzleRealizationWriter | `post-design/PuzzleRealizationWriter.md` | `../post-design-prompts.md#gameplay-realization-writer-templates` | `workspace/realization/puzzles/<node-id>.puzzle.json` |

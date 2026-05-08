@@ -27,6 +27,9 @@ STAGE_PATHS = {
     "realization_plans": "workspace/realization/node-realization-plans.json",
     "realization_manifest": "workspace/realization/realization-manifest.json",
     "gameplay_manifest": "workspace/realization/gameplay-manifest.json",
+    "advanced_vn_scene_plan": "workspace/advanced-vn/scene-plan.json",
+    "advanced_vn_scene_manifest": "workspace/advanced-vn/scenes/scene-manifest.json",
+    "advanced_vn_validation_report": "reports/advanced-vn-validation.json",
     "asset_direction": "workspace/asset-direction.json",
     "asset_manifest": "workspace/asset-manifest.json",
     "story_yarn": "workspace/vn/story.yarn",
@@ -115,6 +118,8 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/realization/interactions",
         "workspace/realization/puzzles",
         "workspace/realization/explorations",
+        "workspace/advanced-vn",
+        "workspace/advanced-vn/scenes",
         "workspace/vn/fragments",
         "workspace/runtime",
         "workspace/generated-assets",
@@ -445,6 +450,226 @@ def validate_realization_plans(plans: Json | None, branch_graph: Json | None, sh
     return findings
 
 
+def _graph_edges_by_source(branch_graph: Json | None) -> dict[str, set[str]]:
+    edges_by_source: dict[str, set[str]] = {}
+    for edge in as_list((branch_graph or {}).get("edges")):
+        if isinstance(edge, dict) and isinstance(edge.get("from"), str) and isinstance(edge.get("id"), str):
+            edges_by_source.setdefault(edge["from"], set()).add(edge["id"])
+    return edges_by_source
+
+
+def _declared_state_ids(shared_state: Json | None) -> set[str]:
+    return {
+        var.get("id")
+        for var in as_list((shared_state or {}).get("variables"))
+        if isinstance(var, dict) and isinstance(var.get("id"), str)
+    }
+
+
+def _state_ref_from_op(op: Any) -> str | None:
+    if isinstance(op, str):
+        return op
+    if isinstance(op, dict):
+        ref = op.get("state_variable_id") or op.get("state_id")
+        return ref if isinstance(ref, str) else None
+    return None
+
+
+def _validate_state_ref_list(findings: list[Finding], ops: list[Any], state_ids: set[str], path: str) -> None:
+    for index, op in enumerate(ops):
+        ref = _state_ref_from_op(op)
+        if ref and ref not in state_ids:
+            findings.append(Finding("error", "state_reference", f"State operation references missing variable: {ref}", f"{path}[{index}]"))
+
+
+def _ids_from_items(items: list[Any]) -> set[str]:
+    ids: set[str] = set()
+    for item in items:
+        if isinstance(item, str) and item:
+            ids.add(item)
+        elif isinstance(item, dict):
+            for key in ("id", "clue_id", "interactable_id", "activity_id"):
+                value = item.get(key)
+                if isinstance(value, str) and value:
+                    ids.add(value)
+                    break
+    return ids
+
+
+def _outcome_edges(outcomes: list[Any]) -> set[str]:
+    return {
+        outcome.get("edge_id")
+        for outcome in outcomes
+        if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)
+    }
+
+
+def validate_advanced_vn_scene_plan(scene_plan: Json | None, branch_graph: Json | None, shared_state: Json | None) -> list[Finding]:
+    findings: list[Finding] = []
+    if scene_plan is None:
+        return findings
+    plans = as_list(scene_plan.get("plans"))
+    if not plans:
+        findings.append(Finding("error", "schema", "Advanced VN scene plan must include plans.", "advanced-vn.scene-plan.plans"))
+        return findings
+    node_ids = {node.get("id") for node in as_list((branch_graph or {}).get("nodes")) if isinstance(node, dict)}
+    edges_by_source = _graph_edges_by_source(branch_graph)
+    state_ids = _declared_state_ids(shared_state)
+    seen_nodes: set[str] = set()
+    seen_units: set[str] = set()
+    for index, plan in enumerate(plans):
+        path = f"advanced-vn.scene-plan.plans[{index}]"
+        if not isinstance(plan, dict):
+            findings.append(Finding("error", "schema", "Scene plan entries must be objects.", path))
+            continue
+        source_node_id = plan.get("source_node_id")
+        unit_id = plan.get("advanced_unit_id")
+        if source_node_id not in node_ids:
+            findings.append(Finding("error", "invalid_reference", f"Scene plan references missing source node: {source_node_id}", f"{path}.source_node_id"))
+        if isinstance(source_node_id, str):
+            if source_node_id in seen_nodes:
+                findings.append(Finding("error", "duplicate_plan", f"Duplicate Advanced VN plan for source node: {source_node_id}", f"{path}.source_node_id"))
+            seen_nodes.add(source_node_id)
+        if not isinstance(unit_id, str) or not unit_id:
+            findings.append(Finding("error", "schema", "Scene plan needs advanced_unit_id.", f"{path}.advanced_unit_id"))
+        elif unit_id in seen_units:
+            findings.append(Finding("error", "duplicate_unit", f"Duplicate Advanced VN unit id: {unit_id}", f"{path}.advanced_unit_id"))
+        else:
+            seen_units.add(unit_id)
+        if not object_has_text(plan, "scene_goal"):
+            findings.append(Finding("warning", "thin_scene_goal", "Scene plan should name the player-facing scene goal.", f"{path}.scene_goal"))
+        outcomes = as_list(plan.get("outcomes"))
+        expected_edges = edges_by_source.get(str(source_node_id), set())
+        actual_edges = _outcome_edges(outcomes)
+        missing = expected_edges - actual_edges
+        extra = actual_edges - expected_edges
+        if missing:
+            findings.append(Finding("error", "outcome_binding", f"Scene plan missing outcomes for edges: {sorted(missing)}", f"{path}.outcomes"))
+        if extra:
+            findings.append(Finding("error", "outcome_binding", f"Scene plan has outcomes for non-outgoing edges: {sorted(extra)}", f"{path}.outcomes"))
+        outcome_edge_count = len([outcome for outcome in outcomes if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)])
+        if len(actual_edges) != outcome_edge_count:
+            findings.append(Finding("error", "duplicate_outcome_edge", "Scene plan has duplicate or malformed outcome edge bindings.", f"{path}.outcomes"))
+        _validate_state_ref_list(findings, as_list(plan.get("required_state_reads")), state_ids, f"{path}.required_state_reads")
+        _validate_state_ref_list(findings, as_list(plan.get("state_writes")), state_ids, f"{path}.state_writes")
+    missing_nodes = node_ids - seen_nodes
+    if missing_nodes:
+        findings.append(Finding("error", "missing_plan", f"Missing Advanced VN scene plans for nodes: {sorted(missing_nodes)}"))
+    return findings
+
+
+def advanced_vn_scene_artifact_path(run_root: Path, source_node_id: str) -> Path:
+    safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_node_id).strip("_") or "node.unknown"
+    return run_root / "workspace" / "advanced-vn" / "scenes" / f"{safe_node}.scene.json"
+
+
+def validate_advanced_vn_scene_ir(
+    scene: Json | None,
+    plan: Json,
+    branch_graph: Json | None,
+    shared_state: Json | None,
+    artifact_path: str,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    source_node_id = str(plan.get("source_node_id"))
+    if scene is None:
+        findings.append(Finding("error", "missing_scene_ir", f"Missing Advanced VN Scene IR for {source_node_id}.", artifact_path))
+        return findings
+    if not isinstance(scene, dict):
+        findings.append(Finding("error", "schema", "Advanced VN Scene IR must be a JSON object.", artifact_path))
+        return findings
+    if scene.get("source_node_id") != source_node_id:
+        findings.append(Finding("error", "source_node_id", f"Scene IR source_node_id must be {source_node_id}.", f"{artifact_path}.source_node_id"))
+    if scene.get("advanced_unit_id") != plan.get("advanced_unit_id"):
+        findings.append(Finding("error", "advanced_unit_id", f"Scene IR advanced_unit_id must be {plan.get('advanced_unit_id')}.", f"{artifact_path}.advanced_unit_id"))
+    if not object_has_text(scene, "scene_goal"):
+        findings.append(Finding("warning", "thin_scene_goal", "Scene IR should name what the player is actively doing.", f"{artifact_path}.scene_goal"))
+    if not as_list(scene.get("beats")):
+        findings.append(Finding("warning", "missing_beats", "Scene IR should include visible beats.", f"{artifact_path}.beats"))
+
+    expected_edges = _outcome_edges(as_list(plan.get("outcomes")))
+    actual_edges = _outcome_edges(as_list(scene.get("outcomes")))
+    missing = expected_edges - actual_edges
+    extra = actual_edges - expected_edges
+    if missing:
+        findings.append(Finding("error", "outcome_binding", f"Scene IR missing outcomes for planned edges: {sorted(missing)}", f"{artifact_path}.outcomes"))
+    if extra:
+        findings.append(Finding("error", "outcome_binding", f"Scene IR has outcomes outside the plan: {sorted(extra)}", f"{artifact_path}.outcomes"))
+    outcome_edge_count = len([outcome for outcome in as_list(scene.get("outcomes")) if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)])
+    if len(actual_edges) != outcome_edge_count:
+        findings.append(Finding("error", "duplicate_outcome_edge", "Scene IR has duplicate or malformed outcome edge bindings.", f"{artifact_path}.outcomes"))
+
+    state_ids = _declared_state_ids(shared_state)
+    _validate_state_ref_list(findings, as_list(scene.get("state_reads")), state_ids, f"{artifact_path}.state_reads")
+    _validate_state_ref_list(findings, as_list(scene.get("state_writes")), state_ids, f"{artifact_path}.state_writes")
+    for index, outcome in enumerate(as_list(scene.get("outcomes"))):
+        if isinstance(outcome, dict):
+            _validate_state_ref_list(findings, as_list(outcome.get("conditions")), state_ids, f"{artifact_path}.outcomes[{index}].conditions")
+            _validate_state_ref_list(findings, as_list(outcome.get("state_writes")), state_ids, f"{artifact_path}.outcomes[{index}].state_writes")
+    for index, variant in enumerate(as_list(scene.get("terminal_variants"))):
+        if isinstance(variant, dict):
+            _validate_state_ref_list(findings, as_list(variant.get("conditions")), state_ids, f"{artifact_path}.terminal_variants[{index}].conditions")
+            _validate_state_ref_list(findings, as_list(variant.get("state_writes")), state_ids, f"{artifact_path}.terminal_variants[{index}].state_writes")
+
+    plan_interactables = _ids_from_items(as_list(plan.get("planned_interactables")))
+    scene_interactables = _ids_from_items(as_list(scene.get("interactables")))
+    missing_interactables = plan_interactables - scene_interactables
+    if missing_interactables:
+        findings.append(Finding("error", "missing_interactable", f"Scene IR missing planned interactables: {sorted(missing_interactables)}", f"{artifact_path}.interactables"))
+    plan_clues = _ids_from_items(as_list(plan.get("required_clues")))
+    scene_clues = _ids_from_items(as_list(scene.get("clues")))
+    missing_clues = plan_clues - scene_clues
+    if missing_clues:
+        findings.append(Finding("error", "missing_clue", f"Scene IR missing required clues: {sorted(missing_clues)}", f"{artifact_path}.clues"))
+    plan_activities = _ids_from_items(as_list(plan.get("planned_micro_activities")))
+    scene_activities = _ids_from_items(as_list(scene.get("micro_activities")))
+    missing_activities = plan_activities - scene_activities
+    if missing_activities:
+        findings.append(Finding("error", "missing_micro_activity", f"Scene IR missing planned micro-activities: {sorted(missing_activities)}", f"{artifact_path}.micro_activities"))
+
+    if len(expected_edges) > 1 and not (as_list(scene.get("interactables")) or as_list(scene.get("micro_activities"))):
+        findings.append(Finding("warning", "weak_interactivity", "Multi-outcome Advanced VN scene has no interactables or micro-activities.", artifact_path))
+    return findings
+
+
+def validate_advanced_vn_run(run_root: Path, write_reports: bool = True) -> ValidationResult:
+    result = ValidationResult()
+    branch_graph = require_json(run_root, "branch_graph", result)
+    shared_state = require_json(run_root, "shared_state", result)
+    scene_plan = require_json(run_root, "advanced_vn_scene_plan", result)
+    result.extend(validate_advanced_vn_scene_plan(scene_plan, branch_graph, shared_state))
+
+    scene_entries: list[Json] = []
+    for plan in as_list((scene_plan or {}).get("plans")):
+        if not isinstance(plan, dict) or not isinstance(plan.get("source_node_id"), str):
+            continue
+        scene_path = advanced_vn_scene_artifact_path(run_root, plan["source_node_id"])
+        relative_path = str(scene_path.relative_to(run_root))
+        scene = None
+        if scene_path.exists():
+            try:
+                scene = read_json(scene_path)
+            except Exception as exc:  # noqa: BLE001
+                result.add("error", "invalid_json", f"Cannot parse {relative_path}: {exc}", relative_path)
+        result.extend(validate_advanced_vn_scene_ir(scene, plan, branch_graph, shared_state, relative_path))
+        if scene is not None:
+            scene_entries.append({
+                "source_node_id": plan["source_node_id"],
+                "advanced_unit_id": plan.get("advanced_unit_id"),
+                "path": relative_path,
+            })
+
+    if write_reports:
+        write_json(path_for(run_root, "advanced_vn_validation_report"), result.to_json())
+        write_json(path_for(run_root, "advanced_vn_scene_manifest"), {
+            "metadata": {"schema_version": "0.1.0", "generated_by": "validate_advanced_vn"},
+            "scene_plan_path": STAGE_PATHS["advanced_vn_scene_plan"],
+            "scenes": scene_entries,
+            "validation_status": result.status,
+        })
+    return result
+
+
 def gameplay_artifact_path(run_root: Path, kind: str, source_node_id: str) -> Path:
     directory, suffix = GAMEPLAY_KIND_DIRS[kind]
     safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_node_id).strip("_") or "node.unknown"
@@ -671,6 +896,9 @@ def validate_all(run_root: Path, write_projections: bool = False) -> ValidationR
     plans = load_optional_json(path_for(run_root, "realization_plans"))
     if plans:
         result.extend(validate_realization_plans(plans, branch_graph, shared_state))
+    advanced_vn_scene_plan = load_optional_json(path_for(run_root, "advanced_vn_scene_plan"))
+    if advanced_vn_scene_plan:
+        result.extend(validate_advanced_vn_scene_plan(advanced_vn_scene_plan, branch_graph, shared_state))
     write_json(path_for(run_root, "validation_report"), result.to_json())
     return result
 
