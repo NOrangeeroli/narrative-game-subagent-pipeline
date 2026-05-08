@@ -760,64 +760,6 @@
     choicesEl.appendChild(panel);
   }
 
-  function renderAdvancedVn(node) {
-    const interactables = node.advanced_interactables || [];
-    const session = ensureSession(node, () => ({ visited: new Set(), log: [] }));
-
-    choicesEl.innerHTML = "";
-    continueButton.hidden = true;
-    speakerEl.textContent = "Scene";
-    lineEl.textContent = session.log.length ? session.log[session.log.length - 1] : "选择要查看的内容。";
-
-    const panel = makeEl("div", "gameplay-panel advanced-panel");
-    if (session.log.length) {
-      const log = makeEl("div", "activity-log");
-      session.log.slice(-4).forEach((entry) => log.appendChild(makeEl("p", "", entry)));
-      panel.appendChild(log);
-    }
-
-    const grid = makeEl("div", "hotspot-grid");
-    interactables.forEach((item) => {
-      const unlocked = (item.conditions || []).every(conditionPasses);
-      const visited = session.visited.has(item.id);
-      const label = visited ? `${item.label || item.id} [done]` : (item.label || item.id);
-      const button = makeButton(label, () => {
-        if (!unlocked) {
-          session.log.push(item.blocked_text || "现在还看不出更多。");
-          render();
-          return;
-        }
-        if (!visited) {
-          applyWrites(item.state_writes || []);
-          session.visited.add(item.id);
-        }
-        session.log.push(item.text || "没有新的发现。");
-        render();
-      });
-      button.disabled = !unlocked;
-      grid.appendChild(button);
-    });
-    panel.appendChild(grid);
-
-    const availableChoices = (node.choices || []).filter(choicePasses);
-    const visibleChoices = availableChoices.filter(isVisibleChoice);
-    const routeChoices = availableChoices.filter((choice) => !isVisibleChoice(choice));
-    const displayedChoices = visibleChoices.concat(routeChoices.length > 1 || visibleChoices.length > 0 ? routeChoices : []);
-    if (displayedChoices.length) {
-      const actions = makeEl("div", "choices gameplay-actions");
-      displayedChoices.forEach((choice) => {
-        actions.appendChild(makeButton(choice.label || "继续", () => followChoice(choice), isVisibleChoice(choice) ? "primary-action" : "route-choice"));
-      });
-      panel.appendChild(actions);
-    }
-    choicesEl.appendChild(panel);
-
-    if (visibleChoices.length === 0 && routeChoices.length === 1) {
-      pendingRouteChoice = routeChoices[0];
-      continueButton.hidden = false;
-    }
-  }
-
   function renderPuzzle(node) {
     const unit = node.gameplay || {};
     const spec = unit.runtime_spec || {};
@@ -1021,10 +963,6 @@
     const beats = node.beats && node.beats.length ? node.beats : [{ speaker: "Narrator", text: "..." }];
     if (advancePastCommands(beats)) return;
     if (beatIndex >= beats.length) {
-      if ((node.advanced_interactables || []).length) {
-        renderAdvancedVn(node);
-        return;
-      }
       if (node.is_terminal) applyNodeCompletionRules(node.id);
       if (node.is_terminal && startTerminalVariant(node)) return;
       renderChoices(node);

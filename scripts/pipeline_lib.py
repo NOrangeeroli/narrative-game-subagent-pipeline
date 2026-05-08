@@ -27,9 +27,6 @@ STAGE_PATHS = {
     "realization_plans": "workspace/realization/node-realization-plans.json",
     "realization_manifest": "workspace/realization/realization-manifest.json",
     "gameplay_manifest": "workspace/realization/gameplay-manifest.json",
-    "advanced_vn_scene_plan": "workspace/advanced-vn/scene-plan.json",
-    "advanced_vn_scene_manifest": "workspace/advanced-vn/scenes/scene-manifest.json",
-    "advanced_vn_validation_report": "reports/advanced-vn-validation.json",
     "asset_direction": "workspace/asset-direction.json",
     "asset_manifest": "workspace/asset-manifest.json",
     "story_yarn": "workspace/vn/story.yarn",
@@ -56,8 +53,6 @@ GAMEPLAY_ADAPTER_SUPPORT = {
     "puzzle.sequence_lock": {"kind": "puzzle", "web_vn": True, "unity": False},
     "exploration.room_nav": {"kind": "exploration", "web_vn": True, "unity": False},
 }
-ADVANCED_VN_PLAN_FIELDS = {"source_node_id", "outcomes", "notes"}
-ADVANCED_VN_SCENE_FIELDS = {"metadata", "source_node_id", "title", "beats", "interactables", "outcomes", "ending_variants"}
 
 
 @dataclass
@@ -120,8 +115,6 @@ def ensure_run_layout(run_root: Path) -> None:
         "workspace/realization/interactions",
         "workspace/realization/puzzles",
         "workspace/realization/explorations",
-        "workspace/advanced-vn",
-        "workspace/advanced-vn/scenes",
         "workspace/vn/fragments",
         "workspace/runtime",
         "workspace/generated-assets",
@@ -452,232 +445,6 @@ def validate_realization_plans(plans: Json | None, branch_graph: Json | None, sh
     return findings
 
 
-def _graph_edges_by_source(branch_graph: Json | None) -> dict[str, set[str]]:
-    edges_by_source: dict[str, set[str]] = {}
-    for edge in as_list((branch_graph or {}).get("edges")):
-        if isinstance(edge, dict) and isinstance(edge.get("from"), str) and isinstance(edge.get("id"), str):
-            edges_by_source.setdefault(edge["from"], set()).add(edge["id"])
-    return edges_by_source
-
-
-def _declared_state_ids(shared_state: Json | None) -> set[str]:
-    return {
-        var.get("id")
-        for var in as_list((shared_state or {}).get("variables"))
-        if isinstance(var, dict) and isinstance(var.get("id"), str)
-    }
-
-
-def _state_ref_from_op(op: Any) -> str | None:
-    if isinstance(op, str):
-        return op
-    if isinstance(op, dict):
-        ref = op.get("state_variable_id") or op.get("state_id")
-        return ref if isinstance(ref, str) else None
-    return None
-
-
-def _validate_state_ref_list(findings: list[Finding], ops: list[Any], state_ids: set[str], path: str) -> None:
-    for index, op in enumerate(ops):
-        ref = _state_ref_from_op(op)
-        if ref and ref not in state_ids:
-            findings.append(Finding("error", "state_reference", f"State operation references missing variable: {ref}", f"{path}[{index}]"))
-
-
-def _outcome_edges(outcomes: list[Any]) -> set[str]:
-    return {
-        outcome.get("edge_id")
-        for outcome in outcomes
-        if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)
-    }
-
-
-def validate_advanced_vn_scene_plan(scene_plan: Json | None, branch_graph: Json | None, shared_state: Json | None) -> list[Finding]:
-    findings: list[Finding] = []
-    if scene_plan is None:
-        return findings
-    plans = as_list(scene_plan.get("plans"))
-    if not plans:
-        findings.append(Finding("error", "schema", "Advanced VN scene plan must include plans.", "advanced-vn.scene-plan.plans"))
-        return findings
-    node_ids = {node.get("id") for node in as_list((branch_graph or {}).get("nodes")) if isinstance(node, dict)}
-    edges_by_source = _graph_edges_by_source(branch_graph)
-    state_ids = _declared_state_ids(shared_state)
-    seen_nodes: set[str] = set()
-    for index, plan in enumerate(plans):
-        path = f"advanced-vn.scene-plan.plans[{index}]"
-        if not isinstance(plan, dict):
-            findings.append(Finding("error", "schema", "Scene plan entries must be objects.", path))
-            continue
-        extra_fields = sorted(set(plan) - ADVANCED_VN_PLAN_FIELDS)
-        if extra_fields:
-            findings.append(Finding("error", "unsupported_field", f"Advanced VN scene plan has unsupported fields: {extra_fields}", path))
-        source_node_id = plan.get("source_node_id")
-        if source_node_id not in node_ids:
-            findings.append(Finding("error", "invalid_reference", f"Scene plan references missing source node: {source_node_id}", f"{path}.source_node_id"))
-        if isinstance(source_node_id, str):
-            if source_node_id in seen_nodes:
-                findings.append(Finding("error", "duplicate_plan", f"Duplicate Advanced VN plan for source node: {source_node_id}", f"{path}.source_node_id"))
-            seen_nodes.add(source_node_id)
-        outcomes = as_list(plan.get("outcomes"))
-        expected_edges = edges_by_source.get(str(source_node_id), set())
-        actual_edges = _outcome_edges(outcomes)
-        missing = expected_edges - actual_edges
-        extra = actual_edges - expected_edges
-        if missing:
-            findings.append(Finding("error", "outcome_binding", f"Scene plan missing outcomes for edges: {sorted(missing)}", f"{path}.outcomes"))
-        if extra:
-            findings.append(Finding("error", "outcome_binding", f"Scene plan has outcomes for non-outgoing edges: {sorted(extra)}", f"{path}.outcomes"))
-        outcome_edge_count = len([outcome for outcome in outcomes if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)])
-        if len(actual_edges) != outcome_edge_count:
-            findings.append(Finding("error", "duplicate_outcome_edge", "Scene plan has duplicate or malformed outcome edge bindings.", f"{path}.outcomes"))
-        for outcome_index, outcome in enumerate(outcomes):
-            if isinstance(outcome, dict):
-                _validate_state_ref_list(findings, as_list(outcome.get("conditions")), state_ids, f"{path}.outcomes[{outcome_index}].conditions")
-                _validate_state_ref_list(findings, as_list(outcome.get("state_writes")), state_ids, f"{path}.outcomes[{outcome_index}].state_writes")
-    missing_nodes = node_ids - seen_nodes
-    if missing_nodes:
-        findings.append(Finding("error", "missing_plan", f"Missing Advanced VN scene plans for nodes: {sorted(missing_nodes)}"))
-    return findings
-
-
-def advanced_vn_scene_artifact_path(run_root: Path, source_node_id: str) -> Path:
-    safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_node_id).strip("_") or "node.unknown"
-    return run_root / "workspace" / "advanced-vn" / "scenes" / f"{safe_node}.scene.json"
-
-
-def validate_advanced_vn_scene_ir(
-    scene: Json | None,
-    plan: Json,
-    branch_graph: Json | None,
-    shared_state: Json | None,
-    artifact_path: str,
-) -> list[Finding]:
-    findings: list[Finding] = []
-    source_node_id = str(plan.get("source_node_id"))
-    if scene is None:
-        findings.append(Finding("error", "missing_scene_ir", f"Missing Advanced VN Scene IR for {source_node_id}.", artifact_path))
-        return findings
-    if not isinstance(scene, dict):
-        findings.append(Finding("error", "schema", "Advanced VN Scene IR must be a JSON object.", artifact_path))
-        return findings
-    extra_fields = sorted(set(scene) - ADVANCED_VN_SCENE_FIELDS)
-    if extra_fields:
-        findings.append(Finding("error", "unsupported_field", f"Advanced VN Scene IR has unsupported fields: {extra_fields}", artifact_path))
-    if scene.get("source_node_id") != source_node_id:
-        findings.append(Finding("error", "source_node_id", f"Scene IR source_node_id must be {source_node_id}.", f"{artifact_path}.source_node_id"))
-    if not (as_list(scene.get("beats")) or as_list(scene.get("interactables")) or as_list(scene.get("ending_variants"))):
-        findings.append(Finding("warning", "empty_scene", "Scene IR should include beats, interactables, or ending variants.", artifact_path))
-
-    expected_edges = _outcome_edges(as_list(plan.get("outcomes")))
-    actual_edges = _outcome_edges(as_list(scene.get("outcomes")))
-    missing = expected_edges - actual_edges
-    extra = actual_edges - expected_edges
-    if missing:
-        findings.append(Finding("error", "outcome_binding", f"Scene IR missing outcomes for planned edges: {sorted(missing)}", f"{artifact_path}.outcomes"))
-    if extra:
-        findings.append(Finding("error", "outcome_binding", f"Scene IR has outcomes outside the plan: {sorted(extra)}", f"{artifact_path}.outcomes"))
-    outcome_edge_count = len([outcome for outcome in as_list(scene.get("outcomes")) if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)])
-    if len(actual_edges) != outcome_edge_count:
-        findings.append(Finding("error", "duplicate_outcome_edge", "Scene IR has duplicate or malformed outcome edge bindings.", f"{artifact_path}.outcomes"))
-
-    state_ids = _declared_state_ids(shared_state)
-    for index, beat in enumerate(as_list(scene.get("beats"))):
-        if not isinstance(beat, dict):
-            findings.append(Finding("error", "schema", "Scene beat must be an object.", f"{artifact_path}.beats[{index}]"))
-            continue
-        beat_type = beat.get("type")
-        if beat_type not in ("line", "command", "choice"):
-            findings.append(Finding("error", "schema", f"Unsupported Advanced VN beat type: {beat_type}", f"{artifact_path}.beats[{index}].type"))
-        if beat_type == "line" and not object_has_text(beat, "text"):
-            findings.append(Finding("error", "schema", "Line beat needs text.", f"{artifact_path}.beats[{index}].text"))
-        if beat_type == "command" and beat.get("command") == "set":
-            args = beat.get("args") if isinstance(beat.get("args"), dict) else {}
-            _validate_state_ref_list(findings, [args], state_ids, f"{artifact_path}.beats[{index}].args")
-        if beat_type == "choice":
-            for choice_index, choice in enumerate(as_list(beat.get("choices"))):
-                if isinstance(choice, dict):
-                    _validate_state_ref_list(findings, as_list(choice.get("conditions")), state_ids, f"{artifact_path}.beats[{index}].choices[{choice_index}].conditions")
-                    _validate_state_ref_list(findings, as_list(choice.get("state_writes")), state_ids, f"{artifact_path}.beats[{index}].choices[{choice_index}].state_writes")
-
-    for index, interactable in enumerate(as_list(scene.get("interactables"))):
-        if not isinstance(interactable, dict):
-            findings.append(Finding("error", "schema", "Interactable must be an object.", f"{artifact_path}.interactables[{index}]"))
-            continue
-        if not object_has_text(interactable, "id"):
-            findings.append(Finding("error", "schema", "Interactable needs id.", f"{artifact_path}.interactables[{index}].id"))
-        if not object_has_text(interactable, "label"):
-            findings.append(Finding("error", "schema", "Interactable needs label.", f"{artifact_path}.interactables[{index}].label"))
-        if not object_has_text(interactable, "text"):
-            findings.append(Finding("error", "schema", "Interactable needs visible text feedback.", f"{artifact_path}.interactables[{index}].text"))
-        _validate_state_ref_list(findings, as_list(interactable.get("conditions")), state_ids, f"{artifact_path}.interactables[{index}].conditions")
-        _validate_state_ref_list(findings, as_list(interactable.get("state_writes")), state_ids, f"{artifact_path}.interactables[{index}].state_writes")
-    for index, outcome in enumerate(as_list(scene.get("outcomes"))):
-        if isinstance(outcome, dict):
-            _validate_state_ref_list(findings, as_list(outcome.get("conditions")), state_ids, f"{artifact_path}.outcomes[{index}].conditions")
-            _validate_state_ref_list(findings, as_list(outcome.get("state_writes")), state_ids, f"{artifact_path}.outcomes[{index}].state_writes")
-    for index, variant in enumerate(as_list(scene.get("ending_variants"))):
-        if isinstance(variant, dict):
-            _validate_state_ref_list(findings, as_list(variant.get("conditions")), state_ids, f"{artifact_path}.ending_variants[{index}].conditions")
-            _validate_state_ref_list(findings, as_list(variant.get("state_writes")), state_ids, f"{artifact_path}.ending_variants[{index}].state_writes")
-
-    if len(expected_edges) > 1 and not as_list(scene.get("interactables")):
-        findings.append(Finding("warning", "weak_interactivity", "Multi-outcome Advanced VN scene has no interactables.", artifact_path))
-    return findings
-
-
-def validate_advanced_vn_run(run_root: Path, write_reports: bool = True) -> ValidationResult:
-    result = ValidationResult()
-    branch_graph = require_json(run_root, "branch_graph", result)
-    shared_state = require_json(run_root, "shared_state", result)
-    scene_plan = require_json(run_root, "advanced_vn_scene_plan", result)
-    result.extend(validate_advanced_vn_scene_plan(scene_plan, branch_graph, shared_state))
-
-    scene_entries: list[Json] = []
-    for plan in as_list((scene_plan or {}).get("plans")):
-        if not isinstance(plan, dict) or not isinstance(plan.get("source_node_id"), str):
-            continue
-        scene_path = advanced_vn_scene_artifact_path(run_root, plan["source_node_id"])
-        relative_path = str(scene_path.relative_to(run_root))
-        scene = None
-        if scene_path.exists():
-            try:
-                scene = read_json(scene_path)
-            except Exception as exc:  # noqa: BLE001
-                result.add("error", "invalid_json", f"Cannot parse {relative_path}: {exc}", relative_path)
-        result.extend(validate_advanced_vn_scene_ir(scene, plan, branch_graph, shared_state, relative_path))
-        if scene is not None:
-            scene_entries.append({
-                "source_node_id": plan["source_node_id"],
-                "path": relative_path,
-            })
-
-    if write_reports:
-        write_json(path_for(run_root, "advanced_vn_validation_report"), result.to_json())
-        write_json(path_for(run_root, "advanced_vn_scene_manifest"), {
-            "metadata": {"schema_version": "0.1.0", "generated_by": "validate_advanced_vn"},
-            "scene_plan_path": STAGE_PATHS["advanced_vn_scene_plan"],
-            "scenes": scene_entries,
-            "validation_status": result.status,
-        })
-    return result
-
-
-def load_advanced_vn_scenes(run_root: Path) -> list[Json]:
-    scene_plan = load_optional_json(path_for(run_root, "advanced_vn_scene_plan")) or {"plans": []}
-    scenes: list[Json] = []
-    for plan in as_list(scene_plan.get("plans")):
-        if not isinstance(plan, dict) or not isinstance(plan.get("source_node_id"), str):
-            continue
-        scene_path = advanced_vn_scene_artifact_path(run_root, plan["source_node_id"])
-        if not scene_path.exists():
-            continue
-        scene = read_json(scene_path)
-        if isinstance(scene, dict):
-            scenes.append({**scene, "_plan": plan, "_path": str(scene_path.relative_to(run_root))})
-    return scenes
-
-
 def gameplay_artifact_path(run_root: Path, kind: str, source_node_id: str) -> Path:
     directory, suffix = GAMEPLAY_KIND_DIRS[kind]
     safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_node_id).strip("_") or "node.unknown"
@@ -904,9 +671,6 @@ def validate_all(run_root: Path, write_projections: bool = False) -> ValidationR
     plans = load_optional_json(path_for(run_root, "realization_plans"))
     if plans:
         result.extend(validate_realization_plans(plans, branch_graph, shared_state))
-    advanced_vn_scene_plan = load_optional_json(path_for(run_root, "advanced_vn_scene_plan"))
-    if advanced_vn_scene_plan:
-        result.extend(validate_advanced_vn_scene_plan(advanced_vn_scene_plan, branch_graph, shared_state))
     write_json(path_for(run_root, "validation_report"), result.to_json())
     return result
 

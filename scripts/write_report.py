@@ -19,7 +19,6 @@ def write_final_report(run_root: Path) -> Path:
     story_report = load_optional_json(path_for(run_root, "story_report")) or {"status": "missing", "findings": []}
     gameplay_validation = load_optional_json(path_for(run_root, "gameplay_validation_report")) or {"status": "missing", "findings": []}
     gameplay_coverage = load_optional_json(path_for(run_root, "gameplay_coverage_report")) or {"status": "missing"}
-    advanced_vn_validation = load_optional_json(path_for(run_root, "advanced_vn_validation_report")) or {"status": "missing", "findings": []}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     design_layer_version = game_ir.get("design_layer", {}).get("version") if isinstance(game_ir.get("design_layer"), dict) else None
@@ -76,7 +75,6 @@ def write_final_report(run_root: Path) -> Path:
         validation.get("status") == "fail"
         or story_report.get("status") == "fail"
         or gameplay_validation.get("status") == "fail"
-        or advanced_vn_validation.get("status") == "fail"
         or asset_validation.get("status") == "fail"
         or not web_path.exists()
     ):
@@ -104,12 +102,6 @@ def write_final_report(run_root: Path) -> Path:
             "validation_report": STAGE_PATHS["gameplay_validation_report"] if (run_root / STAGE_PATHS["gameplay_validation_report"]).exists() else None,
             "coverage_report": STAGE_PATHS["gameplay_coverage_report"] if (run_root / STAGE_PATHS["gameplay_coverage_report"]).exists() else None,
             "coverage": gameplay_coverage,
-        },
-        "advanced_vn": {
-            "scene_plan": STAGE_PATHS["advanced_vn_scene_plan"] if (run_root / STAGE_PATHS["advanced_vn_scene_plan"]).exists() else None,
-            "scene_manifest": STAGE_PATHS["advanced_vn_scene_manifest"] if (run_root / STAGE_PATHS["advanced_vn_scene_manifest"]).exists() else None,
-            "validation_report": STAGE_PATHS["advanced_vn_validation_report"] if (run_root / STAGE_PATHS["advanced_vn_validation_report"]).exists() else None,
-            "validation": advanced_vn_validation,
         },
         "design_layer": design_layer_report,
         "artifacts": {

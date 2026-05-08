@@ -37,8 +37,6 @@ python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py
 ```
 
 This writes a browser-playable VN under `build/web-vn/` by default. Use `--export-unity` to also generate a minimal Unity project under `build/unity-project/`.
-For Advanced VN Scene IR runs, build the Web export with
-`--post-design advanced-vn`; Unity export is not supported for that branch yet.
 
 ## Artifact Layout
 
@@ -66,9 +64,6 @@ workspace/realization/interactions/*.interaction.json
 workspace/realization/puzzles/*.puzzle.json
 workspace/realization/explorations/*.exploration.json
 workspace/realization/stubs/*.not-implemented.json
-workspace/advanced-vn/scene-plan.json
-workspace/advanced-vn/scenes/*.scene.json
-workspace/advanced-vn/scenes/scene-manifest.json
 workspace/vn/fragments/*.yarn
 workspace/vn/fragments/*.manifest.json
 workspace/vn/story.yarn
@@ -80,7 +75,6 @@ build/web-vn/
 build/unity-project/
 reports/asset-generation-report.json
 reports/asset-validation.json
-reports/advanced-vn-validation.json
 reports/gameplay-validation.json
 reports/gameplay-coverage.json
 reports/*.json
@@ -170,25 +164,22 @@ Do not mix V1 and V3 role cards in the same design pass. Downstream post-design 
 
 1. Downstream agents receive only `branch_graph.json`, `game_ir.json`, and controller-made slices unless a repair explicitly needs more context.
 2. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
-3. Choose one VN post-design branch for the run:
-   - Standard `vn`: spawn `NodeRealizationPlanner` from `references/subagents/post-design/vn/` after shared state is projected. Its task prompt must make branch realization visible: multi-exit nodes need choice placement, state reads/writes, changed beats before outcomes, downstream payoff notes, and entry variants for nodes with multiple incoming routes. Use the controller-facing template in `references/post-design-prompts.md`.
-   - `advanced-vn`: spawn `AdvancedVNRealizationPlanner` from `references/subagents/post-design/advanced-vn/` to write `workspace/advanced-vn/scene-plan.json`. It preserves public graph topology with minimal node plans: source node, public outcomes, and optional short notes.
-4. For the standard `vn` branch, spawn `NodeSceneWriter` workers for accepted `vn_yarn` and `cutscene_yarn` realization plans. For small runs, one worker per plan is acceptable. For large source-adaptation VN runs, the controller may shard by source chunk or chapter using the `NodeSceneWriterChapterShard` packet shape and spawn template in `references/post-design-prompts.md`; each shard worker writes multiple per-node fragment pairs, but each assigned node still gets exactly one separate `<source_node_id>.yarn` and one separate `<source_node_id>.manifest.json`. Each VN worker must receive and read the exact original source chunk assigned in its packet, such as `inputs/source_material/chunks/chapter_<NN>.txt`, and must not read other source chunks or sibling packets. It should use the original chunk to preserve source style, scene granularity, and event density while still writing fresh runtime prose instead of copying source text. `NodeDialogueWriter` is a legacy alias only.
-5. For the `advanced-vn` branch, spawn `AdvancedVNSceneDesigner` once per accepted scene plan to write `workspace/advanced-vn/scenes/<source_node_id>.scene.json`. Scene IR is typed post-design content, not design-layer graph/state authoring and not runtime code. Keep Scene IR minimal: `source_node_id`, `title`, `beats`, `interactables`, `outcomes`, and `ending_variants`. Run `scripts/run_pipeline.py validate-advanced-vn --run-root <run>` after scene files are accepted. Use `AdvancedVNCompilerReviewer` only for review findings after scene IR validation or compile diagnostics exist.
-6. Spawn gameplay realization writers for supported non-VN plans:
+3. Spawn `NodeRealizationPlanner` from `references/subagents/post-design/` after shared state is projected. Its task prompt must make branch realization visible: multi-exit nodes need choice placement, state reads/writes, changed beats before outcomes, downstream payoff notes, and entry variants for nodes with multiple incoming routes. Use the controller-facing template in `references/post-design-prompts.md`.
+4. Spawn `NodeSceneWriter` workers for accepted `vn_yarn` and `cutscene_yarn` realization plans. For small runs, one worker per plan is acceptable. For large source-adaptation VN runs, the controller may shard by source chunk or chapter using the `NodeSceneWriterChapterShard` packet shape and spawn template in `references/post-design-prompts.md`; each shard worker writes multiple per-node fragment pairs, but each assigned node still gets exactly one separate `<source_node_id>.yarn` and one separate `<source_node_id>.manifest.json`. Each VN worker must receive and read the exact original source chunk assigned in its packet, such as `inputs/source_material/chunks/chapter_<NN>.txt`, and must not read other source chunks or sibling packets. It should use the original chunk to preserve source style, scene granularity, and event density while still writing fresh runtime prose instead of copying source text. `NodeDialogueWriter` is a legacy alias only.
+5. Spawn gameplay realization writers for supported non-VN plans:
    `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
-7. Save accepted Yarn fragments under `workspace/vn/fragments/`, accepted Advanced VN Scene IR under `workspace/advanced-vn/scenes/`, and accepted gameplay units under their `workspace/realization/<kind>/` directories.
-8. Spawn `AssetDirector` after story and gameplay verification when global visual/audio direction is needed. It returns direction only, but it should consolidate and refine scene-authored asset intents from accepted Yarn fragments/manifests or Advanced VN Scene IR instead of inventing unscheduled staging. Voice assets are allowed only for dialogue or monologue line beats; each `voice.*` item must carry the exact spoken text in `text` or `line_text`, plus speaker/line trace when available. Do not use `voice.*` for ambience, UI prompts, scene descriptions that are not spoken/inner monologue, SFX, or BGM.
-9. Do not spawn `PresentationDirector`; that role has been removed. Scene staging belongs in `NodeSceneWriter` or `AdvancedVNSceneDesigner`, while `AssetDirector` only consolidates and prompt-compiles scheduled assets.
-10. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, derives scene asset intents from accepted Yarn fragments and fragment manifests, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Production image generation for this workflow must use Gemini consistently: run with `--asset-provider gemini` and `GEMINI_API_KEY`. Do not switch to `openai-ppioImage` for final/runtime images unless the user explicitly asks for a provider experiment. Default audio provider is `mock`; use `--audio-provider minimax-ppio` with `AUDIO_API_KEY` or `PPIO_API_KEY` for PPIO MiniMax audio generation. Use `--skip-assets` only for intentionally text-only exports.
+6. Save accepted Yarn fragments under `workspace/vn/fragments/` and accepted gameplay units under their `workspace/realization/<kind>/` directories.
+7. Spawn `AssetDirector` after story and gameplay verification when global visual/audio direction is needed. It returns direction only, but it should consolidate and refine scene-authored asset intents from accepted Yarn fragments and manifests instead of inventing unscheduled staging. Voice assets are allowed only for dialogue or monologue line beats; each `voice.*` item must carry the exact spoken text in `text` or `line_text`, plus speaker/line trace when available. Do not use `voice.*` for ambience, UI prompts, scene descriptions that are not spoken/inner monologue, SFX, or BGM.
+8. Do not spawn `PresentationDirector`; that role has been removed. Scene staging belongs in `NodeSceneWriter`, while `AssetDirector` only consolidates and prompt-compiles scheduled assets.
+9. During build, the controller validates gameplay units, writes `workspace/realization/gameplay-manifest.json`, derives scene asset intents from accepted Yarn fragments and fragment manifests, plans `workspace/asset-manifest.json`, generates runtime assets under `workspace/generated-assets/`, validates them, and binds them into exports. Production image generation for this workflow must use Gemini consistently: run with `--asset-provider gemini` and `GEMINI_API_KEY`. Do not switch to `openai-ppioImage` for final/runtime images unless the user explicitly asks for a provider experiment. Default audio provider is `mock`; use `--audio-provider minimax-ppio` with `AUDIO_API_KEY` or `PPIO_API_KEY` for PPIO MiniMax audio generation. Use `--skip-assets` only for intentionally text-only exports.
     - BGM assets use `bgm.*`, are generated as instrumental loop-friendly music cues, and default to mp3 in `asset-manifest.json`; `minimax-ppio` maps them to MiniMax music generation.
     - AssetDirector should read provider audio capabilities from `references/provider-capabilities/audio-providers.json`, preserve authored voice emotions, and write provider-specific voice emotion/profile bindings under `provider_bindings.<provider>`.
     - AssetDirector must verify recurring character gender/age from story evidence instead of names alone, and portrait directions should state mandatory identity anchors when names, aliases, or nicknames could mislead the image provider.
     - PPIO MiniMax music requests to `https://api.ppio.com/v3/minimax-music` must bypass system proxies. The audio provider enforces this by default; use `AUDIO_NO_PROXY=1` for all audio requests or `PPIO_MINIMAX_MUSIC_NO_PROXY=0` only when explicitly testing proxy routing.
     - Multi-expression portraits use `portrait.<character>.<emotion>` asset ids. The planner groups them per character, stores `expression_asset_ids`, and writes one transparent PNG per expression plus a canonical `charref.*.core` reference. With Gemini, the generator creates a base/neutral portrait first and passes it as a reference image for later expressions so identity and costume stay stable.
     - Voice assets use `voice.*`, are generated through MiniMax TTS when `minimax-ppio` is selected, and are attached only to dialogue/monologue line beats during export.
-11. Run `scripts/run_pipeline.py build --run-root <run>`.
-12. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
+10. Run `scripts/run_pipeline.py build --run-root <run>`.
+11. Inspect `reports/final-report.json`, `reports/validation-report.json`, `reports/gameplay-validation.json`, `reports/gameplay-coverage.json`, `reports/asset-generation-report.json`, `reports/asset-validation.json`, and the playable export.
 
 ## Boundaries
 
@@ -211,7 +202,6 @@ Subagents do not write runtime code for these adapters.
 - `scripts/run_pipeline.py`: initialize runs and build/export accepted artifacts.
 - `scripts/validate_artifacts.py`: validate core artifacts and write shared-state projection.
 - `scripts/validate_gameplay.py`: validate gameplay realization units and write gameplay reports.
-- `scripts/validate_advanced_vn.py`: validate Advanced VN scene plans, per-node Scene IR coverage, state refs, and scene manifest output.
 - `scripts/compile_gameplay_manifest.py`: compile gameplay unit artifacts into `workspace/realization/gameplay-manifest.json`.
 - `scripts/design_v3_validate.py`: validate V3 hierarchical design artifacts.
 - `scripts/design_v3_compile.py`: compile V3 hierarchical design artifacts into `workspace/design_layer/`.

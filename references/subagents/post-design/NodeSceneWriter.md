@@ -1,6 +1,6 @@
 ---
 agent_id: NodeSceneWriter
-stage: post-design/vn
+stage: post-design
 canonical_output:
   - workspace/vn/fragments/<node-id>.yarn
   - workspace/vn/fragments/<node-id>.manifest.json

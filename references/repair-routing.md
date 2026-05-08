@@ -14,8 +14,6 @@ Route failures to the smallest owner. The controller creates the repair ticket a
 | missing realization plan, wrong exit binding, unsupported playable kind | `NodeRealizationPlanner` |
 | bad Yarn title, invalid command, missing outcome, changed state refs | affected `NodeSceneWriter` (`NodeDialogueWriter` only as legacy alias) |
 | missing basic VN staging such as background, character presence, BGM, or SFX commands | affected `NodeSceneWriter` |
-| missing Advanced VN scene plan, wrong planned outcome, weak playable scene function | `AdvancedVNRealizationPlanner` |
-| missing Advanced VN Scene IR, outcome coverage gap, fake interactable, unsupported Scene IR field, undeclared state ref | affected `AdvancedVNSceneDesigner` |
 | line voice cannot attach because line text, speaker, or line index is missing/mismatched | affected `NodeSceneWriter` manifest `line_performance`, then `AssetDirector` if direction consolidation dropped it |
 | invalid battle unit, weak verb coverage, missing victory path | `BattleRealizationWriter` |
 | invalid interaction unit, unreachable completion, broken hotspot gate | `InteractionRealizationWriter` |

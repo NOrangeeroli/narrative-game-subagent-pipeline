@@ -46,14 +46,12 @@ branch choices.
 
 For V3 post-design realization, pass
 `subagents/design-layer-v3/V3PostDesignNetworkedVNOverlay.md` together with the
-selected branch role card. Standard `vn` spawns `NodeRealizationPlanner` or
-`NodeSceneWriter` from `subagents/post-design/vn/`. `advanced-vn` spawns
-`AdvancedVNRealizationPlanner` or `AdvancedVNSceneDesigner` from
-`subagents/post-design/advanced-vn/`. The branch role cards contain the generic
-networked VN, terminal variant, source-adaptation, choice-label, or Scene IR
-rules. The V3 overlay only explains V3-specific artifact interpretation:
-finest-level public graph boundaries, higher-level trace context, and the rule
-that L2/L3 designer labels must not become runtime button text.
+shared post-design role card when spawning `NodeRealizationPlanner` or
+`NodeSceneWriter`. The shared post-design role cards contain the generic
+networked VN, terminal variant, source-adaptation, and choice-label rules. The
+V3 overlay only explains V3-specific artifact interpretation: finest-level
+public graph boundaries, higher-level trace context, and the rule that L2/L3
+designer labels must not become runtime button text.
 
 Exact payload shapes are defined in `references/design-layer-v3-contracts.md`.
 

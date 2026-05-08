@@ -19,7 +19,6 @@ from pipeline_lib import (
     path_for,
     read_json,
     validate_all,
-    validate_advanced_vn_run,
     write_json,
     write_not_implemented_stubs,
     write_text,
@@ -79,9 +78,7 @@ def init_run(args: argparse.Namespace) -> None:
                 "Treat only the finest enabled design level, normally level_01, as the source of public/runtime branch_graph nodes and edges. Coarser story_graph outputs are design/context artifacts and must not create runtime-visible choices.",
                 "Run run_pipeline.py compile-design --design-layer v3.",
                 "Run validate_artifacts.py --write-projections on the compiled public artifacts.",
-                "Choose a post-design branch. Standard vn uses role cards under references/subagents/post-design/vn/ and writes Yarn fragments; advanced-vn uses references/subagents/post-design/advanced-vn/ and writes typed Scene IR under workspace/advanced-vn/.",
-                "Use references/post-design-prompts.md when spawning branch-specific post-design workers, including NodeRealizationPlanner/NodeSceneWriter for standard vn or AdvancedVNRealizationPlanner/AdvancedVNSceneDesigner for advanced-vn.",
-                "After AdvancedVNSceneDesigner scene files are accepted, run run_pipeline.py validate-advanced-vn --run-root <run-root>.",
+                "Use references/post-design-prompts.md when spawning NodeRealizationPlanner and large-run NodeSceneWriter chapter/source-chunk shards.",
                 "After NodeSceneWriter fragments are accepted, run run_pipeline.py check-v3-scene-choice-labels --run-root <run-root> before export/build so player-facing choices come from SceneWriter-authored Yarn labels, not designer fallback labels.",
             ]
             if design_layer == "v3"
@@ -92,8 +89,6 @@ def init_run(args: argparse.Namespace) -> None:
                 "For V1 public runtime semantics, put transition gates/effects on branch_graph.edges[*].conditions/effects; BaseGameIRDesigner must declare the referenced state variables and mirror non-trivial edges in game_ir.event_rules.",
                 "Write accepted payloads to workspace/design_layer/.",
                 "Run validate_artifacts.py --write-projections.",
-                "Choose a post-design branch. Standard vn uses role cards under references/subagents/post-design/vn/ and writes Yarn fragments; advanced-vn uses references/subagents/post-design/advanced-vn/ and writes typed Scene IR under workspace/advanced-vn/.",
-                "After AdvancedVNSceneDesigner scene files are accepted, run run_pipeline.py validate-advanced-vn --run-root <run-root>.",
                 ]
         ),
     })
@@ -209,39 +204,30 @@ def compile_design_run(args: argparse.Namespace) -> None:
 def build_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
-    post_design = getattr(args, "post_design", "vn")
-    if post_design == "advanced-vn" and args.export_unity:
-        raise SystemExit("Advanced VN currently exports to Web VN only; omit --export-unity.")
 
     validation = validate_all(run_root, write_projections=True)
     if validation.status == "fail":
         print(json.dumps(validation.to_json(), indent=2))
         raise SystemExit(1)
 
-    if post_design == "advanced-vn":
-        advanced_validation = validate_advanced_vn_run(run_root, write_reports=True)
-        if advanced_validation.status == "fail":
-            print(json.dumps(advanced_validation.to_json(), indent=2, ensure_ascii=False))
-            raise SystemExit(1)
-    else:
-        plans = load_optional_json(path_for(run_root, "realization_plans"))
-        if not plans:
-            raise SystemExit("Missing workspace/realization/node-realization-plans.json")
-        manifest = build_realization_manifest(plans)
-        write_json(path_for(run_root, "realization_manifest"), manifest)
-        shared_state = read_json(path_for(run_root, "shared_state")) if path_for(run_root, "shared_state").exists() else {"variables": []}
-        gameplay_manifest, gameplay_validation = build_gameplay_manifest(run_root, plans, shared_state)
-        if gameplay_validation.status == "fail":
-            print(json.dumps(gameplay_validation.to_json(), indent=2))
-            raise SystemExit(1)
-        stubs = write_not_implemented_stubs(run_root, plans, gameplay_manifest)
-        write_json(run_root / "reports" / "not-implemented-realizations.json", {
-            "status": "has_stubs" if stubs else "clear",
-            "count": len(stubs),
-            "stubs": [stub["source_node_id"] for stub in stubs],
-        })
+    plans = load_optional_json(path_for(run_root, "realization_plans"))
+    if not plans:
+        raise SystemExit("Missing workspace/realization/node-realization-plans.json")
+    manifest = build_realization_manifest(plans)
+    write_json(path_for(run_root, "realization_manifest"), manifest)
+    shared_state = read_json(path_for(run_root, "shared_state")) if path_for(run_root, "shared_state").exists() else {"variables": []}
+    gameplay_manifest, gameplay_validation = build_gameplay_manifest(run_root, plans, shared_state)
+    if gameplay_validation.status == "fail":
+        print(json.dumps(gameplay_validation.to_json(), indent=2))
+        raise SystemExit(1)
+    stubs = write_not_implemented_stubs(run_root, plans, gameplay_manifest)
+    write_json(run_root / "reports" / "not-implemented-realizations.json", {
+        "status": "has_stubs" if stubs else "clear",
+        "count": len(stubs),
+        "stubs": [stub["source_node_id"] for stub in stubs],
+    })
 
-        refresh_story_outputs(run_root)
+    refresh_story_outputs(run_root)
 
     if not args.skip_assets:
         plan_asset_manifest(run_root)
@@ -267,7 +253,7 @@ def build_run(args: argparse.Namespace) -> None:
 
     web_path = None
     if not args.skip_web:
-        web_path = export_web_vn(run_root, post_design=post_design)
+        web_path = export_web_vn(run_root)
     unity_path = None
     if args.export_unity:
         unity_path = export_unity_project(run_root)
@@ -294,15 +280,6 @@ def check_v3_scene_choice_labels_run(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
-def validate_advanced_vn_command(args: argparse.Namespace) -> None:
-    run_root = Path(args.run_root).resolve()
-    ensure_run_layout(run_root)
-    result = validate_advanced_vn_run(run_root, write_reports=True)
-    print(json.dumps(result.to_json(), ensure_ascii=False, indent=2))
-    if result.status == "fail":
-        raise SystemExit(1)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -321,7 +298,6 @@ def main() -> None:
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("--run-root", required=True)
     build_parser.add_argument("--skip-web", action="store_true")
-    build_parser.add_argument("--post-design", choices=["vn", "advanced-vn"], default="vn")
     build_parser.add_argument("--skip-assets", action="store_true")
     build_parser.add_argument("--asset-provider", default=None)
     build_parser.add_argument("--asset-model", default=None)
@@ -342,10 +318,6 @@ def main() -> None:
     check_v3_choices_parser = subparsers.add_parser("check-v3-scene-choice-labels")
     check_v3_choices_parser.add_argument("--run-root", required=True)
     check_v3_choices_parser.set_defaults(func=check_v3_scene_choice_labels_run)
-
-    validate_advanced_vn_parser = subparsers.add_parser("validate-advanced-vn")
-    validate_advanced_vn_parser.add_argument("--run-root", required=True)
-    validate_advanced_vn_parser.set_defaults(func=validate_advanced_vn_command)
 
     args = parser.parse_args()
     args.func(args)
