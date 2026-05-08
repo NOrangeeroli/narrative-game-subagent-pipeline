@@ -12,12 +12,33 @@ from typing import Any
 from pipeline_lib import Json, copy_tree, load_optional_json, path_for, skill_root, write_text
 
 
-def copy_manifest_assets(run_root: Path, output_root: Path) -> dict[str, str]:
+def inspect_image_bounds(path: Path) -> Json | None:
+    try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        return None
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+            if "A" not in image.getbands():
+                return {"sx": 0, "sy": 0, "sw": width, "sh": height, "w": width, "h": height}
+            alpha = image.convert("RGBA").getchannel("A")
+            bbox = alpha.getbbox()
+            if bbox is None:
+                return {"sx": 0, "sy": 0, "sw": width, "sh": height, "w": width, "h": height}
+            x0, y0, x1, y1 = bbox
+            return {"sx": x0, "sy": y0, "sw": x1 - x0, "sh": y1 - y0, "w": width, "h": height}
+    except Exception:
+        return None
+
+
+def copy_manifest_assets(run_root: Path, output_root: Path) -> tuple[dict[str, str], dict[str, Json]]:
     manifest = load_optional_json(path_for(run_root, "asset_manifest")) or {}
     generated_root = run_root / "workspace" / "generated-assets"
     destination_root = output_root / "assets"
     destination_root.mkdir(parents=True, exist_ok=True)
     runtime_paths: dict[str, str] = {}
+    runtime_bounds: dict[str, Json] = {}
 
     def copy_asset(asset_id: Any, file_ref: Any) -> None:
         if not isinstance(asset_id, str) or not isinstance(file_ref, str):
@@ -29,6 +50,9 @@ def copy_manifest_assets(run_root: Path, output_root: Path) -> dict[str, str]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         runtime_paths[asset_id] = f"assets/{file_ref}"
+        bounds = inspect_image_bounds(source)
+        if bounds:
+            runtime_bounds[asset_id] = bounds
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
@@ -41,10 +65,10 @@ def copy_manifest_assets(run_root: Path, output_root: Path) -> dict[str, str]:
                 visit(item)
 
     visit(manifest)
-    return runtime_paths
+    return runtime_paths, runtime_bounds
 
 
-def build_rpg_payload(run_root: Path, runtime_assets: dict[str, str]) -> Json:
+def build_rpg_payload(run_root: Path, runtime_assets: dict[str, str], runtime_bounds: dict[str, Json]) -> Json:
     manifest = load_optional_json(path_for(run_root, "rpg_manifest"))
     if not manifest:
         raise SystemExit("Missing workspace/rpg/rpg-manifest.json. Run compile_rpg_manifest.py first.")
@@ -54,7 +78,9 @@ def build_rpg_payload(run_root: Path, runtime_assets: dict[str, str]) -> Json:
         "start_map_id": manifest.get("start_map_id"),
         "start_position": manifest.get("start_position") or {"x": 1, "y": 1},
         "party": manifest.get("party") or [],
+        "final_quest_id": manifest.get("final_quest_id"),
         "campaign": manifest.get("campaign") or {},
+        "quest_progression": manifest.get("quest_progression") or {},
         "maps": manifest.get("maps") or [],
         "actors": manifest.get("actors") or [],
         "classes": manifest.get("classes") or [],
@@ -71,14 +97,15 @@ def build_rpg_payload(run_root: Path, runtime_assets: dict[str, str]) -> Json:
         "progression_rules": manifest.get("progression_rules") or [],
         "asset_refs": manifest.get("asset_refs") or [],
         "assets": runtime_assets,
+        "asset_bounds": runtime_bounds,
     }
 
 
 def export_web_rpg(run_root: Path) -> Path:
     output_root = run_root / "build" / "web-rpg"
     copy_tree(skill_root() / "assets" / "web-rpg-template", output_root)
-    runtime_assets = copy_manifest_assets(run_root, output_root)
-    payload = build_rpg_payload(run_root, runtime_assets)
+    runtime_assets, runtime_bounds = copy_manifest_assets(run_root, output_root)
+    payload = build_rpg_payload(run_root, runtime_assets, runtime_bounds)
     write_text(output_root / "game-data.js", "window.RPG_GAME_DATA = " + json.dumps(payload, ensure_ascii=False, indent=2) + ";\n")
     return output_root / "index.html"
 

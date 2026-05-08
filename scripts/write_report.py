@@ -22,6 +22,7 @@ def write_final_report(run_root: Path) -> Path:
     rpg_validation = load_optional_json(path_for(run_root, "rpg_validation_report")) or {"status": "missing", "findings": []}
     rpg_balance = load_optional_json(path_for(run_root, "rpg_balance_report")) or {"status": "missing", "encounters": []}
     rpg_coverage = load_optional_json(path_for(run_root, "rpg_coverage_report")) or {"status": "missing"}
+    rpg_scene_report = load_optional_json(path_for(run_root, "rpg_scene_report")) or {"status": "missing", "packages": []}
     asset_validation = load_optional_json(path_for(run_root, "asset_validation_report")) or {"status": "missing", "issues": []}
     web_path = run_root / "build" / "web-vn" / "index.html"
     web_rpg_path = run_root / "build" / "web-rpg" / "index.html"
@@ -87,7 +88,12 @@ def write_final_report(run_root: Path) -> Path:
             "validation_report": STAGE_PATHS["rpg_validation_report"] if (run_root / STAGE_PATHS["rpg_validation_report"]).exists() else None,
             "balance_report": STAGE_PATHS["rpg_balance_report"] if (run_root / STAGE_PATHS["rpg_balance_report"]).exists() else None,
             "coverage_report": STAGE_PATHS["rpg_coverage_report"] if (run_root / STAGE_PATHS["rpg_coverage_report"]).exists() else None,
+            "scene_package_report": STAGE_PATHS["rpg_scene_report"] if (run_root / STAGE_PATHS["rpg_scene_report"]).exists() else None,
             "coverage": rpg_coverage,
+            "scene_packages": {
+                "status": rpg_scene_report.get("status"),
+                "package_count": rpg_scene_report.get("package_count", 0),
+            },
         },
         "design_layer": {
             "version": "v1-refactored",

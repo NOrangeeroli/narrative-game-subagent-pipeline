@@ -25,13 +25,15 @@ from pipeline_lib import Json, as_list, ensure_dir, load_optional_json, path_for
 
 
 MOCK_PNG_BYTES = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sXl16sAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNgYGBgAAAABQABeqhXUAAAAABJRU5ErkJggg=="
 )
 REMOTE_IMAGE_PROVIDERS = {"gemini", "openai-ppioImage"}
 RPG_ASSET_SECTIONS = {
+    "terrain_tiles": "terrain_tile",
     "tilesets": "tileset",
     "sprites": "sprite",
     "enemy_sprites": "enemy_sprite",
+    "map_props": "map_prop",
     "item_icons": "item_icon",
     "skill_icons": "skill_icon",
     "equipment_icons": "equipment_icon",
@@ -190,6 +192,7 @@ def render_ui_svg(asset: Json) -> str:
 
 def render_rpg_svg(asset: Json, role: str) -> str:
     asset_id = str(asset.get("asset_id") or role)
+    suffix = asset_id.split(".")[-1]
     primary = hex_color(asset_id, 21, 58, 42)
     secondary = hex_color(asset_id, 22, 42, 28)
     accent = hex_color(asset_id, 23, 68, 46)
@@ -204,12 +207,74 @@ def render_rpg_svg(asset: Json, role: str) -> str:
 '''
     if role == "tileset":
         tiles = []
-        colors = [primary, secondary, accent, "#6b7f64", "#314038", "#9a855d"]
+        colors = [primary, secondary, accent, "#6b7f64", "#314038", "#9a855d", "#4b7f8f", "#b49659"]
         for y in range(4):
             for x in range(4):
                 color = colors[(x + y * 2) % len(colors)]
-                tiles.append(f'<rect x="{x * 128}" y="{y * 128}" width="126" height="126" fill="{color}" />')
+                tiles.append(f'<rect x="{x * 128}" y="{y * 128}" width="126" height="126" rx="6" fill="{color}" />')
+                tiles.append(f'<path d="M{x * 128 + 14} {y * 128 + 94} C{x * 128 + 42} {y * 128 + 78} {x * 128 + 82} {y * 128 + 110} {x * 128 + 116} {y * 128 + 88}" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="7" stroke-linecap="round" />')
         return '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">\n  ' + "\n  ".join(tiles) + "\n</svg>\n"
+    if role == "terrain_tile":
+        terrain = suffix
+        palette = {
+            "grass": ("#2f5a36", "#3f7948", "#8cc36a"),
+            "path": ("#7c6544", "#a78b5a", "#d5bf84"),
+            "water": ("#235d70", "#3b8fa3", "#a4d6d8"),
+            "bridge": ("#5b351f", "#8a5a32", "#d2a062"),
+            "sand": ("#9f8758", "#c7b06f", "#eadc9c"),
+            "stone": ("#464b4a", "#656c69", "#a5aaa3"),
+            "wood": ("#5d3a24", "#8d5a34", "#c58a51"),
+            "floor": ("#4f4c46", "#797160", "#b8aa82"),
+            "wall": ("#232728", "#3c4140", "#717875"),
+        }.get(terrain, (primary, secondary, accent))
+        base, mid, light = palette
+        if terrain == "water":
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="{base}" />
+  <path d="M-18 50 C22 26 60 76 104 52 C148 28 188 76 274 40" fill="none" stroke="{mid}" stroke-width="18" opacity="0.62" />
+  <path d="M-22 126 C30 98 70 152 118 126 C166 100 194 154 278 116" fill="none" stroke="{light}" stroke-width="10" opacity="0.42" />
+  <path d="M-20 200 C36 172 70 222 126 196 C176 174 206 220 276 186" fill="none" stroke="{mid}" stroke-width="16" opacity="0.5" />
+</svg>
+'''
+        if terrain in ("bridge", "wood"):
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="{base}" />
+  <rect x="0" y="18" width="256" height="44" fill="{mid}" opacity="0.82" />
+  <rect x="0" y="82" width="256" height="44" fill="{mid}" opacity="0.72" />
+  <rect x="0" y="146" width="256" height="44" fill="{mid}" opacity="0.78" />
+  <rect x="0" y="210" width="256" height="44" fill="{mid}" opacity="0.7" />
+  <path d="M32 18 V62 M132 82 V126 M78 146 V190 M188 210 V254" stroke="{light}" stroke-width="6" opacity="0.28" />
+  <path d="M18 40 C62 28 112 50 154 34 C184 24 214 34 246 28" fill="none" stroke="#2a170e" stroke-width="5" opacity="0.34" />
+</svg>
+'''
+        if terrain in ("stone", "floor", "wall"):
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="{base}" />
+  <path d="M0 64 H256 M0 128 H256 M0 192 H256" stroke="#171918" stroke-width="7" opacity="0.45" />
+  <path d="M58 0 V64 M154 0 V64 M98 64 V128 M210 64 V128 M42 128 V192 M168 128 V192 M118 192 V256 M226 192 V256" stroke="#171918" stroke-width="7" opacity="0.45" />
+  <path d="M18 42 C48 24 78 54 108 34 M126 156 C168 132 188 174 230 148" fill="none" stroke="{light}" stroke-width="6" opacity="0.2" />
+</svg>
+'''
+        if terrain in ("path", "sand"):
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="{base}" />
+  <path d="M-16 38 C50 8 84 72 154 38 C196 18 222 34 274 16" fill="none" stroke="{mid}" stroke-width="34" opacity="0.48" />
+  <circle cx="44" cy="72" r="8" fill="{light}" opacity="0.32" />
+  <circle cx="122" cy="106" r="5" fill="#3c2b1e" opacity="0.24" />
+  <circle cx="198" cy="48" r="7" fill="{light}" opacity="0.26" />
+  <circle cx="70" cy="182" r="6" fill="#3c2b1e" opacity="0.18" />
+  <circle cx="172" cy="204" r="9" fill="{light}" opacity="0.22" />
+</svg>
+'''
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="{base}" />
+  <path d="M16 208 C58 166 82 232 124 184 C154 150 182 184 240 140" fill="none" stroke="{mid}" stroke-width="20" opacity="0.35" />
+  <path d="M28 54 C56 36 76 70 106 48 M142 88 C164 68 194 98 224 74 M54 146 C78 124 106 154 134 132" fill="none" stroke="{light}" stroke-width="9" opacity="0.26" stroke-linecap="round" />
+  <circle cx="48" cy="96" r="5" fill="{light}" opacity="0.34" />
+  <circle cx="180" cy="164" r="6" fill="{light}" opacity="0.26" />
+  <circle cx="214" cy="216" r="4" fill="{light}" opacity="0.24" />
+</svg>
+'''
     if role in ("sprite", "enemy_sprite"):
         face = "#e8c4a7" if role == "sprite" else "#d6a0a0"
         return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
@@ -220,6 +285,64 @@ def render_rpg_svg(asset: Json, role: str) -> str:
   <circle cx="112" cy="78" r="5" fill="#222" />
   <circle cx="144" cy="78" r="5" fill="#222" />
   <path d="M108 108 C124 119 138 119 152 108" fill="none" stroke="#773e3e" stroke-width="5" stroke-linecap="round" />
+</svg>
+'''
+    if role == "map_prop":
+        if suffix in ("tree", "tree_canopy"):
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="226" rx="54" ry="13" fill="#000" opacity="0.2" />
+  <rect x="112" y="132" width="32" height="82" rx="10" fill="#7b5435" />
+  <circle cx="96" cy="112" r="48" fill="{primary}" />
+  <circle cx="142" cy="86" r="55" fill="{accent}" />
+  <circle cx="164" cy="134" r="46" fill="{secondary}" />
+  <circle cx="112" cy="148" r="43" fill="{primary}" />
+</svg>
+'''
+        if suffix.startswith("house") or suffix == "roof":
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="226" rx="78" ry="14" fill="#000" opacity="0.18" />
+  <rect x="58" y="104" width="140" height="94" rx="10" fill="#d0aa76" />
+  <polygon points="42,112 128,42 214,112" fill="{secondary}" />
+  <rect x="108" y="146" width="38" height="52" rx="5" fill="#5d3a25" />
+  <rect x="72" y="126" width="28" height="24" rx="4" fill="#6c8fa0" opacity="0.88" />
+  <rect x="156" y="126" width="28" height="24" rx="4" fill="#6c8fa0" opacity="0.88" />
+</svg>
+'''
+        if suffix == "door":
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="214" rx="42" ry="10" fill="#000" opacity="0.16" />
+  <rect x="82" y="52" width="92" height="154" rx="10" fill="{secondary}" />
+  <rect x="98" y="70" width="60" height="118" rx="6" fill="{primary}" />
+  <circle cx="146" cy="132" r="7" fill="#f1d47b" />
+</svg>
+'''
+        if suffix == "chest":
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="202" rx="62" ry="14" fill="#000" opacity="0.18" />
+  <rect x="62" y="104" width="132" height="78" rx="12" fill="#8a5129" />
+  <path d="M62 114 C70 72 186 72 194 114 Z" fill="#d6a146" />
+  <rect x="62" y="124" width="132" height="16" fill="#3d2718" opacity="0.58" />
+  <rect x="116" y="120" width="24" height="34" rx="5" fill="#f0d06f" />
+</svg>
+'''
+        if suffix in ("barrel", "crate", "rock", "flower", "fence", "bridge"):
+            shapes = {
+                "barrel": f'<ellipse cx="128" cy="74" rx="48" ry="20" fill="{accent}" /><rect x="80" y="74" width="96" height="104" rx="28" fill="{secondary}" /><ellipse cx="128" cy="178" rx="48" ry="20" fill="{primary}" /><path d="M92 98 H164 M88 152 H168" stroke="#38271d" stroke-width="9" stroke-linecap="round" />',
+                "crate": f'<rect x="72" y="76" width="112" height="112" rx="10" fill="{primary}" /><path d="M84 88 L172 176 M172 88 L84 176 M72 118 H184 M118 76 V188" stroke="#48351f" stroke-width="9" opacity="0.58" />',
+                "rock": f'<path d="M72 170 L54 128 L82 84 L140 64 L192 104 L204 156 L166 190 L104 188 Z" fill="{secondary}" /><path d="M96 92 L142 78 L178 110" fill="none" stroke="#fff" stroke-opacity="0.15" stroke-width="8" stroke-linecap="round" />',
+                "flower": f'<circle cx="128" cy="128" r="13" fill="#eed66a" /><circle cx="128" cy="96" r="24" fill="{accent}" /><circle cx="128" cy="160" r="24" fill="{accent}" /><circle cx="96" cy="128" r="24" fill="{primary}" /><circle cx="160" cy="128" r="24" fill="{primary}" /><path d="M128 144 C118 174 96 194 74 206" fill="none" stroke="#55783e" stroke-width="8" stroke-linecap="round" />',
+                "fence": f'<rect x="40" y="102" width="176" height="18" rx="6" fill="#7a5630" /><rect x="40" y="146" width="176" height="18" rx="6" fill="#7a5630" /><rect x="60" y="72" width="22" height="122" rx="7" fill="{secondary}" /><rect x="118" y="72" width="22" height="122" rx="7" fill="{secondary}" /><rect x="176" y="72" width="22" height="122" rx="7" fill="{secondary}" />',
+                "bridge": f'<rect x="34" y="70" width="188" height="116" rx="14" fill="#6f4b2d" /><path d="M58 82 V174 M94 82 V174 M130 82 V174 M166 82 V174 M202 82 V174" stroke="#382516" stroke-width="8" opacity="0.52" /><path d="M48 102 H208 M48 154 H208" stroke="#d1a265" stroke-width="9" opacity="0.72" />',
+            }[suffix]
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="214" rx="62" ry="13" fill="#000" opacity="0.16" />
+  {shapes}
+</svg>
+'''
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <ellipse cx="128" cy="210" rx="64" ry="13" fill="#000" opacity="0.16" />
+  <rect x="58" y="58" width="140" height="140" rx="28" fill="{primary}" />
+  <path d="M82 154 C112 112 144 188 174 104" fill="none" stroke="{accent}" stroke-width="18" stroke-linecap="round" />
 </svg>
 '''
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
@@ -352,6 +475,29 @@ def build_rpg_asset_prompt(asset: Json, role: str, manifest: Json) -> str:
             f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
             "Create a wide 16:9 RPG battle background with strong location identity and clear foreground/midground/depth.",
             "No UI, no labels, no readable text, no character portraits.",
+        ])
+    if role == "tileset":
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', 'top-down 2D RPG tile art')}.",
+            "Create a cohesive top-down orthographic RPG tile atlas with grass, path, water, bridge, stone, wood, roof, and accent tiles.",
+            "Use a consistent grid scale, clean silhouettes, readable terrain boundaries, no UI, no labels, no readable text.",
+        ])
+    if role == "terrain_tile":
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', 'top-down 2D RPG tile art')}.",
+            "Create exactly one seamless square terrain tile for a top-down orthographic RPG map.",
+            "The material must fill the whole image and repeat cleanly on a 48px grid.",
+            "No atlas, no collage, no border, no props, no characters, no UI, no labels, no readable text.",
+        ])
+    if role == "map_prop":
+        return " ".join([
+            description,
+            f"Visual style: {style.get('rendering_mode', 'top-down 2D RPG tile art')}.",
+            "Create one top-down orthographic RPG map prop as a centered game asset.",
+            "Match a 48 to 96 pixel tile scale, clean silhouette, even lighting, transparent or plain background.",
+            "No UI, no labels, no readable text, no border, no character focus.",
         ])
     if role in ("sprite", "enemy_sprite"):
         return " ".join([

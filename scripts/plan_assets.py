@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import re
 from pathlib import Path
 from typing import Any
@@ -93,13 +94,141 @@ def kind_for_asset_id(asset_id: str) -> str:
         "icon": "icon",
         "map": "map_asset",
         "tileset": "tileset",
+        "tile": "terrain_tile",
+        "sceneprop": "map_prop",
         "sprite": "sprite",
+        "mapprop": "map_prop",
         "battlebg": "battle_background",
         "itemicon": "item_icon",
         "skillicon": "skill_icon",
         "equipicon": "equipment_icon",
         "ui": "ui",
     }.get(prefix, "ui")
+
+
+def add_required(required: dict[str, Json], asset_id: str, kind: str | None, description: str, source_path: str) -> None:
+    if not asset_id:
+        return
+    required.setdefault(asset_id, {
+        "asset_id": asset_id,
+        "kind": kind or kind_for_asset_id(asset_id),
+        "description": description,
+        "source_trace": {"node_ids": [], "artifact_paths": [source_path] if source_path else []},
+        "provider_hints": [],
+    })
+
+
+def summarize_map_layout(game_map: Json) -> str:
+    title = str(game_map.get("title") or game_map.get("id") or "RPG map")
+    width = game_map.get("width")
+    height = game_map.get("height")
+    layers = game_map.get("layers") if isinstance(game_map.get("layers"), dict) else {}
+    ground_counts: Counter[str] = Counter()
+    for row in as_list(layers.get("ground")):
+        if isinstance(row, list):
+            ground_counts.update(str(cell) for cell in row if cell not in ("", None))
+    terrain = ", ".join(f"{name} x{count}" for name, count in ground_counts.most_common(5))
+    design = game_map.get("map_design") if isinstance(game_map.get("map_design"), dict) else {}
+    counts = []
+    for key in ("houses", "trees", "gardens", "props", "npcs", "terrain", "paths"):
+        value = as_list(design.get(key))
+        if value:
+            counts.append(f"{len(value)} {key}")
+    event_count = len(as_list(game_map.get("events")))
+    size = f"{width}x{height}" if isinstance(width, int) and isinstance(height, int) else "fixed-grid"
+    detail = "; ".join(counts) if counts else f"{event_count} events"
+    return f"{title}, {size}. Layout: {detail}. Ground mix: {terrain or 'grass/path/floor'}."
+
+
+def collect_layer_map_props(game_map: Json) -> set[str]:
+    layers = game_map.get("layers") if isinstance(game_map.get("layers"), dict) else {}
+    props: set[str] = set()
+    for layer_name in ("objects", "overlay"):
+        for row in as_list(layers.get(layer_name)):
+            if not isinstance(row, list):
+                continue
+            for cell in row:
+                token = str(cell or "")
+                if token and token not in (".", "0"):
+                    props.add(token if token.startswith("mapprop.") else f"mapprop.{token}")
+    return props
+
+
+def collect_scene_map_props(game_map: Json) -> list[Json]:
+    scene = game_map.get("scene") if isinstance(game_map.get("scene"), dict) else {}
+    props = []
+    for prop in as_list(scene.get("props")):
+        if isinstance(prop, dict) and isinstance(prop.get("asset_id"), str):
+            props.append(prop)
+    return props
+
+
+def collect_rpg_required_assets(rpg_manifest: Json) -> list[Json]:
+    required: dict[str, Json] = {}
+    for game_map in as_list(rpg_manifest.get("maps")):
+        if not isinstance(game_map, dict):
+            continue
+        source_path = str(game_map.get("source_path") or "workspace/rpg/maps")
+        summary = summarize_map_layout(game_map)
+        for key in ("map_asset_id", "asset_id"):
+            asset_id = game_map.get(key)
+            if isinstance(asset_id, str) and asset_id.startswith("map."):
+                add_required(required, asset_id, "map_asset", f"Top-down playable RPG map background for {summary}", source_path)
+        tileset_id = game_map.get("tileset_asset_id")
+        if isinstance(tileset_id, str):
+            add_required(required, tileset_id, "tileset", f"Tile atlas matching {summary}", source_path)
+        terrain_asset_ids = game_map.get("terrain_asset_ids")
+        if not isinstance(terrain_asset_ids, dict):
+            scene = game_map.get("scene") if isinstance(game_map.get("scene"), dict) else {}
+            terrain_asset_ids = scene.get("terrain_asset_ids") if isinstance(scene.get("terrain_asset_ids"), dict) else {}
+        for terrain, asset_id in sorted(terrain_asset_ids.items()):
+            if isinstance(terrain, str) and isinstance(asset_id, str):
+                add_required(
+                    required,
+                    asset_id,
+                    "terrain_tile",
+                    f"Single seamless top-down terrain tile for {terrain}; repeat it across {summary}. This is not an atlas or full-map background.",
+                    source_path,
+                )
+        for prop_id in sorted(collect_layer_map_props(game_map)):
+            label = prop_id.removeprefix("mapprop.").replace("_", " ")
+            add_required(required, prop_id, "map_prop", f"Top-down map prop for {label}; match the scale and palette of {summary}", source_path)
+        for prop in collect_scene_map_props(game_map):
+            prop_id = prop["asset_id"]
+            label = str(prop.get("name") or prop.get("asset") or prop_id.split(".")[-1]).replace("_", " ")
+            add_required(
+                required,
+                prop_id,
+                "map_prop",
+                f"Scene-specific top-down RPG map prop for {label}; generated for this map only and scaled by scene.props in {summary}.",
+                source_path,
+            )
+        for event in as_list(game_map.get("events")):
+            if not isinstance(event, dict):
+                continue
+            sprite_id = event.get("sprite_asset_id") or event.get("asset_id")
+            if isinstance(sprite_id, str) and sprite_id.startswith("sprite."):
+                add_required(required, sprite_id, "sprite", f"RPG map sprite for {event.get('name') or event.get('id') or 'event'} in {summary}", source_path)
+
+    for actor in as_list(rpg_manifest.get("actors")):
+        if isinstance(actor, dict):
+            sprite_id = actor.get("sprite_asset_id") or actor.get("asset_id")
+            if isinstance(sprite_id, str):
+                add_required(required, sprite_id, kind_for_asset_id(sprite_id), f"Playable party sprite for {actor.get('name') or actor.get('id')}.", "workspace/rpg/actors.json")
+    for enemy in as_list(rpg_manifest.get("enemies")):
+        if isinstance(enemy, dict):
+            sprite_id = enemy.get("sprite_asset_id") or enemy.get("asset_id")
+            if isinstance(sprite_id, str):
+                add_required(required, sprite_id, kind_for_asset_id(sprite_id), f"Enemy battle/map sprite for {enemy.get('name') or enemy.get('id')}.", "workspace/rpg/enemies.json")
+    for item in as_list(rpg_manifest.get("items")):
+        if isinstance(item, dict):
+            icon_id = item.get("icon_asset_id") or item.get("asset_id")
+            if isinstance(icon_id, str):
+                add_required(required, icon_id, kind_for_asset_id(icon_id), f"Readable RPG inventory icon for {item.get('name') or item.get('id')}.", "workspace/rpg/items.json")
+    for asset_id in as_list(rpg_manifest.get("asset_refs")):
+        if isinstance(asset_id, str):
+            add_required(required, asset_id, kind_for_asset_id(asset_id), "Runtime RPG asset required by rpg-manifest.json.", "workspace/rpg/rpg-manifest.json")
+    return list(required.values())
 
 
 def collect_required_assets(run_root: Path) -> list[Json]:
@@ -131,22 +260,18 @@ def collect_required_assets(run_root: Path) -> list[Json]:
                     "provider_hints": [],
                 })
     rpg_manifest = load_optional_json(path_for(run_root, "rpg_manifest")) or {}
-    for asset_id in as_list(rpg_manifest.get("asset_refs")):
-        if isinstance(asset_id, str):
-            required.setdefault(asset_id, {
-                "asset_id": asset_id,
-                "kind": kind_for_asset_id(asset_id),
-                "description": "Runtime RPG asset required by rpg-manifest.json.",
-                "source_trace": {"node_ids": []},
-                "provider_hints": [],
-            })
+    for rpg_asset in collect_rpg_required_assets(rpg_manifest):
+        if isinstance(rpg_asset.get("asset_id"), str):
+            required.setdefault(rpg_asset["asset_id"], rpg_asset)
     return list(required.values())
 
 
 RPG_SECTION_BY_KIND = {
+    "terrain_tile": "terrain_tiles",
     "tileset": "tilesets",
     "sprite": "sprites",
     "enemy_sprite": "enemy_sprites",
+    "map_prop": "map_props",
     "item_icon": "item_icons",
     "skill_icon": "skill_icons",
     "equipment_icon": "equipment_icons",

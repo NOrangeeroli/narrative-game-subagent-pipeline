@@ -11,9 +11,11 @@ from pathlib import Path
 from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
 
 RPG_ASSET_SECTIONS = (
+    "terrain_tiles",
     "tilesets",
     "sprites",
     "enemy_sprites",
+    "map_props",
     "item_icons",
     "skill_icons",
     "equipment_icons",

@@ -1,16 +1,14 @@
 (function () {
   "use strict";
 
-  const TILE_SIZE = 96;
-  const MOVE_MS = 180;
+  const DEFAULT_TILE = 48;
+  const MOVE_MS = 150;
   const data = window.RPG_GAME_DATA || {};
 
   const byId = (items) => {
     const result = {};
     (Array.isArray(items) ? items : []).forEach((item) => {
-      if (item && typeof item.id === "string") {
-        result[item.id] = item;
-      }
+      if (item && typeof item.id === "string") result[item.id] = item;
     });
     return result;
   };
@@ -24,6 +22,8 @@
   const items = byId(data.items);
   const restPoints = byId(data.rest_points);
   const shops = byId(data.shops);
+  const keys = {};
+  const images = {};
 
   const fallbackMap = {
     id: "map.start",
@@ -39,9 +39,7 @@
       { id: "rest.camp", type: "rest", x: 6, y: 4, name: "Camp" }
     ]
   };
-  if (!Object.keys(maps).length) {
-    maps[fallbackMap.id] = fallbackMap;
-  }
+  if (!Object.keys(maps).length) maps[fallbackMap.id] = fallbackMap;
 
   const firstMapId = data.start_map_id && maps[data.start_map_id] ? data.start_map_id : Object.keys(maps)[0];
   const partyIds = (Array.isArray(data.party) ? data.party : []).filter((id) => actors[id]);
@@ -58,16 +56,21 @@
 
   const state = {
     mapId: firstMapId,
-    renderedMapId: null,
     x: Number((data.start_position && data.start_position.x) || 1),
     y: Number((data.start_position && data.start_position.y) || 1),
-    prevX: null,
-    prevY: null,
-    prevMapId: null,
+    px: null,
+    py: null,
     facing: "down",
     moving: false,
-    cameraX: 0,
-    cameraY: 0,
+    moveStart: 0,
+    fromPx: 0,
+    fromPy: 0,
+    toPx: 0,
+    toPy: 0,
+    targetX: 0,
+    targetY: 0,
+    pendingTouch: false,
+    lastBlockedAt: 0,
     effects: [],
     hero: {
       id: firstActor.id,
@@ -87,6 +90,16 @@
     battle: null,
     completed: false,
     endingDismissed: false
+  };
+
+  const view = {
+    mapId: null,
+    canvas: null,
+    ctx: null,
+    hint: null,
+    propCacheMapId: null,
+    propCache: [],
+    animationStarted: false
   };
 
   const elements = {
@@ -120,6 +133,15 @@
     return maps[state.mapId] || maps[Object.keys(maps)[0]] || fallbackMap;
   }
 
+  function sceneFor(gameMap) {
+    return gameMap && gameMap.scene && typeof gameMap.scene === "object" ? gameMap.scene : {};
+  }
+
+  function tileSize(gameMap) {
+    const tile = Number(sceneFor(gameMap).tile || DEFAULT_TILE);
+    return Number.isFinite(tile) && tile >= 16 ? tile : DEFAULT_TILE;
+  }
+
   function assetPath(assetId) {
     return assetId && data.assets && data.assets[assetId] ? data.assets[assetId] : "";
   }
@@ -127,6 +149,32 @@
   function firstAssetWithPrefix(prefix) {
     const refs = Array.isArray(data.asset_refs) ? data.asset_refs : [];
     return refs.find((assetId) => typeof assetId === "string" && assetId.startsWith(prefix));
+  }
+
+  function runtimeImage(assetId) {
+    const path = assetPath(assetId);
+    if (!path) return null;
+    if (!images[assetId]) {
+      const img = new Image();
+      images[assetId] = { img, loaded: false, failed: false };
+      img.onload = () => { images[assetId].loaded = true; };
+      img.onerror = () => { images[assetId].failed = true; };
+      img.src = path;
+    }
+    return images[assetId].loaded ? images[assetId].img : null;
+  }
+
+  function assetBounds(assetId, img) {
+    const bounds = data.asset_bounds && data.asset_bounds[assetId];
+    if (bounds && Number(bounds.sw) > 0 && Number(bounds.sh) > 0) {
+      return {
+        sx: Number(bounds.sx) || 0,
+        sy: Number(bounds.sy) || 0,
+        sw: Number(bounds.sw),
+        sh: Number(bounds.sh)
+      };
+    }
+    return { sx: 0, sy: 0, sw: img.width, sh: img.height };
   }
 
   function addLog(message) {
@@ -151,9 +199,7 @@
   }
 
   function isBlocked(gameMap, x, y) {
-    if (x < 0 || y < 0 || x >= gameMap.width || y >= gameMap.height) {
-      return true;
-    }
+    if (x < 0 || y < 0 || x >= gameMap.width || y >= gameMap.height) return true;
     return Number(tileAt(gameMap, x, y, "collision", 0)) > 0;
   }
 
@@ -161,7 +207,27 @@
     return (Array.isArray(gameMap.events) ? gameMap.events : []).filter((event) => event.x === x && event.y === y && !state.flags[`event_done:${event.id}`]);
   }
 
-  function nearbyEvent() {
+  function facingTile() {
+    const delta = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] }[state.facing] || [0, 1];
+    return [state.x + delta[0], state.y + delta[1]];
+  }
+
+  function rectContains(rect, x, y) {
+    return x >= Number(rect.x) && y >= Number(rect.y) && x < Number(rect.x) + Number(rect.w || 1) && y < Number(rect.y) + Number(rect.h || 1);
+  }
+
+  function currentTouchEvent() {
+    const gameMap = currentMap();
+    return eventsAt(gameMap, state.x, state.y).find((event) => event.trigger === "touch" || event.type === "transfer") || null;
+  }
+
+  function facingEvent() {
+    const gameMap = currentMap();
+    const [tx, ty] = facingTile();
+    return eventsAt(gameMap, tx, ty)[0] || null;
+  }
+
+  function nearbyEventFallback() {
     const gameMap = currentMap();
     const points = [
       [state.x, state.y],
@@ -172,152 +238,119 @@
     ];
     for (const point of points) {
       const event = eventsAt(gameMap, point[0], point[1])[0];
-      if (event) {
-        return event;
-      }
+      if (event) return event;
     }
     return null;
   }
 
+  function sceneProps(gameMap) {
+    if (view.propCacheMapId === gameMap.id) return view.propCache;
+    const scene = sceneFor(gameMap);
+    if (Array.isArray(scene.props) && scene.props.length) {
+      view.propCache = scene.props.map((prop, index) => ({
+        ...prop,
+        id: prop.id || `scene.prop.${index + 1}`,
+        w: Number(prop.w || 1),
+        h: Number(prop.h || 1),
+        x: Number(prop.x || 0),
+        y: Number(prop.y || 0)
+      }));
+    } else {
+      view.propCache = layerProps(gameMap);
+    }
+    view.propCacheMapId = gameMap.id;
+    return view.propCache;
+  }
+
+  function layerProps(gameMap) {
+    const props = [];
+    const layers = gameMap.layers || {};
+    ["objects", "overlay"].forEach((layerName) => {
+      const rows = Array.isArray(layers[layerName]) ? layers[layerName] : [];
+      rows.forEach((row, y) => {
+        if (!Array.isArray(row)) return;
+        row.forEach((token, x) => {
+          const value = String(token || "");
+          if (!value || value === "." || value === "0") return;
+          props.push({
+            id: `layer.${layerName}.${x}.${y}`,
+            asset_id: decorationAssetId(value),
+            asset: value.replace(/^mapprop\./, ""),
+            x,
+            y,
+            w: 1,
+            h: 1,
+            blocking: false,
+            layer: layerName === "overlay" ? "overlay" : "object"
+          });
+        });
+      });
+    });
+    return props;
+  }
+
+  function facingProp() {
+    const gameMap = currentMap();
+    const [tx, ty] = facingTile();
+    const candidates = sceneProps(gameMap).filter((prop) => {
+      const done = prop.event_id && state.flags[`event_done:${prop.event_id}`];
+      const canInteract = prop.interaction || prop.lines || prop.item_id || prop.event_id;
+      return !done && canInteract && rectContains(prop, tx, ty);
+    });
+    candidates.sort((a, b) => (Number(b.y) + Number(b.h || 1)) - (Number(a.y) + Number(a.h || 1)));
+    return candidates[0] ? { ...candidates[0], __sceneProp: true } : null;
+  }
+
+  function interactionTarget() {
+    return currentTouchEvent() || facingEvent() || facingProp() || nearbyEventFallback();
+  }
+
+  function ensureCanvas(gameMap) {
+    const tile = tileSize(gameMap);
+    const width = gameMap.width * tile;
+    const height = gameMap.height * tile;
+    if (view.mapId === gameMap.id && view.canvas) return;
+    elements.map.innerHTML = "";
+    const canvas = document.createElement("canvas");
+    canvas.className = "scene-canvas";
+    canvas.width = width;
+    canvas.height = height;
+    canvas.setAttribute("aria-label", gameMap.title || gameMap.id || "RPG map");
+    const hint = document.createElement("div");
+    hint.className = "interaction-hint";
+    elements.map.appendChild(canvas);
+    elements.map.appendChild(hint);
+    view.mapId = gameMap.id;
+    view.canvas = canvas;
+    view.ctx = canvas.getContext("2d");
+    view.hint = hint;
+    view.propCacheMapId = null;
+    syncPixelPosition();
+  }
+
+  function syncPixelPosition() {
+    const tile = tileSize(currentMap());
+    state.px = state.x * tile;
+    state.py = state.y * tile;
+    state.fromPx = state.px;
+    state.fromPy = state.py;
+    state.toPx = state.px;
+    state.toPy = state.py;
+    state.targetX = state.x;
+    state.targetY = state.y;
+  }
+
   function render() {
     const gameMap = currentMap();
-    const mapChanged = state.renderedMapId !== gameMap.id;
     elements.title.textContent = data.title || "Playable Web RPG";
     elements.location.textContent = gameMap.title || gameMap.id;
-    elements.map.innerHTML = "";
-
-    const world = document.createElement("div");
-    world.className = "map-world";
-    world.style.setProperty("--tile-size", `${TILE_SIZE}px`);
-    world.style.width = `${gameMap.width * TILE_SIZE}px`;
-    world.style.height = `${gameMap.height * TILE_SIZE}px`;
-    world.style.gridTemplateColumns = `repeat(${gameMap.width}, ${TILE_SIZE}px)`;
-    world.style.gridTemplateRows = `repeat(${gameMap.height}, ${TILE_SIZE}px)`;
-    const mapBackground = assetPath(gameMap.asset_id || gameMap.map_asset_id || gameMap.id);
-    world.style.backgroundImage = mapBackground ? `url("${encodeURI(mapBackground)}")` : "";
-
-    for (let y = 0; y < gameMap.height; y += 1) {
-      for (let x = 0; x < gameMap.width; x += 1) {
-        const tile = document.createElement("div");
-        const ground = String(tileAt(gameMap, x, y, "ground", "grass"));
-        tile.className = `tile ${ground}`;
-        if (isBlocked(gameMap, x, y)) {
-          tile.classList.add("blocked");
-        }
-        world.appendChild(tile);
-      }
-    }
-
-    const eventLayer = document.createElement("div");
-    eventLayer.className = "event-layer";
-    renderEvents(gameMap, eventLayer);
-    world.appendChild(eventLayer);
-
-    const avatarLayer = document.createElement("div");
-    avatarLayer.className = "avatar-layer";
-    renderAvatar(avatarLayer);
-    world.appendChild(avatarLayer);
-
-    elements.map.appendChild(world);
+    ensureCanvas(gameMap);
     renderInteractionHint();
     flushFloatingText();
-    applyCamera(world, gameMap, mapChanged);
-    state.renderedMapId = gameMap.id;
-
     renderPanel();
     renderDialogue();
     renderBattle();
     renderEnding();
-  }
-
-  function renderEvents(gameMap, layer) {
-    const focus = nearbyEvent();
-    (Array.isArray(gameMap.events) ? gameMap.events : []).forEach((event) => {
-      if (state.flags[`event_done:${event.id}`]) {
-        return;
-      }
-      const marker = document.createElement("div");
-      const type = String(event.type || "npc");
-      marker.className = `event-sprite ${markerClass(event)}${focus && focus.id === event.id ? " nearby" : ""}`;
-      marker.style.left = `${(event.x + 0.5) * TILE_SIZE}px`;
-      marker.style.top = `${(event.y + 0.72) * TILE_SIZE}px`;
-      const sprite = assetPath(eventAssetId(event));
-      if (sprite) {
-        marker.classList.add("has-image");
-        const img = document.createElement("img");
-        img.src = sprite;
-        img.alt = "";
-        marker.appendChild(img);
-      } else {
-        marker.textContent = markerText(type);
-      }
-      layer.appendChild(marker);
-    });
-  }
-
-  function renderAvatar(layer) {
-    const avatar = document.createElement("div");
-    avatar.className = `avatar facing-${state.facing}${state.moving ? " walking" : ""}`;
-    const startX = state.moving && state.prevMapId === state.mapId && Number.isInteger(state.prevX) ? state.prevX : state.x;
-    const startY = state.moving && state.prevMapId === state.mapId && Number.isInteger(state.prevY) ? state.prevY : state.y;
-    avatar.style.left = `${(startX + 0.5) * TILE_SIZE}px`;
-    avatar.style.top = `${(startY + 0.88) * TILE_SIZE}px`;
-
-    const body = document.createElement("div");
-    body.className = "avatar-body";
-    const sprite = assetPath(state.hero.spriteAssetId);
-    if (sprite) {
-      const img = document.createElement("img");
-      img.className = "avatar-sprite";
-      img.src = sprite;
-      img.alt = "";
-      body.appendChild(img);
-    } else {
-      const token = document.createElement("div");
-      token.className = "avatar-token";
-      token.textContent = "@";
-      body.appendChild(token);
-    }
-    avatar.appendChild(body);
-    layer.appendChild(avatar);
-
-    if (state.moving) {
-      window.requestAnimationFrame(() => {
-        avatar.style.left = `${(state.x + 0.5) * TILE_SIZE}px`;
-        avatar.style.top = `${(state.y + 0.88) * TILE_SIZE}px`;
-      });
-      window.setTimeout(() => {
-        state.moving = false;
-        state.prevX = null;
-        state.prevY = null;
-      }, MOVE_MS + 40);
-    }
-  }
-
-  function applyCamera(world, gameMap, immediate) {
-    const viewportWidth = elements.map.clientWidth || 900;
-    const viewportHeight = elements.map.clientHeight || 600;
-    const worldWidth = gameMap.width * TILE_SIZE;
-    const worldHeight = gameMap.height * TILE_SIZE;
-    const playerCenterX = (state.x + 0.5) * TILE_SIZE;
-    const playerCenterY = (state.y + 0.5) * TILE_SIZE;
-    const targetX = clamp(playerCenterX - viewportWidth / 2, 0, Math.max(0, worldWidth - viewportWidth));
-    const targetY = clamp(playerCenterY - viewportHeight / 2, 0, Math.max(0, worldHeight - viewportHeight));
-
-    if (immediate) {
-      state.cameraX = targetX;
-      state.cameraY = targetY;
-      world.style.transform = `translate(${-targetX}px, ${-targetY}px)`;
-      return;
-    }
-
-    world.style.transform = `translate(${-state.cameraX}px, ${-state.cameraY}px)`;
-    window.requestAnimationFrame(() => {
-      world.classList.add("camera-moving");
-      world.style.transform = `translate(${-targetX}px, ${-targetY}px)`;
-    });
-    state.cameraX = targetX;
-    state.cameraY = targetY;
   }
 
   function markerClass(event) {
@@ -341,6 +374,18 @@
     return "i";
   }
 
+  function decorationAssetId(token) {
+    const value = String(token || "");
+    if (!value || value === "." || value === "0") return null;
+    if (value.startsWith("mapprop.")) return value;
+    return `mapprop.${value}`;
+  }
+
+  function propAssetId(prop) {
+    if (typeof prop.asset_id === "string") return prop.asset_id;
+    return decorationAssetId(prop.asset);
+  }
+
   function eventAssetId(event) {
     if (!event || typeof event !== "object") return null;
     if (typeof event.sprite_asset_id === "string") return event.sprite_asset_id;
@@ -362,15 +407,16 @@
 
   function eventLabel(event) {
     if (!event) return "";
+    if (event.__sceneProp) return event.name || event.asset || "Inspect";
+    if (event.quest_id && quests[event.quest_id]) return quests[event.quest_id].title || event.name || event.quest_id;
+    if (event.item_id && items[event.item_id]) return items[event.item_id].name || event.name || event.item_id;
     return event.name || event.title || event.id || "Interact";
   }
 
   function renderInteractionHint() {
-    const event = nearbyEvent();
-    const hint = document.createElement("div");
-    hint.className = "interaction-hint";
-    hint.textContent = event ? `Space / Enter: ${eventLabel(event)}` : "Move near an object to interact";
-    elements.map.appendChild(hint);
+    if (!view.hint) return;
+    const target = interactionTarget();
+    view.hint.textContent = target ? `Space / Enter: ${eventLabel(target)}` : "Face something to interact";
   }
 
   function flushFloatingText() {
@@ -413,39 +459,82 @@
     }[char]));
   }
 
-  function move(dx, dy, facing) {
-    if (state.dialogue || state.battle) return;
+  function tryMove(dx, dy, facing) {
+    if (state.dialogue || state.battle || state.moving) return;
     state.facing = facing;
+    const now = performance.now();
     const gameMap = currentMap();
     const nx = state.x + dx;
     const ny = state.y + dy;
     if (isBlocked(gameMap, nx, ny)) {
-      queueFloat("Blocked", "hit");
-      flashMap("hit");
-      render();
+      if (now - state.lastBlockedAt > 260) {
+        queueFloat("Blocked", "hit");
+        flashMap("hit");
+        render();
+        state.lastBlockedAt = now;
+      }
       return;
     }
-    state.prevX = state.x;
-    state.prevY = state.y;
-    state.prevMapId = state.mapId;
+    const tile = tileSize(gameMap);
+    state.fromPx = state.px;
+    state.fromPy = state.py;
+    state.toPx = nx * tile;
+    state.toPy = ny * tile;
+    state.targetX = nx;
+    state.targetY = ny;
     state.x = nx;
     state.y = ny;
+    state.moveStart = now;
     state.moving = true;
-    const event = eventsAt(gameMap, nx, ny)[0];
-    if (event && (event.trigger === "touch" || event.type === "transfer")) {
-      interact(event);
-    } else {
-      render();
-    }
+    state.pendingTouch = true;
   }
 
-  function interact(event) {
-    const target = event || nearbyEvent();
+  function pollMove() {
+    if (keys.arrowup || keys.w) tryMove(0, -1, "up");
+    else if (keys.arrowright || keys.d) tryMove(1, 0, "right");
+    else if (keys.arrowdown || keys.s) tryMove(0, 1, "down");
+    else if (keys.arrowleft || keys.a) tryMove(-1, 0, "left");
+  }
+
+  function tryMoveForKey(key) {
+    if (key === "arrowup" || key === "w") return tryMove(0, -1, "up");
+    if (key === "arrowright" || key === "d") return tryMove(1, 0, "right");
+    if (key === "arrowdown" || key === "s") return tryMove(0, 1, "down");
+    if (key === "arrowleft" || key === "a") return tryMove(-1, 0, "left");
+    return null;
+  }
+
+  function updateMovement(now) {
+    if (state.px === null || state.py === null) syncPixelPosition();
+    if (state.dialogue || state.battle) return;
+    if (state.moving) {
+      const t = (now - state.moveStart) / MOVE_MS;
+      if (t >= 1) {
+        state.px = state.toPx;
+        state.py = state.toPy;
+        state.moving = false;
+        if (state.pendingTouch) {
+          state.pendingTouch = false;
+          const event = currentTouchEvent();
+          if (event) interact(event);
+        }
+      } else {
+        state.px = state.fromPx + (state.toPx - state.fromPx) * t;
+        state.py = state.fromPy + (state.toPy - state.fromPy) * t;
+      }
+      return;
+    }
+    pollMove();
+  }
+
+  function interact(explicitTarget) {
+    const target = explicitTarget || interactionTarget();
     if (!target) {
       queueFloat("Nothing here", "hit");
       render();
       return;
     }
+    if (target.__sceneProp) return interactProp(target);
     const type = String(target.type || "npc");
     if (type === "battle" || type === "encounter") return startBattle(target);
     if (type === "rest") return rest(target);
@@ -456,11 +545,40 @@
     talk(target, linesFor(target));
   }
 
+  function interactProp(prop) {
+    if (prop.item_id) {
+      return pickup({
+        id: prop.event_id || prop.id,
+        type: "pickup",
+        item_id: prop.item_id,
+        quantity: prop.quantity || 1,
+        name: prop.name
+      });
+    }
+    const lines = Array.isArray(prop.lines) && prop.lines.length ? prop.lines : [prop.interaction || `${prop.name || "It"} has nothing more to say.`];
+    return talk({
+      id: prop.event_id || prop.id,
+      type: "scene_prop",
+      name: prop.name || "Inspect",
+      asset_id: prop.asset_id,
+      once: prop.once,
+      complete_quest_id: prop.complete_quest_id
+    }, lines);
+  }
+
   function linesFor(event) {
     if (Array.isArray(event.lines)) return event.lines;
     const dialogue = event.dialogue_id ? dialogues[event.dialogue_id] : null;
     if (dialogue && Array.isArray(dialogue.lines)) return dialogue.lines;
     if (dialogue && Array.isArray(dialogue.beats)) return dialogue.beats.map((beat) => beat.text || beat.line || String(beat));
+    if (event.quest_id && quests[event.quest_id]) {
+      const quest = quests[event.quest_id];
+      return [{ speaker: quest.title || event.name || "Quest", text: quest.summary || quest.description || "A new objective is now active." }];
+    }
+    if (event.item_id && items[event.item_id]) {
+      const item = items[event.item_id];
+      return [{ speaker: item.name || event.name || "Item", text: item.description || "This may be useful later." }];
+    }
     return [`${event.name || "Someone"} has nothing more to say.`];
   }
 
@@ -470,21 +588,47 @@
     return [`${event.name || "Shop"} offers ${wares}.`, "Trading is represented as dialogue in this MVP runtime."];
   }
 
+  function questExists(questId) {
+    return typeof questId === "string" && Boolean(quests[questId]);
+  }
+
+  function questLabel(questId) {
+    return questExists(questId) ? quests[questId].title || questId : questId;
+  }
+
+  function activateQuest(questId) {
+    if (!questExists(questId)) return false;
+    if (!state.quests[questId]) {
+      state.quests[questId] = "active";
+      queueFloat(`${questLabel(questId)}: active`, "good");
+    }
+    return true;
+  }
+
+  function completeQuest(questId) {
+    if (!questExists(questId)) return false;
+    if (state.quests[questId] !== "complete") {
+      state.quests[questId] = "complete";
+      queueFloat(`${questLabel(questId)}: complete`, "good");
+    }
+    return true;
+  }
+
   function talk(event, rawLines) {
     const lines = rawLines.map((line) => typeof line === "string" ? { speaker: event.name || "NPC", text: line } : line);
     state.dialogue = { event, lines, index: 0 };
-    if (event.quest_id && quests[event.quest_id] && !state.quests[event.quest_id]) {
-      state.quests[event.quest_id] = "active";
-      queueFloat(`${quests[event.quest_id].title || event.quest_id}: active`, "good");
+    if (event.quest_id && !state.quests[event.quest_id]) {
+      if (event.complete) completeQuest(event.quest_id);
+      else activateQuest(event.quest_id);
     }
     render();
   }
 
   function acceptQuest(event) {
     const questId = event.quest_id || event.id;
-    state.quests[questId] = event.complete ? "complete" : "active";
+    if (event.complete || event.complete_quest_id === questId) completeQuest(questId);
+    else activateQuest(questId);
     talk(event, linesFor(event));
-    queueFloat(`${quests[questId] ? quests[questId].title || questId : questId}: ${state.quests[questId]}`, "good");
     addLog(`${questId} updated.`);
     checkCompletion();
   }
@@ -494,13 +638,8 @@
     state.dialogue.index += 1;
     if (state.dialogue.index >= state.dialogue.lines.length) {
       const event = state.dialogue.event;
-      if (event.once) {
-        state.flags[`event_done:${event.id}`] = true;
-      }
-      if (event.complete_quest_id) {
-        state.quests[event.complete_quest_id] = "complete";
-        queueFloat(`${event.complete_quest_id}: complete`, "good");
-      }
+      if (event.once) state.flags[`event_done:${event.id}`] = true;
+      if (event.complete_quest_id) completeQuest(event.complete_quest_id);
       state.dialogue = null;
       checkCompletion();
     }
@@ -548,18 +687,19 @@
       render();
       return;
     }
+    if (event.complete_quest_id) completeQuest(event.complete_quest_id);
+    if (event.quest_id && event.complete) completeQuest(event.quest_id);
     state.mapId = event.target_map_id;
     state.x = Number(event.target_x || 1);
     state.y = Number(event.target_y || 1);
-    state.prevX = null;
-    state.prevY = null;
     state.moving = false;
-    state.renderedMapId = null;
-    state.cameraX = 0;
-    state.cameraY = 0;
+    state.pendingTouch = false;
+    view.mapId = null;
+    syncPixelPosition();
     addLog(`Moved to ${maps[state.mapId].title || state.mapId}.`);
     queueFloat(maps[state.mapId].title || state.mapId, "good");
     flashMap("travel");
+    checkCompletion();
     render();
   }
 
@@ -681,12 +821,9 @@
     addLog(`Won against ${state.battle.enemy.name}.`);
     queueFloat("Victory", "good");
     if (event.quest_id) {
-      state.quests[event.quest_id] = "complete";
-      queueFloat(`${quests[event.quest_id] ? quests[event.quest_id].title || event.quest_id : event.quest_id}: complete`, "good");
+      completeQuest(event.quest_id);
     }
-    if (event.once !== false) {
-      state.flags[`event_done:${event.id}`] = true;
-    }
+    if (event.once !== false) state.flags[`event_done:${event.id}`] = true;
     if (event.reward_item_id) {
       state.inventory[event.reward_item_id] = (state.inventory[event.reward_item_id] || 0) + 1;
       addLog(`Got ${event.reward_item_id}.`);
@@ -698,10 +835,12 @@
   }
 
   function finalQuestId() {
-    if (data.campaign && typeof data.campaign.final_quest_id === "string") return data.campaign.final_quest_id;
-    if (typeof data.final_quest_id === "string") return data.final_quest_id;
+    if (questExists(data.final_quest_id)) return data.final_quest_id;
+    if (data.campaign && questExists(data.campaign.final_quest_id)) return data.campaign.final_quest_id;
     const major = data.campaign && Array.isArray(data.campaign.major_quest_ids) ? data.campaign.major_quest_ids : [];
-    if (major.length) return major[major.length - 1];
+    for (let index = major.length - 1; index >= 0; index -= 1) {
+      if (questExists(major[index])) return major[index];
+    }
     const questList = Array.isArray(data.quests) ? data.quests : [];
     return questList.length ? questList[questList.length - 1].id : null;
   }
@@ -731,8 +870,254 @@
     elements.ending.classList.remove("hidden");
   }
 
+  function drawFallbackTile(ctx, ground, x, y, tile) {
+    const colors = {
+      water: "#426f7c",
+      path: "#8c7853",
+      bridge: "#725334",
+      sand: "#aa966a",
+      stone: "#5b635b",
+      wood: "#775333",
+      floor: "#6d6c5a",
+      wall: "#30352f",
+      grass: "#4d6b42"
+    };
+    ctx.fillStyle = colors[ground] || colors.grass;
+    ctx.fillRect(x * tile, y * tile, tile, tile);
+  }
+
+  function terrainTileCell(ground) {
+    return {
+      grass: [0, 0],
+      path: [1, 0],
+      water: [2, 0],
+      bridge: [3, 0],
+      sand: [0, 1],
+      stone: [1, 1],
+      wood: [2, 1],
+      floor: [3, 1],
+      wall: [0, 2]
+    }[ground] || [0, 0];
+  }
+
+  function tilesetAssetId(gameMap) {
+    const scene = sceneFor(gameMap);
+    return scene.tileset_asset_id || gameMap.tileset_asset_id || firstAssetWithPrefix("tileset.");
+  }
+
+  function terrainAssetId(gameMap, ground) {
+    const scene = sceneFor(gameMap);
+    const sceneTerrain = scene.terrain_asset_ids || {};
+    const mapTerrain = gameMap.terrain_asset_ids || {};
+    return sceneTerrain[ground] || mapTerrain[ground] || null;
+  }
+
+  function drawTerrainTile(ctx, image, x, y, tile) {
+    ctx.drawImage(image, 0, 0, image.width, image.height, x * tile, y * tile, tile, tile);
+  }
+
+  function drawTexturedTile(ctx, tileset, ground, x, y, tile) {
+    const [cellX, cellY] = terrainTileCell(ground);
+    const sourceCols = 4;
+    const sourceRows = 3;
+    const sourceW = Math.floor(tileset.width / sourceCols);
+    const sourceH = Math.floor(tileset.height / sourceRows);
+    const sx = Math.min(cellX, sourceCols - 1) * sourceW;
+    const sy = Math.min(cellY, sourceRows - 1) * sourceH;
+    ctx.drawImage(tileset, sx, sy, sourceW, sourceH, x * tile, y * tile, tile, tile);
+  }
+
+  function drawGroundGrid(ctx, gameMap, tile) {
+    const scene = sceneFor(gameMap);
+    const terrainIds = scene.terrain_asset_ids || gameMap.terrain_asset_ids || null;
+    const tileset = terrainIds ? null : runtimeImage(tilesetAssetId(gameMap));
+    for (let y = 0; y < gameMap.height; y += 1) {
+      for (let x = 0; x < gameMap.width; x += 1) {
+        const ground = String(tileAt(gameMap, x, y, "ground", "grass"));
+        const terrainImage = runtimeImage(terrainAssetId(gameMap, ground));
+        if (terrainImage) drawTerrainTile(ctx, terrainImage, x, y, tile);
+        else if (tileset) drawTexturedTile(ctx, tileset, ground, x, y, tile);
+        else drawFallbackTile(ctx, ground, x, y, tile);
+      }
+    }
+  }
+
+  function drawCollisionOverlay(ctx, gameMap, tile) {
+    const scene = sceneFor(gameMap);
+    if (scene.terrain_asset_ids || gameMap.terrain_asset_ids || runtimeImage(tilesetAssetId(gameMap))) return;
+    ctx.fillStyle = "rgba(28, 31, 27, 0.45)";
+    for (let y = 0; y < gameMap.height; y += 1) {
+      for (let x = 0; x < gameMap.width; x += 1) {
+        const ground = String(tileAt(gameMap, x, y, "ground", ""));
+        if (isBlocked(gameMap, x, y) && ground !== "water") {
+          ctx.fillRect(x * tile, y * tile, tile, tile);
+        }
+      }
+    }
+  }
+
+  function drawMapBase(ctx, gameMap, tile) {
+    const worldW = gameMap.width * tile;
+    const worldH = gameMap.height * tile;
+    ctx.fillStyle = "#0e0c0a";
+    ctx.fillRect(0, 0, worldW, worldH);
+    const hasGround = gameMap.layers && Array.isArray(gameMap.layers.ground);
+    if (hasGround) {
+      drawGroundGrid(ctx, gameMap, tile);
+      drawCollisionOverlay(ctx, gameMap, tile);
+      return;
+    }
+    const scene = sceneFor(gameMap);
+    const mapAssetId = scene.map_asset_id || gameMap.map_asset_id || gameMap.asset_id || gameMap.id;
+    const mapImage = runtimeImage(mapAssetId);
+    if (mapImage) {
+      ctx.drawImage(mapImage, 0, 0, mapImage.width, mapImage.height, 0, 0, worldW, worldH);
+      return;
+    }
+    for (let y = 0; y < gameMap.height; y += 1) {
+      for (let x = 0; x < gameMap.width; x += 1) {
+        drawFallbackTile(ctx, String(tileAt(gameMap, x, y, "ground", "grass")), x, y, tile);
+      }
+    }
+  }
+
+  function drawBoundedImage(ctx, img, bounds, dx, dy, dw, dh) {
+    ctx.drawImage(img, bounds.sx, bounds.sy, bounds.sw, bounds.sh, dx, dy, dw, dh);
+  }
+
+  function drawProp(ctx, prop, tile) {
+    const assetId = propAssetId(prop);
+    const img = runtimeImage(assetId);
+    const boxW = Number(prop.w || 1) * tile;
+    const boxH = Number(prop.h || 1) * tile;
+    if (!img) {
+      ctx.fillStyle = "rgba(20, 24, 20, 0.58)";
+      ctx.fillRect(Number(prop.x) * tile + boxW * 0.2, Number(prop.y) * tile + boxH * 0.2, boxW * 0.6, boxH * 0.6);
+      return;
+    }
+    const bounds = assetBounds(assetId, img);
+    const scale = Math.min(boxW / bounds.sw, boxH / bounds.sh) * Number(prop.render_scale || 1);
+    const dw = bounds.sw * scale;
+    const dh = bounds.sh * scale;
+    const dx = Number(prop.x) * tile + (boxW - dw) / 2;
+    const dy = Number(prop.y) * tile + (prop.layer === "floor_decor" ? (boxH - dh) / 2 : boxH - dh);
+    drawBoundedImage(ctx, img, bounds, dx, dy, dw, dh);
+  }
+
+  function drawEvent(ctx, event, tile, focused) {
+    const assetId = eventAssetId(event);
+    const img = runtimeImage(assetId);
+    const cx = (Number(event.x) + 0.5) * tile;
+    const footY = (Number(event.y) + 0.88) * tile;
+    if (img) {
+      const bounds = assetBounds(assetId, img);
+      const scale = Math.min((tile * 1.32) / bounds.sw, (tile * 1.56) / bounds.sh);
+      const dw = bounds.sw * scale;
+      const dh = bounds.sh * scale;
+      drawBoundedImage(ctx, img, bounds, cx - dw / 2, footY - dh, dw, dh);
+    } else {
+      ctx.beginPath();
+      ctx.fillStyle = markerFill(event);
+      ctx.strokeStyle = focused ? "#f7dfa0" : "rgba(255,255,255,0.62)";
+      ctx.lineWidth = 2;
+      ctx.arc(cx, footY - tile * 0.42, tile * 0.26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#151713";
+      ctx.font = `700 ${Math.max(13, tile * 0.28)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(markerText(String(event.type || "npc")), cx, footY - tile * 0.42);
+    }
+    if (focused) {
+      ctx.strokeStyle = "rgba(247, 223, 160, 0.92)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect((Number(event.x) + 0.12) * tile, (Number(event.y) + 0.12) * tile, tile * 0.76, tile * 0.76);
+    }
+  }
+
+  function markerFill(event) {
+    const cls = markerClass(event);
+    return {
+      "battle-event": "#d96f62",
+      "rest-event": "#7eb47a",
+      "item-event": "#d7cd7c",
+      "quest-event": "#d7cd7c",
+      "shop-event": "#d7cd7c",
+      "transfer-event": "#d7cd7c",
+      npc: "#86a6d8"
+    }[cls] || "#86a6d8";
+  }
+
+  function drawAvatar(ctx, tile) {
+    const img = runtimeImage(state.hero.spriteAssetId);
+    const cx = state.px + tile * 0.5;
+    const footY = state.py + tile * 0.94;
+    if (!img) {
+      ctx.beginPath();
+      ctx.fillStyle = "#e0b85e";
+      ctx.arc(cx, footY - tile * 0.42, tile * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    if (img.width >= 512 && Math.abs(img.width - img.height) < 4) {
+      const cells = { down: [0, 0], left: [1, 0], right: [0, 1], up: [1, 1] };
+      const cell = cells[state.facing] || cells.down;
+      const cellW = Math.floor(img.width / 2);
+      const cellH = Math.floor(img.height / 2);
+      const ew = tile * 1.2;
+      const eh = tile * 1.55;
+      ctx.drawImage(img, cell[0] * cellW, cell[1] * cellH, cellW, cellH, cx - ew / 2, footY - eh, ew, eh);
+      return;
+    }
+    const bounds = assetBounds(state.hero.spriteAssetId, img);
+    const scale = Math.min((tile * 1.28) / bounds.sw, (tile * 1.72) / bounds.sh);
+    const dw = bounds.sw * scale;
+    const dh = bounds.sh * scale;
+    ctx.save();
+    if (state.facing === "left") {
+      ctx.translate(cx, 0);
+      ctx.scale(-1, 1);
+      drawBoundedImage(ctx, img, bounds, -dw / 2, footY - dh, dw, dh);
+    } else {
+      drawBoundedImage(ctx, img, bounds, cx - dw / 2, footY - dh, dw, dh);
+    }
+    ctx.restore();
+  }
+
+  function drawScene(now) {
+    const gameMap = currentMap();
+    ensureCanvas(gameMap);
+    updateMovement(now);
+    renderInteractionHint();
+    const ctx = view.ctx;
+    const tile = tileSize(gameMap);
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+    drawMapBase(ctx, gameMap, tile);
+    const focused = interactionTarget();
+    const drawables = [];
+    sceneProps(gameMap).forEach((prop) => {
+      if (prop.layer === "floor_decor") drawProp(ctx, prop, tile);
+      else drawables.push({ y: Number(prop.y) + Number(prop.h || 1), draw: () => drawProp(ctx, prop, tile) });
+    });
+    (Array.isArray(gameMap.events) ? gameMap.events : []).forEach((event) => {
+      if (state.flags[`event_done:${event.id}`]) return;
+      drawables.push({ y: Number(event.y) + 0.86, draw: () => drawEvent(ctx, event, tile, focused && focused.id === event.id) });
+    });
+    drawables.push({ y: (state.py / tile) + 0.9, draw: () => drawAvatar(ctx, tile) });
+    drawables.sort((a, b) => a.y - b.y);
+    drawables.forEach((item) => item.draw());
+  }
+
+  function animationLoop(now) {
+    drawScene(now);
+    window.requestAnimationFrame(animationLoop);
+  }
+
   function save() {
-    localStorage.setItem("web-rpg-save", JSON.stringify({ ...state, effects: [] }));
+    const snapshot = { ...state, effects: [], moving: false, pendingTouch: false };
+    localStorage.setItem("web-rpg-save", JSON.stringify(snapshot));
     addLog("Saved.");
     render();
   }
@@ -746,7 +1131,9 @@
     }
     try {
       const loaded = JSON.parse(raw);
-      Object.assign(state, loaded, { effects: [] });
+      Object.assign(state, loaded, { effects: [], moving: false, pendingTouch: false });
+      view.mapId = null;
+      syncPixelPosition();
       checkCompletion();
       addLog("Loaded.");
     } catch (error) {
@@ -756,17 +1143,22 @@
   }
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowUp" || event.key.toLowerCase() === "w") move(0, -1, "up");
-    else if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") move(1, 0, "right");
-    else if (event.key === "ArrowDown" || event.key.toLowerCase() === "s") move(0, 1, "down");
-    else if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") move(-1, 0, "left");
-    else if (event.key === " " || event.key === "Enter") {
+    const key = event.key.toLowerCase();
+    if (event.key === " " || event.key === "Enter") {
       if (state.dialogue) nextDialogue();
       else interact();
-    } else {
+      event.preventDefault();
       return;
     }
-    event.preventDefault();
+    if (["arrowup", "arrowright", "arrowdown", "arrowleft", "w", "a", "s", "d"].includes(key)) {
+      keys[key] = true;
+      tryMoveForKey(key);
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("keyup", (event) => {
+    keys[event.key.toLowerCase()] = false;
   });
 
   elements.dialogueNext.addEventListener("click", nextDialogue);
@@ -783,4 +1175,8 @@
   window.addEventListener("resize", render);
   addLog("Game loaded.");
   render();
+  if (!view.animationStarted) {
+    view.animationStarted = true;
+    window.requestAnimationFrame(animationLoop);
+  }
 }());
