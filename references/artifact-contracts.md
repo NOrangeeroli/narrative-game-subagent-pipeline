@@ -317,19 +317,7 @@ Required shape:
   "plans": [
     {
       "source_node_id": "node.example",
-      "advanced_unit_id": "advanced_vn.node_example",
-      "scene_function": "investigation",
-      "scene_goal": "The player connects the locked room with the hidden crying.",
-      "allowed_verbs": ["inspect", "listen", "ask"],
-      "required_state_reads": [],
-      "state_writes": [],
-      "required_clues": [],
-      "planned_interactables": [],
-      "planned_micro_activities": [],
-      "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue"}],
-      "entry_variant_notes": [],
-      "terminal_variant_notes": [],
-      "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+      "outcomes": [{"id": "continue", "edge_id": "edge.example_continue", "label": "Continue"}]
     }
   ]
 }
@@ -353,45 +341,28 @@ Required shape:
 {
   "metadata": {"schema_version": "0.1.0", "generated_by": "AdvancedVNSceneDesigner", "notes": []},
   "source_node_id": "node.example",
-  "advanced_unit_id": "advanced_vn.node_example",
-  "scene_title": "Scene Title",
-  "scene_function": "investigation",
-  "scene_goal": "What the player is actively doing.",
-  "entry_variants": [],
-  "presentation": {
-    "background_id": "bg.example",
-    "bgm_id": "bgm.example",
-    "characters": [],
-    "camera_beats": []
-  },
-  "state_reads": [],
-  "state_writes": [],
-  "beats": [],
-  "interactables": [],
-  "clues": [],
-  "micro_activities": [],
-  "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue", "conditions": [], "state_writes": []}],
-  "terminal_variants": [],
-  "asset_refs": [],
-  "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+  "title": "Scene Title",
+  "beats": [{"type": "line", "speaker": "Narrator", "text": "The room is quiet."}],
+  "interactables": [{"id": "door", "label": "Inspect the door", "text": "A key mark is visible.", "state_writes": []}],
+  "outcomes": [{"id": "continue", "edge_id": "edge.example_continue", "label": "Continue", "beats": [], "conditions": [], "state_writes": []}],
+  "ending_variants": []
 }
 ```
 
 Scene IR rules:
 
-- `beats` hold ordered visible narration, dialogue, monologue, commands,
-  interaction results, and transition beats.
+- `beats` hold ordered visible narration/dialogue lines and optional runtime
+  commands. Supported beat types are `line`, `command`, and `choice`.
 - `interactables` hold clickable or selectable people, objects, places, sounds,
-  clues, or focus targets. Each interactable must provide visible feedback or
-  unlock a clue, state change, micro-activity, or outcome.
-- `clues` are discoverable facts that can be carried, combined, presented, or
-  used as route memory.
-- `micro_activities` are VN-native activities such as inspect sequence, clue
-  combination, evidence presentation, dialogue pressure, or limited action
-  choice.
+  clues, or focus targets. Each interactable should provide `text` feedback and
+  may write state. Do not add separate clue or micro-activity arrays; model
+  those through interactables, state writes, and outcome conditions.
 - `outcomes[*].edge_id` must reference a public branch graph edge from
-  `source_node_id`.
-- State reads/writes may reference only declared shared state variables.
+  `source_node_id`. `outcomes[*].beats` is optional and holds the short visible
+  feedback shown after the outcome is selected, before moving to the target
+  node.
+- State reads are represented by `conditions`; state writes use
+  `state_writes`. Both may reference only declared shared state variables.
 - Terminal variants resolve from state automatically unless the graph explicitly
   asks for a visible ending menu.
 
@@ -403,6 +374,12 @@ python3 scripts/run_pipeline.py validate-advanced-vn --run-root <run-root>
 
 This writes `reports/advanced-vn-validation.json` and
 `workspace/advanced-vn/scenes/scene-manifest.json`.
+
+Build command:
+
+```bash
+python3 scripts/run_pipeline.py build --post-design advanced-vn --run-root <run-root>
+```
 
 ## Gameplay Realization Units
 

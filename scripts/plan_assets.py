@@ -10,7 +10,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from pipeline_lib import Json, as_list, load_gameplay_units, load_optional_json, load_yarn_fragments, path_for, write_json
+from pipeline_lib import Json, as_list, load_advanced_vn_scenes, load_gameplay_units, load_optional_json, load_yarn_fragments, path_for, write_json
 
 
 def sanitize_file_stem(value: str) -> str:
@@ -514,6 +514,53 @@ def collect_scene_asset_intents(run_root: Path) -> list[Json]:
             for key in ("tone", "emotion", "voice_id", "action", "voice_gender"):
                 if key in performance and performance[key] not in (None, ""):
                     direction[key] = performance[key]
+            add_direction(required, direction)
+    for scene in load_advanced_vn_scenes(run_root):
+        node_id = str(scene.get("source_node_id") or "")
+        text_parts: list[str] = []
+        command_refs: list[Json] = []
+
+        def collect_from_beats(beats: list[Any]) -> None:
+            for beat in as_list(beats):
+                if not isinstance(beat, dict):
+                    continue
+                if isinstance(beat.get("text"), str):
+                    text_parts.append(beat["text"])
+                if beat.get("type") == "command" and isinstance(beat.get("command"), str):
+                    command_refs.append({
+                        "command": beat["command"],
+                        "args": beat.get("args") if isinstance(beat.get("args"), dict) else {},
+                    })
+                for choice in as_list(beat.get("choices")):
+                    if isinstance(choice, dict):
+                        collect_from_beats(as_list(choice.get("beats")))
+
+        collect_from_beats(as_list(scene.get("beats")))
+        for variant in as_list(scene.get("ending_variants")):
+            if isinstance(variant, dict):
+                collect_from_beats(as_list(variant.get("beats")))
+        for interactable in as_list(scene.get("interactables")):
+            if isinstance(interactable, dict) and isinstance(interactable.get("text"), str):
+                text_parts.append(interactable["text"])
+
+        excerpt = " ".join(part.strip() for part in text_parts if part.strip())[:240]
+        command_asset_ids: list[str] = []
+        for command_ref in command_refs:
+            command_asset_ids.extend(asset_ids_from_command(command_ref))
+        for asset_id in dict.fromkeys(command_asset_ids):
+            command = command_for_asset(command_refs, asset_id)
+            direction: Json = {
+                "asset_id": asset_id,
+                "kind": kind_for_scene_command(command, asset_id),
+                "description": scene_asset_description(asset_id, command, node_id, excerpt),
+                "source_trace": {"node_ids": [node_id] if node_id else []},
+                "provider_hints": [],
+                "kind_source": "scheduled_command",
+            }
+            if asset_id.startswith("bgm."):
+                direction["mood"] = "scene-specific instrumental cue, dialogue-readable"
+            if asset_id.startswith("sfx."):
+                direction["duration"] = 1.2
             add_direction(required, direction)
     return list(required.values())
 

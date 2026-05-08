@@ -13,9 +13,9 @@ Plan how the compiled public branch graph should become advanced VN scenes
 instead of standard Yarn-only scenes.
 
 This role does not write dialogue prose, UI code, runtime code, or final Scene
-IR. It decides which public graph nodes need advanced scene treatment and what
-playable VN verbs, state reads, clues, hotspots, and micro-activities each scene
-must expose.
+IR. It only maps each public graph node to the public edge outcomes its Scene
+IR must preserve, plus short notes when a node needs interaction or ending
+variant attention.
 
 ## When To Spawn
 
@@ -43,17 +43,12 @@ workspace/advanced-vn/scene-plan.json
 - Cover every public branch graph node exactly once.
 - Preserve public graph topology. Do not add hidden runtime edges.
 - Every outgoing public edge must be represented by a planned outcome.
-- Use advanced VN verbs only when they make the node more playable:
-  `inspect`, `listen`, `ask`, `present_clue`, `combine_clues`, `use_item`,
-  `wait`, `move_focus`, `choose_speech`, and `commit_choice`.
-- State reads/writes may only reference variables declared in shared state or
-  `game_ir`.
-- Convert abstract branch meanings into concrete player actions.
-- For each node, declare the scene's playable purpose: investigation, dialogue
-  pressure, route commitment, clue synthesis, emotional confrontation, quiet
-  transition, or ending resolution.
-- For terminal nodes, plan ending variant resolution from state. Do not turn
-  endings into a visible menu unless the graph explicitly calls for that.
+- Use labels only when the outcome should be a visible player choice. A single
+  unlabelled outcome can remain an automatic continue.
+- Keep planning notes short and optional. Do not introduce separate fields for
+  verbs, clues, micro-activities, presentation, or assets.
+- For terminal nodes, note ending variant needs only when graph state exposes
+  ending, route-family, or other final-resolution state.
 
 ## Output Shape
 
@@ -65,19 +60,8 @@ Use this shape:
   "plans": [
     {
       "source_node_id": "node.example",
-      "advanced_unit_id": "advanced_vn.node_example",
-      "scene_function": "investigation",
-      "scene_goal": "The player connects the locked room with the hidden crying.",
-      "allowed_verbs": ["inspect", "listen", "ask"],
-      "required_state_reads": [],
-      "state_writes": [],
-      "required_clues": [],
-      "planned_interactables": [],
-      "planned_micro_activities": [],
-      "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue"}],
-      "entry_variant_notes": [],
-      "terminal_variant_notes": [],
-      "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+      "outcomes": [{"id": "continue", "edge_id": "edge.example_continue", "label": "Continue"}],
+      "notes": ["Optional short interaction or ending guidance."]
     }
   ]
 }
@@ -87,6 +71,8 @@ Use this shape:
 
 - Every node has one plan.
 - Every outgoing edge is covered by one outcome.
-- Multi-exit nodes expose meaningful player action before the outcome.
-- Planned interactables and micro-activities read/write declared state only.
-- The plan explains how later scenes can make route memory visible.
+- Multi-exit node outcome labels name visible player actions when labels are
+  needed.
+- Terminal notes identify state-resolved ending variants when needed.
+- The plan is small enough for `AdvancedVNSceneDesigner` to own actual scene
+  content.

@@ -209,30 +209,39 @@ def compile_design_run(args: argparse.Namespace) -> None:
 def build_run(args: argparse.Namespace) -> None:
     run_root = Path(args.run_root).resolve()
     ensure_run_layout(run_root)
+    post_design = getattr(args, "post_design", "vn")
+    if post_design == "advanced-vn" and args.export_unity:
+        raise SystemExit("Advanced VN currently exports to Web VN only; omit --export-unity.")
 
     validation = validate_all(run_root, write_projections=True)
     if validation.status == "fail":
         print(json.dumps(validation.to_json(), indent=2))
         raise SystemExit(1)
 
-    plans = load_optional_json(path_for(run_root, "realization_plans"))
-    if not plans:
-        raise SystemExit("Missing workspace/realization/node-realization-plans.json")
-    manifest = build_realization_manifest(plans)
-    write_json(path_for(run_root, "realization_manifest"), manifest)
-    shared_state = read_json(path_for(run_root, "shared_state")) if path_for(run_root, "shared_state").exists() else {"variables": []}
-    gameplay_manifest, gameplay_validation = build_gameplay_manifest(run_root, plans, shared_state)
-    if gameplay_validation.status == "fail":
-        print(json.dumps(gameplay_validation.to_json(), indent=2))
-        raise SystemExit(1)
-    stubs = write_not_implemented_stubs(run_root, plans, gameplay_manifest)
-    write_json(run_root / "reports" / "not-implemented-realizations.json", {
-        "status": "has_stubs" if stubs else "clear",
-        "count": len(stubs),
-        "stubs": [stub["source_node_id"] for stub in stubs],
-    })
+    if post_design == "advanced-vn":
+        advanced_validation = validate_advanced_vn_run(run_root, write_reports=True)
+        if advanced_validation.status == "fail":
+            print(json.dumps(advanced_validation.to_json(), indent=2, ensure_ascii=False))
+            raise SystemExit(1)
+    else:
+        plans = load_optional_json(path_for(run_root, "realization_plans"))
+        if not plans:
+            raise SystemExit("Missing workspace/realization/node-realization-plans.json")
+        manifest = build_realization_manifest(plans)
+        write_json(path_for(run_root, "realization_manifest"), manifest)
+        shared_state = read_json(path_for(run_root, "shared_state")) if path_for(run_root, "shared_state").exists() else {"variables": []}
+        gameplay_manifest, gameplay_validation = build_gameplay_manifest(run_root, plans, shared_state)
+        if gameplay_validation.status == "fail":
+            print(json.dumps(gameplay_validation.to_json(), indent=2))
+            raise SystemExit(1)
+        stubs = write_not_implemented_stubs(run_root, plans, gameplay_manifest)
+        write_json(run_root / "reports" / "not-implemented-realizations.json", {
+            "status": "has_stubs" if stubs else "clear",
+            "count": len(stubs),
+            "stubs": [stub["source_node_id"] for stub in stubs],
+        })
 
-    refresh_story_outputs(run_root)
+        refresh_story_outputs(run_root)
 
     if not args.skip_assets:
         plan_asset_manifest(run_root)
@@ -258,7 +267,7 @@ def build_run(args: argparse.Namespace) -> None:
 
     web_path = None
     if not args.skip_web:
-        web_path = export_web_vn(run_root)
+        web_path = export_web_vn(run_root, post_design=post_design)
     unity_path = None
     if args.export_unity:
         unity_path = export_unity_project(run_root)
@@ -312,6 +321,7 @@ def main() -> None:
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("--run-root", required=True)
     build_parser.add_argument("--skip-web", action="store_true")
+    build_parser.add_argument("--post-design", choices=["vn", "advanced-vn"], default="vn")
     build_parser.add_argument("--skip-assets", action="store_true")
     build_parser.add_argument("--asset-provider", default=None)
     build_parser.add_argument("--asset-model", default=None)

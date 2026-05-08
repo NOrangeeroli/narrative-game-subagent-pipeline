@@ -11,10 +11,10 @@ contract: references/artifact-contracts.md#advanced-vn-scene-ir
 
 Write one Advanced VN Scene IR payload for a public graph node.
 
-Advanced VN Scene IR is not raw Yarn and not UI code. It is a typed scene
-contract describing player-facing text beats, presentation beats, interactable
-hotspots, clues, micro-activities, state reads/writes, and outcome bindings.
-The compiler/runtime owns how this Scene IR becomes browser UI.
+Advanced VN Scene IR is not raw Yarn and not UI code. It is a small typed scene
+contract describing player-facing beats, optional interactables, public outcome
+bindings, and optional ending variants. The compiler/runtime owns how this
+Scene IR becomes browser UI.
 
 ## When To Spawn
 
@@ -28,8 +28,7 @@ Spawn once per accepted `AdvancedVNRealizationPlanner` node plan.
 - Optional accepted standard VN prose fragment for this node when migrating an
   existing run.
 - Optional source chunk or source excerpt selected by the controller.
-- Optional asset direction/character/background inventory selected by the
-  controller.
+- Optional asset/character/background inventory selected by the controller.
 
 ## Clean-Context Boundary
 
@@ -48,21 +47,21 @@ workspace/advanced-vn/scenes/<source_node_id>.scene.json
 
 ## Required Scene IR Semantics
 
-- `scene_goal` states what the player is trying to understand, unlock, decide,
-  or resolve in this node.
-- `beats` are ordered visible scene beats. They may include narration,
-  dialogue, monologue, command, choice, interaction result, or transition beats.
+- `beats` are ordered visible scene beats. Use only `line`, `command`, and
+  `choice` beat types.
 - `interactables` are player-clickable or selectable scene objects, people,
-  places, sounds, clues, or UI focus targets.
-- `clues` are facts the player can discover, combine, present, or carry
-  forward through state.
-- `micro_activities` are small VN-native activities such as inspect sequence,
-  clue combination, dialogue pressure, evidence presentation, or limited
-  action choice.
+  places, sounds, clues, or UI focus targets. Each interactable has `id`,
+  `label`, `text`, optional `conditions`, and optional `state_writes`.
+- Do not add separate `presentation`, `clues`, `micro_activities`,
+  `state_reads`, `asset_refs`, or `source_trace` fields. Use command beats,
+  interactables, conditions, and state writes instead.
 - `outcomes` bind Scene IR completion to public graph edge ids.
-- `state_reads` and `state_writes` must use declared state variables.
+  `outcomes[*].beats` is optional and can hold short feedback before the scene
+  moves to the target node.
+- State reads are represented by `conditions`; state writes use
+  `state_writes`. Both must use declared state variables.
 - For multi-exit nodes, every outgoing public edge must be reachable through an
-  explicit outcome. A final cosmetic choice is not sufficient.
+  explicit outcome.
 - For terminal nodes, represent ending variants as state-resolved variant
   blocks, not as a final visible menu unless explicitly planned.
 
@@ -74,27 +73,11 @@ Use this shape:
 {
   "metadata": {"schema_version": "0.1.0", "generated_by": "AdvancedVNSceneDesigner", "notes": []},
   "source_node_id": "node.example",
-  "advanced_unit_id": "advanced_vn.node_example",
-  "scene_title": "Scene Title",
-  "scene_function": "investigation",
-  "scene_goal": "What the player is actively doing.",
-  "entry_variants": [],
-  "presentation": {
-    "background_id": "bg.example",
-    "bgm_id": "bgm.example",
-    "characters": [],
-    "camera_beats": []
-  },
-  "state_reads": [],
-  "state_writes": [],
-  "beats": [],
-  "interactables": [],
-  "clues": [],
-  "micro_activities": [],
-  "outcomes": [{"outcome_id": "continue", "edge_id": "edge.example_continue", "conditions": [], "state_writes": []}],
-  "terminal_variants": [],
-  "asset_refs": [],
-  "source_trace": {"node_ids": ["node.example"], "edge_ids": ["edge.example_continue"]}
+  "title": "Scene Title",
+  "beats": [{"type": "line", "speaker": "Narrator", "text": "The room is quiet."}],
+  "interactables": [{"id": "door", "label": "Inspect the door", "text": "A key mark is visible.", "state_writes": []}],
+  "outcomes": [{"id": "continue", "edge_id": "edge.example_continue", "label": "Continue", "conditions": [], "state_writes": []}],
+  "ending_variants": []
 }
 ```
 
@@ -102,7 +85,7 @@ Use this shape:
 
 - Scene IR parses as JSON.
 - Every outcome maps to a public graph edge.
-- Every required clue, hotspot, or micro-activity has visible feedback.
-- Every state read creates visible variation or unlocks something.
+- Every interactable has visible feedback.
+- Every condition or state write references declared state.
 - The scene gives the player something to do beyond pressing continue.
 - No private design terminology appears in visible text.

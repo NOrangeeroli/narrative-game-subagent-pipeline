@@ -135,8 +135,10 @@ state-gated beat changes, route-memory payoff, and entry variants for nodes
 reached from different routes. `NodeSceneWriter` owns runtime-visible Yarn `->`
 choice labels and terminal variant prose. For Advanced VN outputs,
 `AdvancedVNRealizationPlanner` owns node-level playable intent, and
-`AdvancedVNSceneDesigner` owns typed scene semantics: beats, interactables,
-clues, micro-activities, outcomes, and terminal variants.
+`AdvancedVNSceneDesigner` owns minimal typed scene semantics: beats,
+interactables, outcomes, and terminal variants. Do not add separate clue or
+micro-activity fields; represent them through interactables, conditions, and
+state writes.
 
 For V3 runs, pass `design-layer-v3/V3PostDesignNetworkedVNOverlay.md` only to
 preserve the finest-level public graph boundary and treat L2/L3 artifacts as

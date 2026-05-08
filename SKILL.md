@@ -37,6 +37,8 @@ python3 ~/.codex/skills/narrative-game-subagent-pipeline/scripts/run_pipeline.py
 ```
 
 This writes a browser-playable VN under `build/web-vn/` by default. Use `--export-unity` to also generate a minimal Unity project under `build/unity-project/`.
+For Advanced VN Scene IR runs, build the Web export with
+`--post-design advanced-vn`; Unity export is not supported for that branch yet.
 
 ## Artifact Layout
 
@@ -170,9 +172,9 @@ Do not mix V1 and V3 role cards in the same design pass. Downstream post-design 
 2. Validate with `scripts/validate_artifacts.py --run-root <run> --write-projections`.
 3. Choose one VN post-design branch for the run:
    - Standard `vn`: spawn `NodeRealizationPlanner` from `references/subagents/post-design/vn/` after shared state is projected. Its task prompt must make branch realization visible: multi-exit nodes need choice placement, state reads/writes, changed beats before outcomes, downstream payoff notes, and entry variants for nodes with multiple incoming routes. Use the controller-facing template in `references/post-design-prompts.md`.
-   - `advanced-vn`: spawn `AdvancedVNRealizationPlanner` from `references/subagents/post-design/advanced-vn/` to write `workspace/advanced-vn/scene-plan.json`. It preserves public graph topology while planning playable scene goals, verbs, interactables, clues, micro-activities, outcomes, entry variants, and terminal variants.
+   - `advanced-vn`: spawn `AdvancedVNRealizationPlanner` from `references/subagents/post-design/advanced-vn/` to write `workspace/advanced-vn/scene-plan.json`. It preserves public graph topology with minimal node plans: source node, public outcomes, and optional short notes.
 4. For the standard `vn` branch, spawn `NodeSceneWriter` workers for accepted `vn_yarn` and `cutscene_yarn` realization plans. For small runs, one worker per plan is acceptable. For large source-adaptation VN runs, the controller may shard by source chunk or chapter using the `NodeSceneWriterChapterShard` packet shape and spawn template in `references/post-design-prompts.md`; each shard worker writes multiple per-node fragment pairs, but each assigned node still gets exactly one separate `<source_node_id>.yarn` and one separate `<source_node_id>.manifest.json`. Each VN worker must receive and read the exact original source chunk assigned in its packet, such as `inputs/source_material/chunks/chapter_<NN>.txt`, and must not read other source chunks or sibling packets. It should use the original chunk to preserve source style, scene granularity, and event density while still writing fresh runtime prose instead of copying source text. `NodeDialogueWriter` is a legacy alias only.
-5. For the `advanced-vn` branch, spawn `AdvancedVNSceneDesigner` once per accepted scene plan to write `workspace/advanced-vn/scenes/<source_node_id>.scene.json`. Scene IR is typed post-design content, not design-layer graph/state authoring and not runtime code. Run `scripts/run_pipeline.py validate-advanced-vn --run-root <run>` after scene files are accepted. Use `AdvancedVNCompilerReviewer` only for review findings after scene IR validation or compile diagnostics exist.
+5. For the `advanced-vn` branch, spawn `AdvancedVNSceneDesigner` once per accepted scene plan to write `workspace/advanced-vn/scenes/<source_node_id>.scene.json`. Scene IR is typed post-design content, not design-layer graph/state authoring and not runtime code. Keep Scene IR minimal: `source_node_id`, `title`, `beats`, `interactables`, `outcomes`, and `ending_variants`. Run `scripts/run_pipeline.py validate-advanced-vn --run-root <run>` after scene files are accepted. Use `AdvancedVNCompilerReviewer` only for review findings after scene IR validation or compile diagnostics exist.
 6. Spawn gameplay realization writers for supported non-VN plans:
    `BattleRealizationWriter`, `InteractionRealizationWriter`, `PuzzleRealizationWriter`, and `ExplorationRealizationWriter`.
 7. Save accepted Yarn fragments under `workspace/vn/fragments/`, accepted Advanced VN Scene IR under `workspace/advanced-vn/scenes/`, and accepted gameplay units under their `workspace/realization/<kind>/` directories.

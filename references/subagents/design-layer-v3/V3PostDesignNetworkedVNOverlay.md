@@ -66,7 +66,7 @@ When writing Advanced VN Scene IR from V3 artifacts:
   controller;
 - bind every Scene IR outcome to a public graph edge from the source node;
 - treat higher-level V3 state and settlements as context for visible route
-  memory, entry variants, clue availability, micro-activity unlocks, and
+  memory, entry variants, interactable availability, outcome conditions, and
   terminal variants;
 - request V3 design/compile repair if the public graph lacks the state,
   outcome, or edge needed to make the advanced scene playable.

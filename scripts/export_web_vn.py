@@ -16,6 +16,7 @@ from pipeline_lib import (
     Json,
     as_list,
     copy_tree,
+    load_advanced_vn_scenes,
     load_gameplay_units,
     load_optional_json,
     load_yarn_fragments,
@@ -75,6 +76,12 @@ def exported_story_uses_cjk(story_nodes: list[Json]) -> bool:
             if isinstance(choice, dict) and (
                 contains_cjk(choice.get("label"))
                 or story_beats_contain_cjk(as_list(choice.get("beats")))
+            ):
+                return True
+        for interactable in as_list(node.get("advanced_interactables")):
+            if isinstance(interactable, dict) and (
+                contains_cjk(interactable.get("label"))
+                or contains_cjk(interactable.get("text"))
             ):
                 return True
         for variant in as_list(node.get("ending_variants")):
@@ -161,6 +168,13 @@ def validate_player_facing_story(story: Json) -> None:
                 if label and contains_authoring_text(label):
                     leaks.append(f"{node_id} choice: {label}")
                 check_beats(node_id, as_list(choice.get("beats")))
+        for interactable in as_list(node.get("advanced_interactables")):
+            if not isinstance(interactable, dict):
+                continue
+            for key in ("label", "text"):
+                text = str(interactable.get(key) or "")
+                if text and contains_authoring_text(text):
+                    leaks.append(f"{node_id} interactable {key}: {text}")
     if leaks:
         sample = "\n".join(leaks[:20])
         raise SystemExit(f"Player-facing authoring text leak detected:\n{sample}")
@@ -785,7 +799,223 @@ def normalize_node_completion_rules(game_ir: Json) -> list[Json]:
     return rules
 
 
-def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = None) -> Json:
+def normalize_advanced_beat(beat: Any) -> Json | None:
+    if isinstance(beat, str) and beat.strip():
+        return {"type": "line", "speaker": "Narrator", "text": beat.strip()}
+    if not isinstance(beat, dict):
+        return None
+    beat_type = beat.get("type")
+    if beat_type == "command":
+        command = beat.get("command")
+        if not isinstance(command, str) or not command:
+            return None
+        return {"type": "command", "command": command, "args": beat.get("args") if isinstance(beat.get("args"), dict) else {}}
+    if beat_type == "choice":
+        choices = []
+        for choice in as_list(beat.get("choices")):
+            if not isinstance(choice, dict):
+                continue
+            label = str(choice.get("label") or "").strip()
+            if not label:
+                continue
+            choices.append({
+                "label": label,
+                "beats": normalize_advanced_beats(as_list(choice.get("beats"))),
+                "conditions": as_list(choice.get("conditions")),
+                "state_writes": normalize_state_ops(choice.get("state_writes")),
+            })
+        return {"type": "choice", "speaker": beat.get("speaker"), "text": beat.get("text", ""), "choices": choices} if choices else None
+    if beat_type == "line":
+        text = str(beat.get("text") or "").strip()
+        if not text:
+            return None
+        return {
+            "type": "line",
+            "speaker": beat.get("speaker") or "Narrator",
+            "text": text,
+        }
+    return None
+
+
+def normalize_advanced_beats(beats: list[Any]) -> list[Json]:
+    normalized = []
+    for beat in beats:
+        normalized_beat = normalize_advanced_beat(beat)
+        if normalized_beat:
+            normalized.append(normalized_beat)
+    return filter_player_beats(normalized)
+
+
+def first_background_from_beats(beats: list[Json]) -> str | None:
+    for beat in beats:
+        if not isinstance(beat, dict) or beat.get("type") != "command":
+            continue
+        command = beat.get("command")
+        args = beat.get("args") if isinstance(beat.get("args"), dict) else {}
+        if command in ("show_bg", "show_cg"):
+            asset_id = args.get("asset_id") or args.get("bg") or args.get("cg")
+            if isinstance(asset_id, str) and asset_id:
+                return asset_id
+    return None
+
+
+def normalize_advanced_interactables(scene: Json) -> list[Json]:
+    interactables = []
+    for item in as_list(scene.get("interactables")):
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        label = str(item.get("label") or item_id).strip()
+        text = str(item.get("text") or "").strip()
+        if not item_id or not label or not text:
+            continue
+        interactables.append({
+            "id": item_id,
+            "label": label,
+            "text": text,
+            "conditions": as_list(item.get("conditions")),
+            "state_writes": normalize_state_ops(item.get("state_writes")),
+        })
+    return interactables
+
+
+def normalize_advanced_terminal_variants(scene: Json, node_id: str, asset_manifest: Json) -> list[Json]:
+    variants = []
+    for index, variant in enumerate(as_list(scene.get("ending_variants"))):
+        if not isinstance(variant, dict):
+            continue
+        variant_id = str(variant.get("id") or f"ending.variant.{index + 1}")
+        beats = normalize_advanced_beats(as_list(variant.get("beats")))
+        attach_voice_assets_recursive(beats, node_id, asset_manifest, allow_fallback=False)
+        try:
+            priority = int(variant.get("priority", 0))
+        except (TypeError, ValueError):
+            priority = 0
+        variants.append({
+            "id": variant_id,
+            "ending_id": variant.get("ending_id") or variant_id,
+            "title": variant.get("title") or variant_id,
+            "priority": priority,
+            "beats": beats,
+            "conditions": as_list(variant.get("conditions")),
+            "state_writes": normalize_state_ops(variant.get("state_writes")),
+        })
+    return sorted(variants, key=lambda item: int(item.get("priority", 0)), reverse=True)
+
+
+def build_advanced_vn_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = None) -> Json:
+    branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
+    game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
+    shared_state = load_optional_json(path_for(run_root, "shared_state")) or {"variables": []}
+    asset_direction = load_optional_json(path_for(run_root, "asset_direction")) or {"asset_directions": []}
+    asset_manifest = load_optional_json(path_for(run_root, "asset_manifest")) or {}
+    asset_directions = as_list(asset_direction.get("asset_directions"))
+    runtime_assets = runtime_assets or {}
+    scenes = load_advanced_vn_scenes(run_root)
+    scenes_by_node = {
+        scene.get("source_node_id"): scene
+        for scene in scenes
+        if isinstance(scene, dict) and isinstance(scene.get("source_node_id"), str)
+    }
+
+    edges_by_from: dict[str, list[Json]] = {}
+    for edge in as_list(branch_graph.get("edges")):
+        if isinstance(edge, dict) and isinstance(edge.get("from"), str):
+            edges_by_from.setdefault(edge["from"], []).extend(expanded_runtime_edges(edge))
+
+    initial_state = {
+        variable.get("id"): variable.get("initial_value")
+        for variable in as_list(shared_state.get("variables"))
+        if isinstance(variable, dict) and isinstance(variable.get("id"), str)
+    }
+
+    story_nodes = []
+    for node in as_list(branch_graph.get("nodes")):
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            continue
+        node_id = node["id"]
+        scene = scenes_by_node.get(node_id, {})
+        beats = normalize_advanced_beats(as_list(scene.get("beats")))
+        if not beats:
+            beats = [{"type": "line", "speaker": "Narrator", "text": node_text(node)}]
+        attach_voice_assets_recursive(beats, node_id, asset_manifest)
+
+        outcome_by_edge = {
+            outcome.get("edge_id"): outcome
+            for outcome in as_list(scene.get("outcomes"))
+            if isinstance(outcome, dict) and isinstance(outcome.get("edge_id"), str)
+        }
+        outgoing = edges_by_from.get(node_id, [])
+        choices = []
+        for edge in outgoing:
+            edge_id = edge.get("id")
+            outcome = outcome_by_edge.get(edge_id, {}) if isinstance(edge_id, str) else {}
+            outcome_id = outcome.get("id") or outcome.get("outcome_id") or edge_id
+            label = outcome.get("label") or ("继续" if len(outgoing) == 1 else edge.get("label") or edge.get("condition_label") or edge.get("outcome_label") or "Continue")
+            explicit_label = bool(outcome.get("label")) or len(outgoing) > 1
+            choice: Json = {
+                "label": label,
+                "target": edge.get("to"),
+                "edge_id": edge_id,
+                "outcome_id": outcome_id,
+                "condition_type": "player_choice" if explicit_label else "auto",
+                "beats": normalize_advanced_beats(as_list(outcome.get("beats"))),
+                "effects": normalize_state_ops(edge.get("effects")),
+                "state_writes": normalize_state_ops(outcome.get("state_writes")),
+                "conditions": [*as_list(edge.get("conditions")), *as_list(outcome.get("conditions"))],
+            }
+            choices.append(choice)
+
+        terminal_variants = normalize_advanced_terminal_variants(scene, node_id, asset_manifest)
+        node_title = scene.get("title") if isinstance(scene.get("title"), str) else None
+        background_id = first_background_from_beats(beats) or node.get("asset_id") or "bg.default"
+        story_node = {
+            "id": node_id,
+            "title": node_title or str(node.get("title") or ""),
+            "background_id": background_id,
+            "portrait_ids": [],
+            "beats": beats,
+            "choices": choices,
+            "is_terminal": bool(node.get("is_terminal") or node.get("node_type") == "terminal" or not choices),
+            "realization_kind": "advanced_vn",
+        }
+        interactables = normalize_advanced_interactables(scene)
+        if interactables:
+            story_node["advanced_interactables"] = interactables
+        if terminal_variants:
+            story_node["ending_variants"] = terminal_variants
+        story_nodes.append(story_node)
+
+    localize_choice_fallbacks_for_cjk(story_nodes)
+    assets = manifest_asset_entries(asset_manifest, runtime_assets)
+    seen_asset_ids = {asset.get("asset_id") for asset in assets if isinstance(asset, dict)}
+    for asset in asset_directions:
+        if not isinstance(asset, dict):
+            continue
+        enriched = dict(asset)
+        asset_id = enriched.get("asset_id")
+        if asset_id in seen_asset_ids:
+            continue
+        if isinstance(asset_id, str) and asset_id in runtime_assets:
+            enriched["runtime_path"] = runtime_assets[asset_id]
+        assets.append(enriched)
+
+    return {
+        "metadata": {"schema_version": "0.1.0", "generated_by": "export_web_vn.py", "post_design": "advanced-vn"},
+        "title": localized_story_title(branch_graph.get("title") or "Generated Narrative Game", story_nodes),
+        "start_node_id": branch_graph.get("start_node_id") or (story_nodes[0]["id"] if story_nodes else ""),
+        "initial_state": initial_state,
+        "nodes": story_nodes,
+        "characters": manifest_character_entries(asset_manifest),
+        "assets": assets,
+        "gameplay_units": {},
+        "node_completion_rules": normalize_node_completion_rules(game_ir),
+    }
+
+
+def build_story_payload(run_root: Path, runtime_assets: dict[str, str] | None = None, post_design: str = "vn") -> Json:
+    if post_design == "advanced-vn":
+        return build_advanced_vn_story_payload(run_root, runtime_assets)
     branch_graph = load_optional_json(path_for(run_root, "branch_graph")) or {}
     game_ir = load_optional_json(path_for(run_root, "game_ir")) or {}
     plans = load_optional_json(path_for(run_root, "realization_plans")) or {"plans": []}
@@ -990,12 +1220,12 @@ def web_export_audio_report(story: Json) -> Json:
     }
 
 
-def export_web_vn(run_root: Path) -> Path:
+def export_web_vn(run_root: Path, post_design: str = "vn") -> Path:
     output_root = run_root / "build" / "web-vn"
     copy_tree(skill_root() / "assets" / "web-vn-template", output_root)
     asset_direction = load_optional_json(path_for(run_root, "asset_direction")) or {"asset_directions": []}
     runtime_assets = collect_runtime_assets(run_root, output_root, as_list(asset_direction.get("asset_directions")))
-    story = build_story_payload(run_root, runtime_assets)
+    story = build_story_payload(run_root, runtime_assets, post_design=post_design)
     validate_player_facing_story(story)
     write_text(output_root / "story-data.js", "window.NARRATIVE_GAME_STORY = " + json.dumps(story, ensure_ascii=False, indent=2) + ";\n")
     write_text(run_root / "reports" / "web-vn-export-report.json", json.dumps(web_export_audio_report(story), ensure_ascii=False, indent=2) + "\n")
@@ -1005,8 +1235,9 @@ def export_web_vn(run_root: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-root", required=True)
+    parser.add_argument("--post-design", choices=["vn", "advanced-vn"], default="vn")
     args = parser.parse_args()
-    print(str(export_web_vn(Path(args.run_root).resolve())))
+    print(str(export_web_vn(Path(args.run_root).resolve(), post_design=args.post_design)))
 
 
 if __name__ == "__main__":

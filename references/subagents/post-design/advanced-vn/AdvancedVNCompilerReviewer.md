@@ -29,12 +29,11 @@ runtime/export risks.
 - Scene outcomes that do not cover public outgoing edges.
 - Interactables that reveal no clue, state change, or route consequence.
 - Choices that are only final-line cosmetic choices.
-- State reads that never affect visible beats, unlocked interactables, choices,
-  micro-activities, or terminal variants.
+- Conditions that never affect visible beats, unlocked interactables, choices,
+  or terminal variants.
 - State writes to undeclared variables.
 - Terminal variants that erase higher-priority route outcomes.
-- Scene IR that depends on UI/runtime code not represented in the typed
-  contract.
+- Scene IR that adds unsupported fields instead of using the minimal contract.
 
 ## Output
 

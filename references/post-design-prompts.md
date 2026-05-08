@@ -252,14 +252,11 @@ Run policy:
 - Every public branch_graph node must have exactly one scene plan.
 - Every outgoing public edge from each node must appear exactly once in
   outcomes.
-- Convert abstract branch meanings into concrete VN verbs such as inspect,
-  listen, ask, present_clue, combine_clues, use_item, wait, move_focus,
-  choose_speech, or commit_choice.
-- State reads/writes may only reference variables declared in shared state or
-  game_ir.
-- For branching nodes, planned interactables, clues, micro-activities, or
-  speech/action choices must make the branch playable before the outcome.
-- For multi-incoming nodes, include entry variant handling.
+- Keep the plan minimal: `source_node_id`, `outcomes`, and optional short
+  `notes`. Do not add separate fields for verbs, clues, micro-activities,
+  presentation, assets, or source trace.
+- Outcome labels are optional. Add labels only when the outcome should become a
+  visible player choice.
 - For terminal nodes, include terminal variant notes when graph state exposes
   ending, route-family, or other final-resolution state.
 
@@ -306,19 +303,21 @@ Inputs:
 
 Task:
 Write exactly one Advanced VN Scene IR payload for the assigned source node.
-The file should define visible beats, presentation, interactables, clues,
-micro-activities, state reads/writes, outcome bindings, and terminal variants.
+The file should define only visible beats, optional interactables, outcome
+bindings, and optional terminal variants.
 Do not write Yarn, JavaScript, CSS, engine code, or runtime UI implementation.
 
 Hard requirements:
-- Preserve source_node_id and advanced_unit_id from the scene plan.
+- Preserve source_node_id from the scene plan.
 - Every outgoing public edge in the plan must appear exactly once in outcomes.
-- Every interactable must produce visible feedback or unlock a clue, state
-  change, micro-activity, or outcome.
-- Every required clue and micro-activity from the plan must be represented.
-- Every state read must affect visible variation, available interaction,
-  unlocked clue, outcome condition, or terminal variant.
-- State writes may only reference declared state variables.
+- Every interactable must have a label and visible text feedback.
+- Use only these top-level Scene IR fields unless metadata is needed:
+  `source_node_id`, `title`, `beats`, `interactables`, `outcomes`,
+  `ending_variants`.
+- Do not add top-level `presentation`, `clues`, `micro_activities`,
+  `state_reads`, `asset_refs`, or `source_trace`.
+- State reads are represented by `conditions`; state writes use `state_writes`.
+  Both may only reference declared state variables.
 - Terminal variants resolve from state unless the plan explicitly requires a
   visible ending menu.
 - Player-visible text must be <target-language> and must not expose workflow
@@ -333,8 +332,7 @@ Before finishing, self-check:
 - output path matches source_node_id.
 - outcomes cover the planned public edges exactly once.
 - all state refs are declared.
-- every planned interactable, clue, micro-activity, and terminal variant is
-  represented or explicitly justified in metadata.notes.
+- unsupported top-level fields are absent.
 
 Return changed path and feedback.
 ```
@@ -468,6 +466,7 @@ After accepted `AdvancedVNSceneDesigner` Scene IR files are present, run:
 
 ```bash
 python3 scripts/run_pipeline.py validate-advanced-vn --run-root <run-root>
+python3 scripts/run_pipeline.py build --post-design advanced-vn --run-root <run-root> --skip-assets
 ```
 
 For final/runtime visual or audio production, omit `--skip-assets` and follow
