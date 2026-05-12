@@ -45,6 +45,9 @@ ASSET_PREFIXES = (
     "itemicon.",
     "skillicon.",
     "equipicon.",
+    "bgm.",
+    "sfx.",
+    "voice.",
 )
 
 
@@ -81,14 +84,71 @@ def load_collection(run_root: Path, name: str) -> tuple[list[Json], str | None]:
     return coerce_collection(payload, keys), relative
 
 
-def normalize_grid(value: Any, width: int, height: int, fill: Any) -> list[list[Any]]:
-    rows = value if isinstance(value, list) else []
-    normalized: list[list[Any]] = []
-    for y in range(height):
-        source_row = rows[y] if y < len(rows) and isinstance(rows[y], list) else []
-        row = [source_row[x] if x < len(source_row) else fill for x in range(width)]
-        normalized.append(row)
-    return normalized
+def valid_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def normalize_collision_shapes(value: Any, width: int, height: int, result: ValidationResult, path: str) -> list[Json]:
+    shapes: list[Json] = []
+    for index, shape in enumerate(as_list(value)):
+        if not isinstance(shape, dict):
+            result.add("warning", "collision_shape", "Collision shape must be an object; skipped.", f"{path}[{index}]")
+            continue
+        shape_type = shape.get("type")
+        if shape_type == "polygon":
+            points = shape.get("points")
+            if not isinstance(points, list) or len(points) < 3:
+                result.add("warning", "collision_shape", "Polygon collision shape needs at least three points; skipped.", f"{path}[{index}].points")
+                continue
+            normalized_points = []
+            valid = True
+            for point_index, point in enumerate(points):
+                if (
+                    not isinstance(point, list)
+                    or len(point) != 2
+                    or not isinstance(point[0], (int, float))
+                    or not isinstance(point[1], (int, float))
+                ):
+                    result.add("warning", "collision_shape", "Polygon point must be [x, y]; skipped shape.", f"{path}[{index}].points[{point_index}]")
+                    valid = False
+                    break
+                normalized_points.append([max(0, min(width, float(point[0]))), max(0, min(height, float(point[1])))])
+            if valid:
+                shapes.append({**shape, "points": normalized_points})
+            continue
+        if shape_type == "rect":
+            if all(isinstance(shape.get(key), (int, float)) for key in ("x", "y", "w", "h")):
+                shapes.append({
+                    **shape,
+                    "x": max(0, min(width, float(shape["x"]))),
+                    "y": max(0, min(height, float(shape["y"]))),
+                    "w": max(0, min(width, float(shape["w"]))),
+                    "h": max(0, min(height, float(shape["h"]))),
+                })
+            else:
+                result.add("warning", "collision_shape", "Rect collision shape needs x, y, w, h; skipped.", f"{path}[{index}]")
+            continue
+        result.add("warning", "collision_shape", f"Unsupported collision shape type: {shape_type}", f"{path}[{index}].type")
+    return shapes
+
+
+def load_boundary_payload(run_root: Path, map_payload: Json, map_path: Path) -> tuple[Any, str | None]:
+    candidates: list[Path] = []
+    boundary_file = map_payload.get("boundary_file") or map_payload.get("boundaries_file")
+    if isinstance(boundary_file, str) and boundary_file:
+        candidates.append((map_path.parent / boundary_file).resolve())
+        candidates.append((run_root / boundary_file).resolve())
+    map_id = map_payload.get("id")
+    stem = map_path.name.removesuffix(".map.json")
+    candidates.append(run_root / "workspace" / "rpg" / "boundaries" / f"{stem}.boundaries.json")
+    if isinstance(map_id, str):
+        candidates.append(run_root / "workspace" / "rpg" / "boundaries" / f"{map_id}.boundaries.json")
+        if map_id.startswith("map."):
+            candidates.append(run_root / "workspace" / "rpg" / "boundaries" / f"{map_id.removeprefix('map.')}.boundaries.json")
+    for candidate in candidates:
+        if candidate.exists():
+            return load_optional_json(candidate), str(candidate.relative_to(run_root))
+    return None, None
 
 
 def load_maps(run_root: Path, result: ValidationResult) -> list[Json]:
@@ -109,20 +169,41 @@ def load_maps(run_root: Path, result: ValidationResult) -> list[Json]:
             map_id = path.name.removesuffix(".map.json")
             payload["id"] = map_id
             result.add("warning", "map_id", "Map id missing; inferred from filename.", f"{relative}.id")
+        payload["coordinate_system"] = "pixels"
         width = payload.get("width")
         height = payload.get("height")
-        if not isinstance(width, int) or width < 4:
-            width = 12
+        default_width = 1280
+        default_height = 720
+        if not isinstance(width, int):
+            width = default_width
             payload["width"] = width
-            result.add("warning", "map_width", "Map width missing or too small; normalized to 12.", f"{relative}.width")
-        if not isinstance(height, int) or height < 4:
-            height = 8
+            result.add("warning", "map_width", f"Map width missing; normalized to {default_width}.", f"{relative}.width")
+        elif width < 64:
+            result.add("error", "map_width", "Pixel-native map width must be at least 64 pixels; tile-sized maps are not supported.", f"{relative}.width")
+        if not isinstance(height, int):
+            height = default_height
             payload["height"] = height
-            result.add("warning", "map_height", "Map height missing or too small; normalized to 8.", f"{relative}.height")
+            result.add("warning", "map_height", f"Map height missing; normalized to {default_height}.", f"{relative}.height")
+        elif height < 64:
+            result.add("error", "map_height", "Pixel-native map height must be at least 64 pixels; tile-sized maps are not supported.", f"{relative}.height")
         layers = payload.get("layers") if isinstance(payload.get("layers"), dict) else {}
-        ground = normalize_grid(layers.get("ground"), width, height, "grass")
-        collision = normalize_grid(layers.get("collision"), width, height, 0)
+        ground = layers.get("ground") if isinstance(layers.get("ground"), list) else []
+        collision = layers.get("collision") if isinstance(layers.get("collision"), list) else []
         payload["layers"] = {**layers, "ground": ground, "collision": collision}
+        shape_source = payload.get("collision_shapes")
+        boundary_payload, boundary_source = load_boundary_payload(run_root, payload, path)
+        if isinstance(boundary_payload, dict):
+            shape_source = boundary_payload.get("collision_shapes") or boundary_payload.get("shapes") or shape_source
+            payload["boundary_source_path"] = boundary_source
+            if isinstance(boundary_payload.get("walkable_mask_ref"), str):
+                payload["walkable_mask_ref"] = boundary_payload["walkable_mask_ref"]
+            if isinstance(boundary_payload.get("boundary_source"), dict):
+                payload["boundary_source"] = boundary_payload["boundary_source"]
+            if isinstance(boundary_payload.get("walkable_hint"), dict):
+                payload["walkable_hint"] = boundary_payload["walkable_hint"]
+        elif boundary_payload is not None:
+            result.add("warning", "boundary_json", "Boundary payload must be an object; ignored.", boundary_source or relative)
+        payload["collision_shapes"] = normalize_collision_shapes(shape_source, width, height, result, f"{relative}.collision_shapes")
         events = [event for event in as_list(payload.get("events")) if isinstance(event, dict)]
         for index, event in enumerate(events):
             if not isinstance(event.get("id"), str):
@@ -130,7 +211,7 @@ def load_maps(run_root: Path, result: ValidationResult) -> list[Json]:
                 result.add("warning", "event_id", "Map event id missing; inferred stable id.", f"{relative}.events[{index}].id")
             x = event.get("x")
             y = event.get("y")
-            if not isinstance(x, int) or not isinstance(y, int) or x < 0 or y < 0 or x >= width or y >= height:
+            if not valid_number(x) or not valid_number(y) or x < 0 or y < 0 or x >= width or y >= height:
                 result.add("error", "event_position", "Map event position must be inside map bounds.", f"{relative}.events[{index}]")
         payload["events"] = events
         payload["source_path"] = relative
@@ -173,6 +254,42 @@ def actor_stats_valid(actor: Json) -> bool:
     return all(isinstance(stats.get(key), (int, float)) and stats[key] > 0 for key in ("hp", "attack"))
 
 
+def validate_position(result: ValidationResult, value: Any, path: str) -> Json | None:
+    if not isinstance(value, dict):
+        result.add("error", "position", "Position must be an object with numeric x and y.", path)
+        return None
+    if not valid_number(value.get("x")) or not valid_number(value.get("y")):
+        result.add("error", "position", "Position must include numeric x and y.", path)
+        return None
+    return value
+
+
+def campaign_entry_points(campaign: Json, start_map_id: Any, start_position: Json, party: list[Any]) -> list[Json]:
+    entries = as_list(campaign.get("entry_points"))
+    if entries:
+        return [entry for entry in entries if isinstance(entry, dict)]
+    return [{
+        "id": "entry.default",
+        "title": "Start",
+        "description": "Begin from the campaign default start.",
+        "start_map_id": start_map_id,
+        "start_position": start_position,
+        "party": party,
+    }]
+
+
+def sanitize_asset_token(value: Any) -> str:
+    text = str(value or "").strip().removeprefix("map.")
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text).strip("._-")
+    return cleaned or "default"
+
+
+def ensure_map_bgm_assets(maps: list[Json]) -> None:
+    for game_map in maps:
+        if not isinstance(game_map.get("bgm_asset_id"), str):
+            game_map["bgm_asset_id"] = f"bgm.{sanitize_asset_token(game_map.get('id'))}"
+
+
 def compile_rpg_manifest(run_root: Path) -> tuple[Json, Json]:
     ensure_run_layout(run_root)
     result = ValidationResult()
@@ -188,6 +305,7 @@ def compile_rpg_manifest(run_root: Path) -> tuple[Json, Json]:
     maps = load_maps(run_root, result)
     if not maps:
         result.add("error", "missing_artifact", "Missing RPG map files under workspace/rpg/maps/*.map.json.", "workspace/rpg/maps")
+    ensure_map_bgm_assets(maps)
     map_ids = validate_unique_ids(result, maps, "map", "workspace/rpg/maps")
 
     collections: dict[str, list[Json]] = {}
@@ -214,9 +332,9 @@ def compile_rpg_manifest(run_root: Path) -> tuple[Json, Json]:
     if start_map_id not in map_ids:
         result.add("error", "start_map", "RPG campaign start_map_id must reference a map.", "workspace/rpg/rpg-campaign.json.start_map_id")
     start_position = campaign.get("start_position") if isinstance(campaign.get("start_position"), dict) else {}
-    if not isinstance(start_position.get("x"), int) or not isinstance(start_position.get("y"), int):
-        start_position = {"x": 1, "y": 1}
-        result.add("warning", "start_position", "Missing start_position; defaulted to {x:1,y:1}.", "workspace/rpg/rpg-campaign.json.start_position")
+    if not valid_number(start_position.get("x")) or not valid_number(start_position.get("y")):
+        start_position = {"x": 180, "y": 520}
+        result.add("warning", "start_position", "Missing start_position; defaulted to pixel position {x:180,y:520}.", "workspace/rpg/rpg-campaign.json.start_position")
 
     battle_events = 0
     for map_index, game_map in enumerate(maps):
@@ -252,12 +370,36 @@ def compile_rpg_manifest(run_root: Path) -> tuple[Json, Json]:
         if isinstance(actor_id, str) and actor_id not in actor_ids:
             result.add("error", "party_reference", f"Party references missing actor: {actor_id}", f"workspace/rpg/rpg-campaign.json.party[{index}]")
 
+    entry_points = campaign_entry_points(campaign, start_map_id, start_position, party)
+    entry_ids: set[str] = set()
+    for index, entry in enumerate(entry_points):
+        entry_path = f"workspace/rpg/rpg-campaign.json.entry_points[{index}]"
+        entry_id = entry.get("id")
+        if not isinstance(entry_id, str) or not entry_id:
+            result.add("error", "entry_point", "Entry point needs id.", f"{entry_path}.id")
+        elif entry_id in entry_ids:
+            result.add("error", "duplicate_id", f"Duplicate entry point id: {entry_id}", f"{entry_path}.id")
+        else:
+            entry_ids.add(entry_id)
+        entry_map_id = entry.get("start_map_id", start_map_id)
+        if entry_map_id not in map_ids:
+            result.add("error", "entry_point_map", f"Entry point references missing map: {entry_map_id}", f"{entry_path}.start_map_id")
+        validate_position(result, entry.get("start_position", start_position), f"{entry_path}.start_position")
+        entry_party = as_list(entry.get("party")) or party
+        for party_index, actor_id in enumerate(entry_party):
+            if isinstance(actor_id, str) and actor_id not in actor_ids:
+                result.add("error", "entry_point_party", f"Entry point party references missing actor: {actor_id}", f"{entry_path}.party[{party_index}]")
+        for quest_index, quest_id in enumerate(as_list(entry.get("initial_quests"))):
+            if isinstance(quest_id, str) and quest_id not in quest_ids:
+                result.add("warning", "entry_point_quest", f"Entry point initial quest is not in quests: {quest_id}", f"{entry_path}.initial_quests[{quest_index}]")
+
     manifest: Json = {
         "metadata": {"schema_version": "0.1.0", "generated_by": "compile_rpg_manifest.py"},
         "target": "web-rpg",
         "title": campaign.get("title") or world_map.get("title") or "Generated RPG",
         "start_map_id": start_map_id,
         "start_position": start_position,
+        "entry_points": entry_points,
         "party": party,
         "campaign": campaign,
         "world_map": world_map,
@@ -270,6 +412,7 @@ def compile_rpg_manifest(run_root: Path) -> tuple[Json, Json]:
         "map_count": len(maps),
         "event_count": sum(len(as_list(game_map.get("events"))) for game_map in maps),
         "battle_event_count": battle_events,
+        "entry_point_count": len(entry_points),
         "actor_count": len(collections["actors"]),
         "enemy_count": len(collections["enemies"]),
         "quest_count": len(collections["quests"]),

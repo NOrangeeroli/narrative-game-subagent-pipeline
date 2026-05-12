@@ -15,6 +15,8 @@
           <p id="location"></p>
         </div>
         <div class="actions">
+          <button id="battleUiBtn" type="button">Battle UI</button>
+          <button id="boundaryBtn" type="button">Walls: Off</button>
           <button id="saveBtn" type="button">Save</button>
           <button id="loadBtn" type="button">Load</button>
         </div>
@@ -56,9 +58,10 @@
         <div id="heroStats"></div>
         <div id="enemyStats"></div>
       </div>
-      <div class="battle-actions">
+      <div id="battleActions" class="battle-actions">
         <button data-action="attack" type="button">Attack</button>
         <button data-action="skill" type="button">Skill</button>
+        <button data-action="guard" type="button">Guard</button>
         <button data-action="item" type="button">Item</button>
         <button data-action="flee" type="button">Flee</button>
       </div>
@@ -70,6 +73,43 @@
       <h2 id="endingTitle"></h2>
       <p id="endingText"></p>
       <button id="endingClose" type="button">Continue</button>
+    </div>
+  </div>
+
+  <div id="battleUiShowcase" class="overlay hidden" role="dialog" aria-modal="true">
+    <div class="battle-ui-box">
+      <div class="battle-ui-copy">
+        <h2 id="battleUiTitle"></h2>
+        <p id="battleUiText"></p>
+        <div id="battleUiFlow" class="battle-ui-flow"></div>
+        <ul id="battleUiFeatures"></ul>
+        <a id="battleUiLink" class="battle-ui-link" href="#" target="_blank" rel="noreferrer">Open source build</a>
+      </div>
+      <div id="battleUiScreen" class="sengoku-battle-screen">
+        <div class="sengoku-battle-top">
+          <span id="battleUiRoute"></span>
+          <span id="battleUiMap"></span>
+        </div>
+        <div id="battleUiPreview" class="battle-ui-preview"></div>
+        <div id="battleUiCombatants" class="battle-ui-combatants"></div>
+        <div id="battleUiStats" class="battle-ui-stats"></div>
+        <p id="battleUiLog" class="battle-ui-log"></p>
+        <div id="battleUiActions" class="battle-ui-actions"></div>
+      </div>
+      <div class="battle-ui-footer">
+        <button id="battleUiReset" type="button">Reset Battle</button>
+        <button id="battleUiClose" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="entrySelect" class="entry-select hidden" role="dialog" aria-modal="true">
+    <div class="entry-box">
+      <div>
+        <h2 id="entryTitle">Choose an Entry Point</h2>
+        <p id="entryText"></p>
+      </div>
+      <div id="entryOptions" class="entry-options"></div>
     </div>
   </div>
 

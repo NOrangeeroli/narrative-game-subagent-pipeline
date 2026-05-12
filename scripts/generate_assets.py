@@ -15,11 +15,14 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape
 
+from asset_audio_providers import generate_audio_file, resolve_audio_provider_model
 from asset_image_providers import GeneratedImage, generate_provider_images, resolve_provider_model
 from pipeline_lib import Json, as_list, ensure_dir, load_optional_json, path_for, read_json, write_json, write_text
 
@@ -194,12 +197,16 @@ def render_rpg_svg(asset: Json, role: str) -> str:
     secondary = hex_color(asset_id, 22, 42, 28)
     accent = hex_color(asset_id, 23, 68, 46)
     label = escape(asset_id.split(".")[-1][:12])
-    if role == "battle_background":
+    if role in ("battle_background", "map_asset"):
+        path_color = "#d8bd77" if role == "map_asset" else "#f7f2d7"
+        water = "#5f9ca9" if role == "map_asset" else accent
         return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
   <rect width="1280" height="720" fill="{secondary}" />
   <rect y="420" width="1280" height="300" fill="{primary}" opacity="0.72" />
-  <ellipse cx="640" cy="430" rx="390" ry="54" fill="#f7f2d7" opacity="0.22" />
+  <path d="M120 560 C300 460 420 440 585 355 C760 260 875 250 1160 190" fill="none" stroke="{path_color}" stroke-width="106" stroke-linecap="round" opacity="0.58" />
   <path d="M0 260 C220 190 320 300 520 230 C760 150 900 260 1280 170 L1280 0 L0 0 Z" fill="{accent}" opacity="0.48" />
+  <ellipse cx="340" cy="165" rx="190" ry="64" fill="{water}" opacity="0.36" />
+  <ellipse cx="860" cy="500" rx="220" ry="76" fill="#1f2b24" opacity="0.32" />
 </svg>
 '''
     if role == "tileset":
@@ -257,6 +264,54 @@ def extension_for_mime(mime_type: str) -> str:
     if normalized == "image/webp":
         return ".webp"
     return ".png"
+
+
+def audio_format_for_file_ref(file_ref: str) -> str:
+    suffix = Path(file_ref).suffix.lower().lstrip(".")
+    if suffix in ("mp3", "wav", "ogg", "m4a", "aac", "flac", "pcm"):
+        return suffix
+    return os.environ.get("AUDIO_FORMAT") or "wav"
+
+
+def audio_provider_for_kind(default_provider: str, kind: str, overrides: dict[str, str | None]) -> str:
+    normalized = kind.strip().lower()
+    env_name = {
+        "bgm": "AUDIO_BGM_PROVIDER",
+        "sfx": "AUDIO_SFX_PROVIDER",
+        "voice": "AUDIO_VOICE_PROVIDER",
+    }.get(normalized)
+    return overrides.get(normalized) or (os.environ.get(env_name) if env_name else None) or default_provider
+
+
+def strip_dialogue_quotes(value: str) -> str:
+    text = value.strip()
+    for left, right in (("“", "”"), ('"', '"'), ("'", "'")):
+        if text.startswith(left) and text.endswith(right) and len(text) >= len(left) + len(right):
+            return text[len(left): -len(right)].strip()
+    return text
+
+
+def spoken_voice_text(value: Any, speaker: Any = None) -> str:
+    text = str(value or "").strip()
+    speaker_text = str(speaker or "").strip()
+    if not text:
+        return ""
+    if speaker_text:
+        escaped = re.escape(speaker_text)
+        action_match = re.match(rf"^{escaped}[^“”\"']*[:：]\s*[“\"](.+?)[”\"]\s*$", text)
+        if action_match:
+            return action_match.group(1).strip()
+        prefix_match = re.match(rf"^{escaped}(?:心想|（心声）|\(心声\))?[:：]\s*(.+)$", text)
+        if prefix_match:
+            return strip_dialogue_quotes(prefix_match.group(1))
+    label_match = re.match(r"^([^:：“”\"'\n]{1,24})[:：]\s*(.+)$", text)
+    if label_match:
+        label = re.sub(r"\s+", "", label_match.group(1).strip())
+        rest = label_match.group(2).strip()
+        speaker_compact = re.sub(r"\s+", "", speaker_text)
+        if rest.startswith(("“", '"')) or (speaker_compact and (label in speaker_compact or speaker_compact in label)):
+            return strip_dialogue_quotes(rest)
+    return strip_dialogue_quotes(text)
 
 
 def write_image_as_png(output_path: Path, image: GeneratedImage, raw_path: Path | None = None) -> list[str]:
@@ -342,9 +397,11 @@ def build_rpg_asset_prompt(asset: Json, role: str, manifest: Json) -> str:
         return " ".join([
             description,
             f"Visual style: {style.get('rendering_mode', '2D RPG illustration')}.",
-            "Create a detailed top-down 2D RPG map background for a playable grid scene.",
-            "Show terrain, paths, landmarks, props, and mood clearly from an overhead game-camera angle.",
-            "No UI, no labels, no readable text, no characters as the focus.",
+            "Create a detailed 16:9 top-down 2D RPG map background for a playable scene.",
+            "Fill the entire 16:9 canvas edge to edge; do not add black bars, letterboxing, side padding, UI frames, or empty margins.",
+            "Show terrain, walkable paths, blockers, landmarks, entrances, exits, and collision-relevant terrain boundaries clearly from an overhead game-camera angle.",
+            "Do not draw debug overlays, colored collision masks, outlines, grid labels, arrows, callouts, readable text, UI, or characters as the focus.",
+            "The formal collision boundary export is authored separately as pixel-coordinate JSON and preview overlays, not baked into this background image.",
         ])
     if role == "battle_background":
         return " ".join([
@@ -367,16 +424,58 @@ def build_rpg_asset_prompt(asset: Json, role: str, manifest: Json) -> str:
     ])
 
 
+def build_audio_prompt(audio: Json, manifest: Json) -> str:
+    spec = audio.get("spec") if isinstance(audio.get("spec"), dict) else {}
+    style = manifest.get("style_bible") if isinstance(manifest.get("style_bible"), dict) else {}
+    kind = str(audio.get("kind") or "").lower()
+    description = str(spec.get("description") or audio.get("description") or audio.get("asset_id") or "audio cue")
+    mood = str(spec.get("mood") or audio.get("mood") or style.get("lighting_mood") or "")
+    if kind == "voice":
+        text = spoken_voice_text(
+            spec.get("text") or spec.get("line_text") or audio.get("text") or "",
+            spec.get("speaker") or audio.get("speaker"),
+        )
+        if not text:
+            raise RuntimeError(f"Voice asset {audio.get('asset_id', '<unknown>')} requires exact dialogue text.")
+        return text
+    if kind == "sfx":
+        return " ".join([
+            f"Short RPG sound effect: {description}.",
+            f"Mood: {mood}." if mood else "",
+            "Keep it concise, non-musical, and suitable for a single interaction cue.",
+        ]).strip()
+    return " ".join([
+        f"Instrumental RPG background music cue: {description}.",
+        f"Mood: {mood}." if mood else "",
+        "Loop-friendly arrangement, no vocals, no lyrics, supports dialogue readability.",
+    ]).strip()
+
+
 def remote_rpg_asset_shape(role: str) -> tuple[str, str]:
     if role == "battle_background":
         return "background", "16:9"
     if role == "map_asset":
-        return "background", "4:3"
+        return "background", "16:9"
     return "asset", "1:1"
 
 
-def generate_assets(run_root: Path, provider: str | None = "local-svg", model: str | None = None, overwrite: bool = False, remove_backgrounds: bool = True) -> Json:
+def generate_assets(
+    run_root: Path,
+    provider: str | None = "local-svg",
+    model: str | None = None,
+    overwrite: bool = False,
+    remove_backgrounds: bool = True,
+    audio_provider: str | None = None,
+    audio_model: str | None = None,
+    audio_fallback_provider: str | None = None,
+    bgm_provider: str | None = None,
+    sfx_provider: str | None = None,
+    voice_provider: str | None = None,
+) -> Json:
     provider = provider or os.environ.get("IMAGE_ASSET_PROVIDER") or "local-svg"
+    audio_provider_id = audio_provider or os.environ.get("AUDIO_ASSET_PROVIDER") or os.environ.get("AUDIO_PROVIDER") or "mock"
+    audio_fallback_provider = audio_fallback_provider or os.environ.get("AUDIO_FALLBACK_PROVIDER")
+    audio_provider_overrides = {"bgm": bgm_provider, "sfx": sfx_provider, "voice": voice_provider}
     asset_manifest = load_optional_json(path_for(run_root, "asset_manifest"))
     if not asset_manifest:
         raise SystemExit("Missing workspace/asset-manifest.json. Run plan_assets.py first.")
@@ -580,13 +679,67 @@ def generate_assets(run_root: Path, provider: str | None = "local-svg", model: s
             })
 
     for audio in as_list(asset_manifest.get("audio")):
-        if isinstance(audio, dict):
-            warnings.append(f"Audio asset planned but not generated by v1 generator: {audio.get('asset_id')}")
+        if not isinstance(audio, dict):
+            continue
+        asset_id = str(audio.get("asset_id") or "audio")
+        file_ref = audio.get("file_ref")
+        if not isinstance(file_ref, str) or not file_ref.strip():
+            warnings.append(f"Skipped audio asset without file_ref: {asset_id}.")
+            continue
+        output_path = output_root / file_ref
+        if output_path.exists() and not overwrite:
+            warnings.append(f"Skipped existing audio asset {asset_id} at {file_ref}.")
+            continue
+        audio_kind = str(audio.get("kind") or asset_id.split(".", 1)[0] or "bgm")
+        prompt = build_audio_prompt(audio, asset_manifest)
+        prompt_path = prompt_root / f"{sanitize_file_stem(asset_id)}.txt"
+        write_text(prompt_path, prompt + "\n")
+        notes: list[str] = []
+        if maybe_copy_provider_hint(run_root, audio, output_path):
+            provider_used = "provider_hint"
+            notes.append("copied provider_hints source")
+        elif audio_provider_id in ("none", "skip"):
+            warnings.append(f"Audio asset planned but skipped by audio provider setting: {asset_id}.")
+            continue
+        else:
+            provider_for_asset = audio_provider_for_kind(audio_provider_id, audio_kind, audio_provider_overrides)
+            generation = generate_audio_file(
+                provider=provider_for_asset,
+                asset=audio,
+                prompt=prompt,
+                output_path=output_path,
+                audio_kind=audio_kind,
+                model=audio_model,
+                expected_format=audio_format_for_file_ref(file_ref),
+                output_root=output_root,
+                fallback_provider=audio_fallback_provider,
+            )
+            provider_used = str(generation["provider"])
+            notes.append(f"wrote audio ({generation['mime_type']}, {generation['bytes']} bytes)")
+            if generation.get("source_url_present"):
+                notes.append("downloaded provider audio URL")
+            if generation.get("fallback_from"):
+                warnings.append(
+                    f"Audio provider {generation['fallback_from']} failed for {asset_id}; "
+                    f"fell back to {provider_used}: {generation.get('primary_error')}"
+                )
+        entries.append({
+            "asset_id": asset_id,
+            "role": audio_kind,
+            "prompt": prompt,
+            "prompt_ref": str(prompt_path.relative_to(output_root)),
+            "provider": provider_used,
+            "model": resolve_audio_provider_model(provider_used, audio_model, audio_kind),
+            "output_files": [str(output_path)],
+            "notes": notes,
+        })
 
     report = {
         "project_id": asset_manifest.get("project_id", "generated"),
         "provider": provider,
         "model": model_id,
+        "audio_provider": audio_provider_id,
+        "audio_model": audio_model,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "output_root": str(output_root),
         "entries": entries,
@@ -602,6 +755,12 @@ def main() -> None:
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--provider", default=None)
     parser.add_argument("--model", default=None)
+    parser.add_argument("--audio-provider", default=None)
+    parser.add_argument("--audio-model", default=None)
+    parser.add_argument("--audio-fallback-provider", default=None)
+    parser.add_argument("--bgm-provider", default=None)
+    parser.add_argument("--sfx-provider", default=None)
+    parser.add_argument("--voice-provider", default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-remove-backgrounds", action="store_false", dest="remove_backgrounds")
     parser.set_defaults(remove_backgrounds=True)
@@ -613,6 +772,12 @@ def main() -> None:
         model=args.model,
         overwrite=args.overwrite,
         remove_backgrounds=args.remove_backgrounds,
+        audio_provider=args.audio_provider,
+        audio_model=args.audio_model,
+        audio_fallback_provider=args.audio_fallback_provider,
+        bgm_provider=args.bgm_provider,
+        sfx_provider=args.sfx_provider,
+        voice_provider=args.voice_provider,
     )
     print(json.dumps({"report": str(path_for(Path(args.run_root).resolve(), "asset_generation_report")), "entries": len(report["entries"])}, indent=2))
 

@@ -407,8 +407,11 @@ Every runtime-facing visual asset must have a stable `asset_id` and a `file_ref`
 Supported generation providers:
 
 - `local-svg`: deterministic offline fallback for immediate playable exports.
-- `mock`: tiny placeholder PNGs for pipeline tests.
 - `gemini`: model-backed image generation using `GEMINI_API_KEY`.
 - `openai-ppioImage`: PPIO image generation using `IMAGE_API_KEY`, `IMAGE_MODEL`, optional `IMAGE_BASE_URL`, `IMAGE_RESPONSE_TYPE`, `IMAGE_EXTRA_PARAMS`, and `IMAGE_REWRITE_RULES`.
+
+Do not choose the image `mock` provider for normal game generation prompts.
+Use `local-svg` for low-tier visual fallback and reserve `mock` only for
+internal pipeline tests that explicitly request it.
 
 Portrait post-processing attempts `rembg` background removal when available; `reports/asset-validation.json` must catch missing portrait transparency.

@@ -1,6 +1,6 @@
 interface:
   display_name: "Narrative Game Pipeline"
   short_description: "Build branching games with subagents"
-  default_prompt: "Use $narrative-game-subagent-pipeline to generate a playable branching narrative game from my prompt."
+  default_prompt: "Use $narrative-game-subagent-pipeline to generate a playable branching narrative game from my prompt. If my prompt does not specify the target or asset quality tier, ask before initializing. For final-quality Web RPG assets, generate full-frame 16:9 still map art and player walking animation through Sprite Forge/provider_hints first; then derive boundaries from visual-QA-driven imagegen walkable masks where bright cyan marks actual route-walkable space, not material names, so flowers/grass/leaf surfaces/leaves/shallow water can be walkable when designed that way, and non-blocking perspective occluders should be bridged through/under to keep routes connected; then use PPIO Veo 3.1 Fast first/last-frame I2V for seamless looping dynamic map backgrounds, treating still backgrounds only as fallback; use local-svg only for low-tier or failed fallback."
 policy:
   allow_implicit_invocation: true

@@ -151,9 +151,9 @@ def generate_ppio_images(
     aspect_ratio: str,
     expected_count: int,
 ) -> list[GeneratedImage]:
-    api_key = os.environ.get("IMAGE_API_KEY")
+    api_key = os.environ.get("IMAGE_API_KEY") or os.environ.get("PPIO_API_KEY")
     if not api_key:
-        raise RuntimeError("PPIO image generation requires IMAGE_API_KEY.")
+        raise RuntimeError("PPIO image generation requires IMAGE_API_KEY or PPIO_API_KEY.")
     endpoint = build_ppio_endpoint(model)
     payload = configure_ppio_payload({
         "prompt": prompt,
@@ -349,7 +349,7 @@ def configure_ppio_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def resolve_image_size(aspect_ratio: str) -> str:
     extra = parse_json_env("IMAGE_EXTRA_PARAMS", {})
     size_map = extra.get("size_map") if isinstance(extra, dict) else None
-    default = {"16:9": "1536x1024", "3:2": "1536x1024", "2:3": "1024x1536", "default": "1024x1024"}
+    default = {"16:9": "2048x1152", "3:2": "1536x1024", "2:3": "1024x1536", "default": "1024x1024"}
     if isinstance(size_map, dict):
         default.update({str(k): str(v) for k, v in size_map.items() if isinstance(v, str)})
     return default.get(aspect_ratio) or default["default"]

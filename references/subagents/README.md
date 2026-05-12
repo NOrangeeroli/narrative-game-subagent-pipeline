@@ -40,3 +40,26 @@ These agents are used only for explicit `--target web-rpg` runs. They are parall
 | RPGMapBuilder | `post-design/rpg/RPGMapBuilder.md` | `workspace/rpg/maps/*.map.json` |
 | RPGContentWriter | `post-design/rpg/RPGContentWriter.md` | `workspace/rpg/actors.json`, `enemies.json`, `items.json`, `skills.json`, `quests.json`, `npc-dialogue.json` |
 | RPGBalanceReviewer | `post-design/rpg/RPGBalanceReviewer.md` | Review findings or repaired RPG balance payloads |
+
+## Audio Asset Generation
+
+These agents are used for final-quality audio runs. The controller resolves
+provider configuration first, then runs BGM, SFX, and voice agents as separate
+parallel groups when possible. They must not use `mock` fallback unless the
+user explicitly approved fallback for the run.
+
+| Agent | Role Card | Canonical Output |
+| --- | --- | --- |
+| BGMAudioGenerator | `audio/BGMAudioGenerator.md` | `reports/bgm-audio-generation-report.json` |
+| SFXAudioGenerator | `audio/SFXAudioGenerator.md` | `reports/sfx-audio-generation-report.json` |
+| VoiceAudioGenerator | `audio/VoiceAudioGenerator.md` | `reports/voice-audio-generation-report.json` |
+
+## Background Asset Generation
+
+RPG backgrounds are a single owned workflow, not separate static, boundary, and
+dynamic agents.
+
+| Agent | Role Card | Canonical Output |
+| --- | --- | --- |
+| RPGBackgroundGenerator | `background/RPGBackgroundGenerator.md` | `reports/rpg-background-generation-report.json`; also owns RPG boundary reports and `bgv.*` media |
+| VNBackgroundGenerator | `background/VNBackgroundGenerator.md` | `reports/vn-background-generation-report.json` |
