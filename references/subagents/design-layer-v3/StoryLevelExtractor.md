@@ -13,6 +13,18 @@ Read only the role card and the controller packet for this shard. A fine-level
 packet may include assigned source chunks. A higher-level packet should include
 only assigned lower-level story units and controller scale notes.
 
+For source-adaptation fine-level extraction, assigned source chunks are coverage
+requirements, not examples. Extract every chunk/span listed in the packet. If
+the packet is one shard of a long source, do not infer that omitted chapters are
+irrelevant; they belong to sibling shards owned by the controller. If any
+assigned chunk cannot be processed, report that failure instead of silently
+compressing or skipping it.
+
+For the coarsest enabled story level, the controller packet must be global, not
+a shard. It should include every immediate lower-level story unit so this worker
+can produce one global story line and one coarsest fact view before adaptation
+policy or graph/state design begins.
+
 ## Output
 
 Return a partial or complete `linear_story.json` payload for exactly one level:
@@ -110,6 +122,9 @@ the protagonist's action, its effect, or its later payoff.
 - Do not inspect sibling shard packets.
 - Do not design graph topology, state variables, dialogue, assets, or runtime code.
 - Preserve parent/child trace fields requested by the controller.
+- Cover every source chunk/span assigned in this packet. Preserve `source_refs`
+  on fine-level units and facts so the controller can audit full-source
+  coverage across shard returns.
 - Do not postpone obvious canon facts; fact capture is part of this role.
 - Do not omit protagonist action beats when the assigned story material includes
   protagonist behavior that changes access, knowledge, relationship, risk,

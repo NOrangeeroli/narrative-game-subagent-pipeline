@@ -3,7 +3,7 @@
 
 This is the reusable counterpart to project-specific motion scripts. It reads
 `workspace/asset-manifest.json`, creates animated map background GIFs under
-`generated/videos/`, and creates simple idle motion GIFs under
+`generated/videos/`, and creates simple idle/walk motion GIFs under
 `generated/rpg-motion/`. The Web RPG exporter automatically binds these by
 asset id stem.
 """
@@ -152,6 +152,51 @@ def create_idle_motion(source: Path, destination: Path, size: int, frames: int) 
         ])
 
 
+def create_walk_motion(source: Path, destination: Path, size: int, frames: int) -> None:
+    ensure_dir(destination.parent)
+    x_offsets = [-7, -3, 3, 7, 3, -3, -7, 0]
+    y_offsets = [2, -5, 1, -6, 2, -4, 1, -2]
+    scales = [0.84, 0.88, 0.84, 0.88, 0.84, 0.88, 0.84, 0.86]
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        frame_paths: list[Path] = []
+        for index in range(frames):
+            frame = temp / f"frame-{index:03d}.png"
+            scale = scales[index % len(scales)]
+            frame_size = max(1, int(size * scale))
+            x_offset = x_offsets[index % len(x_offsets)]
+            y_offset = y_offsets[index % len(y_offsets)]
+            run([
+                "magick",
+                "-size",
+                f"{size}x{size}",
+                "xc:none",
+                str(source),
+                "-background",
+                "none",
+                "-resize",
+                f"{frame_size}x{frame_size}",
+                "-gravity",
+                "center",
+                "-geometry",
+                f"{x_offset:+d}{y_offset:+d}",
+                "-composite",
+                str(frame),
+            ])
+            frame_paths.append(frame)
+        run([
+            "magick",
+            "-delay",
+            "8",
+            "-dispose",
+            "Background",
+            *[str(path) for path in frame_paths],
+            "-loop",
+            "0",
+            str(destination),
+        ])
+
+
 def media_assets(manifest: Json, sections: list[str]) -> list[Json]:
     assets: list[Json] = []
     for section in sections:
@@ -189,6 +234,14 @@ def generate(run_root: Path, overwrite: bool, map_width: int, fps: int, frames: 
             create_idle_motion(source, destination, size=160 if asset_id.startswith("sprite.") else 144, frames=8)
             status = "generated"
         entries.append({"asset_id": f"motion.{asset_id}.idle", "source": str(source), "output": str(destination), "status": status, "bytes": destination.stat().st_size})
+        if asset_id.startswith(("sprite.", "enemy.")):
+            walk_destination = output_root / MOTION_ROOT / f"motion.{asset_id}.walk.gif"
+            if walk_destination.exists() and not overwrite:
+                walk_status = "skipped"
+            else:
+                create_walk_motion(source, walk_destination, size=160 if asset_id.startswith("sprite.") else 144, frames=8)
+                walk_status = "generated"
+            entries.append({"asset_id": f"motion.{asset_id}.walk", "source": str(source), "output": str(walk_destination), "status": walk_status, "bytes": walk_destination.stat().st_size})
     report = {
         "status": "pass",
         "entries": entries,

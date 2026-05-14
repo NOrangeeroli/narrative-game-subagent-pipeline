@@ -1,0 +1,29 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 2,
+  "level_id": "level_02",
+  "granularity": "arc",
+  "units": [
+    {
+      "id": "story.l2.archive_arc",
+      "title": "Archive Oath Arc",
+      "summary": "Ara moves from finding the hidden key to opening the oath ledger with Niko.",
+      "sequence_index": 1,
+      "source_refs": [],
+      "child_unit_ids": ["story.l1.ch01", "story.l1.ch02"],
+      "parent_unit_id": null,
+      "key_events": ["event.arrival", "event.key_found", "event.ledger_open"],
+      "characters": ["char.ara", "char.niko"],
+      "locations": ["loc.archive"],
+      "open_questions": ["What oath did the archive hide?"],
+      "resolved_questions": ["What does the key open?"],
+      "reader_experience": {
+        "known_now": "A key and ledger are linked.",
+        "active_question": "What hidden oath will be revealed?",
+        "withheld_information": "The oath's cost.",
+        "emotional_purpose": "slow-burn mystery",
+        "hook": "The ledger opens on Ara's name."
+      }
+    }
+  ]
+}

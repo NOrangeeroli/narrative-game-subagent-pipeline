@@ -177,7 +177,7 @@ def validate_assets(run_root: Path, asset_mode: str = "auto") -> Json:
             issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "not_inspectable", "message": "ImageMagick could not inspect generated image."})
             return
         if require_transparency and not has_transparency(path):
-            issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "portrait_missing_transparency", "message": "Portrait output is not transparent."})
+            issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "missing_transparency", "message": f"{role} output is not transparent."})
         if role == "background" and (int(info["width"]) < 640 or int(info["height"]) < 360):
             warnings.append(f"Background {asset_id} is small: {info['width']}x{info['height']}.")
 
@@ -189,12 +189,6 @@ def validate_assets(run_root: Path, asset_mode: str = "auto") -> Json:
         if path.stat().st_size <= 0:
             issues.append({"asset_id": asset_id, "file_ref": file_ref, "code": "empty_file", "message": f"Generated {role} file is empty."})
 
-    for background in as_list(manifest.get("backgrounds")):
-        if isinstance(background, dict):
-            check_file(str(background.get("asset_id")), str(background.get("file_ref")), "background")
-    for cg in as_list(manifest.get("cgs")):
-        if isinstance(cg, dict):
-            check_file(str(cg.get("asset_id")), str(cg.get("file_ref")), "cg")
     for ui_asset in as_list(manifest.get("ui")):
         if isinstance(ui_asset, dict):
             check_file(str(ui_asset.get("asset_id")), str(ui_asset.get("file_ref")), "ui")
@@ -205,15 +199,6 @@ def validate_assets(run_root: Path, asset_mode: str = "auto") -> Json:
     for audio in as_list(manifest.get("audio")):
         if isinstance(audio, dict):
             check_binary_file(str(audio.get("asset_id")), str(audio.get("file_ref")), str(audio.get("kind") or "audio"))
-    for character in as_list(manifest.get("characters")):
-        if not isinstance(character, dict):
-            continue
-        for portrait in as_list(character.get("portrait_assets")):
-            if isinstance(portrait, dict):
-                check_file(str(portrait.get("asset_id")), str(portrait.get("file_ref")), "portrait", require_transparency=True)
-        canon_ref = character.get("canon_ref_file_ref")
-        if isinstance(canon_ref, str):
-            check_file(str(character.get("canon_ref_asset_id")), canon_ref, "canon", require_transparency=True)
     resolved_mode = resolve_asset_mode(asset_mode)
     if resolved_mode == "final-quality":
         check_final_quality_backgrounds(run_root, manifest, issues)

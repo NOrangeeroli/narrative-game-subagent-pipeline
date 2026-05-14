@@ -1,39 +1,28 @@
-# Narrative Game Subagent Pipeline
+# Narrative RPG Subagent Pipeline
 
-Codex skill for generating playable branching narrative games from a prompt through a structured artifact pipeline.
+Codex skill for generating playable narrative RPGs from a prompt through a structured artifact pipeline.
 
-The skill coordinates authoring subagents, validates canonical design artifacts, assembles Yarn-style narrative fragments, validates typed gameplay realization units, and exports playable Web VN and optional Unity project scaffolds.
+The skill coordinates authoring subagents, validates canonical design and RPG artifacts, binds story beats into maps, actors, objects, quests, scene scripts, assets, and exports a playable Web RPG.
 
 ## Contents
 
 - `SKILL.md`: controller instructions and quick-start workflow.
 - `references/`: artifact contracts, subagent prompts, and repair routing.
-- `scripts/`: deterministic pipeline tools for init, validation, assembly, export, and reporting.
-- `assets/`: Web VN and Unity export templates.
+- `scripts/`: deterministic pipeline tools for init, validation, RPG compilation, export, and reporting.
+- `assets/`: Web RPG export template.
 - `agents/`: sample agent configuration.
 
 ## Quick Start
 
 ```bash
 python3 scripts/run_pipeline.py init \
-  --prompt "A one-sentence game prompt" \
-  --run-root runs/my-game
-
-python3 scripts/run_pipeline.py build \
-  --run-root runs/my-game
-```
-
-For the RPG target:
-
-```bash
-python3 scripts/run_pipeline.py init \
   --prompt "A one-sentence RPG prompt" \
   --target web-rpg \
-  --run-root runs/my-rpg
+  --run-root runs/my-game
 
 python3 scripts/run_pipeline.py build \
   --target web-rpg \
-  --run-root runs/my-rpg
+  --run-root runs/my-game
 ```
 
 RPG campaigns can define multiple narrative entry points in

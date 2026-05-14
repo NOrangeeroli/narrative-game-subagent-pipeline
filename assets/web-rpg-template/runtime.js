@@ -26,6 +26,8 @@
   const skills = byId(data.skills);
   const restPoints = byId(data.rest_points);
   const shops = byId(data.shops);
+  const sceneScripts = byId(data.scene_scripts);
+  const sceneScriptList = Array.isArray(data.scene_scripts) ? data.scene_scripts.filter((script) => script && typeof script.id === "string") : [];
   const entryPoints = Array.isArray(data.entry_points) ? data.entry_points.filter((entry) => entry && typeof entry.id === "string") : [];
   const battleUiShowcase = data.campaign && typeof data.campaign.battle_ui_showcase === "object" ? data.campaign.battle_ui_showcase : null;
   const pendingAudio = [];
@@ -131,6 +133,10 @@
     quests: {},
     log: [],
     dialogue: null,
+    scene: null,
+    eventPositions: {},
+    eventHidden: {},
+    eventMoving: {},
     battle: null,
     battleUi: null,
     completed: false,
@@ -143,6 +149,7 @@
     map: document.getElementById("map"),
     party: document.getElementById("party"),
     questLog: document.getElementById("questLog"),
+    inventory: document.getElementById("inventory"),
     messageLog: document.getElementById("messageLog"),
     dialogue: document.getElementById("dialogue"),
     dialoguePortrait: document.getElementById("dialoguePortrait"),
@@ -269,6 +276,142 @@
     return maps[state.mapId] || maps[Object.keys(maps)[0]] || fallbackMap;
   }
 
+  function mapEvents(gameMap = currentMap()) {
+    return Array.isArray(gameMap.events) ? gameMap.events : [];
+  }
+
+  function eventStateKey(mapId, eventId) {
+    return `${mapId || state.mapId}:${eventId || ""}`;
+  }
+
+  function eventRuntimePosition(event, gameMap = currentMap()) {
+    const key = eventStateKey(gameMap.id, event.id);
+    const override = state.eventPositions[key] || state.eventPositions[event.id];
+    return {
+      x: Number((override && override.x) ?? event.x),
+      y: Number((override && override.y) ?? event.y),
+    };
+  }
+
+  function setEventRuntimePosition(mapId, eventId, x, y) {
+    if (!eventId) return;
+    state.eventPositions[eventStateKey(mapId || state.mapId, eventId)] = { x: Number(x), y: Number(y) };
+  }
+
+  function eventRuntimeHidden(event, gameMap = currentMap()) {
+    const key = eventStateKey(gameMap.id, event.id);
+    if (Object.prototype.hasOwnProperty.call(state.eventHidden, key)) return Boolean(state.eventHidden[key]);
+    if (Object.prototype.hasOwnProperty.call(state.eventHidden, event.id)) return Boolean(state.eventHidden[event.id]);
+    return Boolean(event.hidden);
+  }
+
+  function setEventRuntimeHidden(mapId, eventId, hidden) {
+    if (!eventId) return;
+    state.eventHidden[eventStateKey(mapId || state.mapId, eventId)] = Boolean(hidden);
+  }
+
+  function actorEventMotionRef(actorId) {
+    if (isPlayerActor(actorId)) return null;
+    const ref = sceneActorRef(actorId);
+    const event = eventForActor(actorId);
+    const eventId = (ref && ref.eventId) || (event && event.id);
+    if (!eventId) return null;
+    return { eventId, mapId: (ref && ref.mapId) || actorMapId(actorId) };
+  }
+
+  function directionFromDelta(dx, dy) {
+    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "right" : "left";
+    if (dy) return dy > 0 ? "down" : "up";
+    return "down";
+  }
+
+  function walkPhase(elapsed) {
+    return Math.floor(Number(elapsed || 0) / 0.11) % 4;
+  }
+
+  function walkPose(phase, direction = "down") {
+    const index = Number.isFinite(Number(phase)) ? Math.abs(Number(phase)) % 4 : 0;
+    const vertical = [0, -7, -1, -5][index];
+    const side = direction === "left" ? -1 : 1;
+    const horizontal = [0, 3 * side, 0, -3 * side][index];
+    const tilt = [0, 2.5 * side, -1 * side, -2.5 * side][index];
+    return { horizontal, vertical, tilt };
+  }
+
+  function applyWalkPose(element, phase, direction = "down") {
+    if (!element) return;
+    const pose = walkPose(phase, direction);
+    element.style.setProperty("--walk-sway", `${pose.horizontal}px`);
+    element.style.setProperty("--walk-bob", `${pose.vertical}px`);
+    element.style.setProperty("--walk-tilt", `${pose.tilt}deg`);
+  }
+
+  function clearWalkPose(element) {
+    if (!element) return;
+    element.style.removeProperty("--walk-sway");
+    element.style.removeProperty("--walk-bob");
+    element.style.removeProperty("--walk-tilt");
+  }
+
+  function normalizeMovingState(value) {
+    if (!value) return { direction: "", phase: 0 };
+    if (typeof value === "string") return { direction: value, phase: 0 };
+    if (typeof value === "object") {
+      return {
+        direction: value.direction || "",
+        phase: Number(value.phase || 0),
+      };
+    }
+    return { direction: "", phase: 0 };
+  }
+
+  function setEventMoving(ref, direction, elapsed = 0) {
+    if (!ref || !ref.eventId) return;
+    const key = eventStateKey(ref.mapId || state.mapId, ref.eventId);
+    if (direction) state.eventMoving[key] = { direction, phase: walkPhase(elapsed) };
+    else delete state.eventMoving[key];
+  }
+
+  function eventMovingState(event, gameMap = currentMap()) {
+    const key = eventStateKey(gameMap.id, event.id);
+    return normalizeMovingState(state.eventMoving[key] || state.eventMoving[event.id]);
+  }
+
+  function eventMovingDirection(event, gameMap = currentMap()) {
+    return eventMovingState(event, gameMap).direction;
+  }
+
+  function findEventById(eventId, mapId = state.mapId) {
+    if (!eventId) return null;
+    const gameMap = maps[mapId] || currentMap();
+    return mapEvents(gameMap).find((event) => event.id === eventId) || null;
+  }
+
+  function eventElement(ref) {
+    if (!state.worldEl || !ref || !ref.eventId) return null;
+    const key = eventStateKey(ref.mapId || state.mapId, ref.eventId);
+    return Array.from(state.worldEl.querySelectorAll(".event-sprite[data-event-key]"))
+      .find((node) => node.dataset.eventKey === key) || null;
+  }
+
+  function updateEventElementPosition(ref, x, y, direction = "", elapsed = 0) {
+    const marker = eventElement(ref);
+    if (!marker) return;
+    marker.style.left = `${coordToPx(x)}px`;
+    marker.style.top = `${coordToPx(y)}px`;
+    marker.classList.toggle("walking", Boolean(direction));
+    ["up", "right", "down", "left"].forEach((facing) => {
+      marker.classList.toggle(`moving-${facing}`, direction === facing);
+    });
+    if (direction) applyWalkPose(marker, walkPhase(elapsed), direction);
+    else clearWalkPose(marker);
+    const event = findEventById(ref.eventId, ref.mapId);
+    const eventAsset = event ? eventAssetId(event) : null;
+    const nextSprite = (direction ? motionAssetPath(eventAsset, "walk") : "") || motionAssetPath(eventAsset) || assetPath(eventAsset);
+    const img = marker.querySelector("img");
+    if (img && nextSprite && img.getAttribute("src") !== nextSprite) img.src = nextSprite;
+  }
+
   function assetPath(assetId) {
     return assetId && data.assets && data.assets[assetId] ? data.assets[assetId] : "";
   }
@@ -362,7 +505,8 @@
       lastVoiceKey = null;
       return;
     }
-    const key = `${state.dialogue ? state.dialogue.event.id : "dialogue"}:${state.dialogue ? state.dialogue.index : 0}:${assetId}`;
+    const dialogueKey = state.dialogue && (state.dialogue.sceneId || (state.dialogue.event && state.dialogue.event.id));
+    const key = `${dialogueKey || "dialogue"}:${state.dialogue ? state.dialogue.index : 0}:${assetId}`;
     if (key === lastVoiceKey) return;
     stopVoice();
     lastVoiceKey = key;
@@ -373,8 +517,8 @@
     }
   }
 
-  function motionAssetPath(assetId) {
-    return assetPath(assetId ? `motion.${assetId}.idle` : "");
+  function motionAssetPath(assetId, motion = "idle") {
+    return assetPath(assetId ? `motion.${assetId}.${motion}` : "");
   }
 
   function mapVideoPath(gameMap) {
@@ -549,6 +693,407 @@
     return true;
   }
 
+  function sceneTrigger(script) {
+    return script && typeof script.trigger === "object" ? script.trigger : {};
+  }
+
+  function sceneTriggerKind(script) {
+    const trigger = sceneTrigger(script);
+    return trigger.kind || trigger.type || "manual";
+  }
+
+  function sceneIsOnce(script) {
+    const trigger = sceneTrigger(script);
+    return script.once !== false && trigger.once !== false;
+  }
+
+  function scenePlayed(script) {
+    return sceneIsOnce(script) && Boolean(state.flags[`scene_started:${script.id}`] || state.flags[`scene_done:${script.id}`]);
+  }
+
+  function sceneConditionsPass(script) {
+    const trigger = sceneTrigger(script);
+    return conditionPasses(script.conditions) && conditionPasses(trigger.conditions);
+  }
+
+  function sceneMatchesTrigger(script, kind, event = null) {
+    if (!script || sceneTriggerKind(script) !== kind || scenePlayed(script) || !sceneConditionsPass(script)) return false;
+    const trigger = sceneTrigger(script);
+    const mapId = trigger.map_id || script.map_id;
+    if (mapId && mapId !== state.mapId) return false;
+    const eventId = trigger.event_id || script.event_id;
+    if (eventId && (!event || event.id !== eventId)) return false;
+    if (!eventId && event && kind !== "on_entry") {
+      const sceneId = event.scene_id || event.script_id;
+      if (sceneId && sceneId !== script.id) return false;
+      if (!sceneId && String(event.type || "") !== "scene") return false;
+    }
+    return true;
+  }
+
+  function canStartScene() {
+    return !state.scene && !state.dialogue && !state.battle && !state.battleUi && !(state.completed && !state.endingDismissed) && (!entrySelectRequired || state.entryId);
+  }
+
+  function maybeStartSceneTrigger(kind, event = null) {
+    if (!canStartScene()) return false;
+    const directSceneId = event && (event.scene_id || event.script_id);
+    if (directSceneId && sceneScripts[directSceneId]) {
+      const directScript = sceneScripts[directSceneId];
+      const directTrigger = sceneTrigger(directScript);
+      const directMapId = directTrigger.map_id || directScript.map_id;
+      if (!scenePlayed(directScript) && sceneConditionsPass(directScript) && (!directMapId || directMapId === state.mapId)) {
+        startScene(directScript, event);
+        return true;
+      }
+    }
+    const script = sceneScriptList.find((candidate) => sceneMatchesTrigger(candidate, kind, event));
+    if (!script) return false;
+    startScene(script, event);
+    return true;
+  }
+
+  function isPlayerActor(actorId) {
+    return !actorId || actorId === "player" || actorId === "hero" || actorId === state.hero.id || actorId === "actor.player";
+  }
+
+  function sceneActorRef(actorId) {
+    if (!state.scene || !actorId) return null;
+    return state.scene.actorEventByActor[actorId] || null;
+  }
+
+  function eventForActor(actorId) {
+    if (isPlayerActor(actorId)) return null;
+    const ref = sceneActorRef(actorId);
+    if (ref) return findEventById(ref.eventId, ref.mapId);
+    return mapEvents().find((event) => event.id === actorId || event.actor_id === actorId) || null;
+  }
+
+  function actorMapId(actorId) {
+    if (isPlayerActor(actorId)) return state.mapId;
+    const ref = sceneActorRef(actorId);
+    return ref && ref.mapId ? ref.mapId : state.mapId;
+  }
+
+  function actorPosition(actorId) {
+    if (isPlayerActor(actorId)) return { x: state.x, y: state.y, mapId: state.mapId };
+    const event = eventForActor(actorId);
+    const mapId = actorMapId(actorId);
+    if (!event) return { x: state.x, y: state.y, mapId };
+    const pos = eventRuntimePosition(event, maps[mapId] || currentMap());
+    return { x: pos.x, y: pos.y, mapId };
+  }
+
+  function setActorPosition(actorId, position, mapId = actorMapId(actorId)) {
+    if (!position || typeof position !== "object") return;
+    const x = Number(position.x);
+    const y = Number(position.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (isPlayerActor(actorId)) {
+      if (mapId && mapId !== state.mapId && maps[mapId]) {
+        state.mapId = mapId;
+        state.renderedMapId = null;
+      }
+      state.prevX = state.x;
+      state.prevY = state.y;
+      state.prevMapId = state.mapId;
+      state.x = x;
+      state.y = y;
+      return;
+    }
+    const ref = sceneActorRef(actorId);
+    const event = eventForActor(actorId);
+    const eventId = (ref && ref.eventId) || (event && event.id);
+    if (eventId) setEventRuntimePosition(mapId, eventId, x, y);
+  }
+
+  function setActorHidden(actorId, hidden) {
+    if (isPlayerActor(actorId)) return;
+    const ref = sceneActorRef(actorId);
+    const event = eventForActor(actorId);
+    const eventId = (ref && ref.eventId) || (event && event.id);
+    if (eventId) setEventRuntimeHidden((ref && ref.mapId) || actorMapId(actorId), eventId, hidden);
+  }
+
+  function setFacingToward(actorId, targetActorId) {
+    if (!isPlayerActor(actorId)) return;
+    const source = actorPosition(actorId);
+    const target = actorPosition(targetActorId);
+    setFacing(target.x - source.x, target.y - source.y);
+  }
+
+  function sceneActorName(actorId) {
+    if (isPlayerActor(actorId)) return state.hero.name;
+    const event = eventForActor(actorId);
+    return (event && eventLabel(event)) || actorId || "Narrator";
+  }
+
+  function actorAssetId(actorId) {
+    if (isPlayerActor(actorId)) return state.hero.spriteAssetId;
+    const event = eventForActor(actorId);
+    return event ? eventAssetId(event) : null;
+  }
+
+  function startScene(script, sourceEvent = null) {
+    if (!script || !script.id) return false;
+    if (scenePlayed(script)) return false;
+    if (sceneIsOnce(script)) state.flags[`scene_started:${script.id}`] = true;
+    const trigger = sceneTrigger(script);
+    const mapId = script.map_id || trigger.map_id || state.mapId;
+    const actorEventByActor = {};
+    state.scene = {
+      id: script.id,
+      script,
+      index: 0,
+      blocking: script.blocking !== false,
+      sourceEventId: sourceEvent && sourceEvent.id,
+      actorEventByActor,
+      activeMove: null,
+      activeWait: null,
+      waitingForDialogue: false,
+    };
+    (Array.isArray(script.actors) ? script.actors : []).forEach((actor) => {
+      if (!actor || typeof actor !== "object") return;
+      const actorId = actor.actor_id || actor.id;
+      if (!actorId) return;
+      if (actor.event_id) {
+        actorEventByActor[actorId] = { eventId: actor.event_id, mapId: actor.map_id || mapId };
+      }
+      if (actor.hidden === true || actor.visible === false) setActorHidden(actorId, true);
+      if (actor.hidden === false || actor.visible === true) setActorHidden(actorId, false);
+      if (Number.isFinite(Number(actor.x)) && Number.isFinite(Number(actor.y))) {
+        setActorPosition(actorId, { x: Number(actor.x), y: Number(actor.y) }, actor.map_id || mapId);
+      }
+    });
+    if (script.title) addLog(script.title);
+    playSfx(script.sfx_asset_id || "sfx.dialogue.open", 0.56);
+    advanceScene();
+    return true;
+  }
+
+  function finishScene() {
+    if (!state.scene) return;
+    const sceneId = state.scene.id;
+    if (state.scene.activeMove) setEventMoving(state.scene.activeMove.eventRef, "");
+    state.flags[`scene_done:${sceneId}`] = true;
+    state.scene = null;
+    checkCompletion();
+    render();
+  }
+
+  function sceneBeatKind(beat) {
+    return beat && (beat.kind || beat.type) || "";
+  }
+
+  function sceneBeatTarget(beat) {
+    if (beat && beat.to && typeof beat.to === "object") return beat.to;
+    return beat;
+  }
+
+  function beginSceneDialogue(beat) {
+    const scene = state.scene;
+    if (!scene) return;
+    const rawLines = Array.isArray(beat.lines) ? beat.lines : [beat];
+    const lines = rawLines
+      .filter((line) => line && (typeof line === "string" || typeof line === "object"))
+      .map((line) => {
+        if (typeof line === "string") {
+          return { speaker: scene.script.narrator || "Narrator", text: line };
+        }
+        const speakerActorId = line.speaker_actor_id || line.actor_id || beat.speaker_actor_id || beat.actor_id;
+        return {
+          ...line,
+          actor_id: speakerActorId,
+          speaker: line.speaker || (speakerActorId ? sceneActorName(speakerActorId) : (scene.script.narrator || "Narrator")),
+          text: line.text || line.line || "",
+        };
+      })
+      .filter((line) => line.text);
+    if (!lines.length) {
+      scene.index += 1;
+      advanceScene();
+      return;
+    }
+    const speakerActorId = lines[0].actor_id || beat.speaker_actor_id || beat.actor_id;
+    const speakerEvent = eventForActor(speakerActorId) || { id: `${scene.id}.speaker`, name: lines[0].speaker };
+    scene.waitingForDialogue = true;
+    state.dialogue = { event: speakerEvent, lines, index: 0, outcome: null, sceneId: scene.id };
+    render();
+  }
+
+  function beginSceneMove(beat) {
+    const scene = state.scene;
+    if (!scene) return false;
+    const actorId = beat.actor_id || "player";
+    const from = actorPosition(actorId);
+    const target = sceneBeatTarget(beat);
+    const to = {
+      x: Number(target.x),
+      y: Number(target.y),
+      mapId: target.map_id || target.mapId || from.mapId,
+    };
+    if (!Number.isFinite(to.x) || !Number.isFinite(to.y)) return false;
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    const speed = Math.max(1, Number(beat.speed || beat.speed_px_per_second || PLAYER_SPEED));
+    scene.activeMove = {
+      actorId,
+      fromX: from.x,
+      fromY: from.y,
+      toX: to.x,
+      toY: to.y,
+      mapId: to.mapId,
+      eventRef: actorEventMotionRef(actorId),
+      direction: directionFromDelta(to.x - from.x, to.y - from.y),
+      elapsed: 0,
+      duration: Math.max(0.05, Number(beat.duration || beat.duration_seconds || distance / speed)),
+    };
+    if (isPlayerActor(actorId)) setFacing(to.x - from.x, to.y - from.y);
+    else setEventMoving(scene.activeMove.eventRef, scene.activeMove.direction);
+    return true;
+  }
+
+  function applySceneBeat(beat) {
+    const kind = sceneBeatKind(beat);
+    if (kind === "set_flag") {
+      if (beat.flag) state.flags[beat.flag] = beat.value ?? true;
+      applyKeyValueSet(state.flags, beat.flags || beat.set_flags);
+    } else if (kind === "activate_quest") {
+      const questId = beat.quest_id || beat.id;
+      if (questId && !state.quests[questId]) state.quests[questId] = "active";
+      if (questId) queueFloat(`${quests[questId] ? quests[questId].title || questId : questId}: active`, "good");
+    } else if (kind === "complete_quest") {
+      const questId = beat.quest_id || beat.id;
+      if (questId) state.quests[questId] = "complete";
+      if (questId) queueFloat(`${quests[questId] ? quests[questId].title || questId : questId}: complete`, "good");
+    } else if (kind === "set_quest_state") {
+      if (beat.quest_id) state.quests[beat.quest_id] = beat.state || "active";
+      applyKeyValueSet(state.quests, beat.quest_states);
+    } else if (kind === "give_item") {
+      const itemId = beat.item_id;
+      if (itemId) state.inventory[itemId] = (state.inventory[itemId] || 0) + Number(beat.quantity || 1);
+      if (itemId) queueFloat(`+ ${items[itemId] ? items[itemId].name || itemId : itemId}`, "good");
+    } else if (kind === "take_item") {
+      const itemId = beat.item_id;
+      if (itemId) state.inventory[itemId] = Math.max(0, Number(state.inventory[itemId] || 0) - Number(beat.quantity || 1));
+    } else if (kind === "inventory_delta") {
+      applyNumberDelta(state.inventory, beat.inventory_delta || beat.items);
+    } else if (kind === "show_actor" || kind === "hide_actor") {
+      setActorHidden(beat.actor_id, kind === "hide_actor");
+    } else if (kind === "show_event" || kind === "hide_event") {
+      setEventRuntimeHidden(beat.map_id || state.mapId, beat.event_id, kind === "hide_event");
+    } else if (kind === "set_actor_position" || kind === "teleport_actor" || kind === "place_actor") {
+      const target = sceneBeatTarget(beat);
+      setActorPosition(beat.actor_id || "player", target, target.map_id || target.mapId || beat.map_id || state.mapId);
+    } else if (kind === "face_actor") {
+      setFacingToward(beat.actor_id || "player", beat.target_actor_id || beat.target_id);
+    } else if (kind === "face_direction") {
+      if (isPlayerActor(beat.actor_id || "player") && ["up", "right", "down", "left"].includes(beat.direction)) state.facing = beat.direction;
+    } else if (kind === "transfer" || kind === "transfer_map") {
+      const targetMapId = beat.target_map_id || beat.map_id;
+      if (targetMapId && maps[targetMapId]) {
+        state.mapId = targetMapId;
+        state.x = Number(beat.target_x ?? beat.x ?? state.x);
+        state.y = Number(beat.target_y ?? beat.y ?? state.y);
+        state.prevX = null;
+        state.prevY = null;
+        state.renderedMapId = null;
+        flashMap("travel");
+      }
+    } else if (kind === "play_sfx") {
+      playSfx(beat.asset_id || beat.sfx_asset_id, Number(beat.volume || 0.78));
+    } else if (kind === "log") {
+      if (beat.text || beat.message) addLog(beat.text || beat.message);
+    }
+  }
+
+  function advanceScene() {
+    const scene = state.scene;
+    if (!scene) return;
+    const beats = Array.isArray(scene.script.beats) ? scene.script.beats : [];
+    while (state.scene && scene.index < beats.length) {
+      const beat = beats[scene.index];
+      if (!beat || typeof beat !== "object") {
+        scene.index += 1;
+        continue;
+      }
+      const kind = sceneBeatKind(beat);
+      if (kind === "dialogue" || kind === "line") {
+        beginSceneDialogue(beat);
+        return;
+      }
+      if (kind === "move_actor") {
+        if (beginSceneMove(beat)) return;
+        scene.index += 1;
+        continue;
+      }
+      if (kind === "wait") {
+        scene.activeWait = { remaining: Math.max(0, Number(beat.seconds || beat.duration || 0.5)) };
+        return;
+      }
+      if (kind === "end_scene") {
+        finishScene();
+        return;
+      }
+      applySceneBeat(beat);
+      scene.index += 1;
+    }
+    finishScene();
+  }
+
+  function continueSceneFromDialogue(sceneId) {
+    if (!state.scene || state.scene.id !== sceneId) return;
+    state.scene.waitingForDialogue = false;
+    state.scene.index += 1;
+    advanceScene();
+  }
+
+  function updateScene(dt) {
+    const scene = state.scene;
+    if (!scene) return false;
+    if (scene.activeWait) {
+      scene.activeWait.remaining -= dt;
+      if (scene.activeWait.remaining <= 0) {
+        scene.activeWait = null;
+        scene.index += 1;
+        advanceScene();
+      }
+      return scene.blocking !== false;
+    }
+    if (scene.activeMove) {
+      const move = scene.activeMove;
+      move.elapsed += dt;
+      const t = clamp(move.elapsed / move.duration, 0, 1);
+      const x = move.fromX + (move.toX - move.fromX) * t;
+      const y = move.fromY + (move.toY - move.fromY) * t;
+      setActorPosition(move.actorId, { x, y }, move.mapId);
+      if (isPlayerActor(move.actorId)) {
+        state.moving = t < 1;
+        if (state.moving) {
+          state.walkElapsed += dt;
+          state.walkFrame = Math.floor(state.walkElapsed / 0.13) % 4;
+        }
+        updateAvatarPosition();
+        updateCameraPosition();
+      } else {
+        setEventMoving(move.eventRef, t < 1 ? move.direction : "", move.elapsed);
+        updateEventElementPosition(move.eventRef, x, y, t < 1 ? move.direction : "", move.elapsed);
+      }
+      if (t >= 1) {
+        setEventMoving(move.eventRef, "");
+        updateEventElementPosition(move.eventRef, move.toX, move.toY, "", 0);
+        scene.activeMove = null;
+        state.moving = false;
+        state.walkElapsed = 0;
+        state.walkFrame = 0;
+        scene.index += 1;
+        advanceScene();
+        render();
+      }
+      return scene.blocking !== false;
+    }
+    return scene.blocking !== false;
+  }
+
   function weightedPick(items) {
     const candidates = (Array.isArray(items) ? items : []).filter((item) => conditionPasses(item.conditions));
     if (!candidates.length) return null;
@@ -587,7 +1132,7 @@
     applyNumberDelta(state.inventory, outcome.inventory_delta);
     if (outcome.reward_item_id) {
       state.inventory[outcome.reward_item_id] = (state.inventory[outcome.reward_item_id] || 0) + Number(outcome.reward_quantity || 1);
-      queueFloat(`+ ${outcome.reward_item_id}`, "good");
+      queueFloat(`+ ${itemLabel(outcome.reward_item_id)}`, "good");
     }
     if (outcome.complete_quest_id) {
       state.quests[outcome.complete_quest_id] = "complete";
@@ -611,19 +1156,88 @@
     if (event && outcome.once !== false && event.once) state.flags[`event_done:${event.id}`] = true;
   }
 
+  function itemLabel(itemId) {
+    const item = items[itemId];
+    return item ? item.name || item.title || itemId : itemId;
+  }
+
+  function itemAssetId(item, itemId) {
+    return (item && (item.icon_asset_id || item.asset_id)) || `icon.item.${slug(itemId)}`;
+  }
+
+  function itemOutcome(item, phase) {
+    if (!item || typeof item !== "object") return null;
+    const keyed = item[`on_${phase}`];
+    const picked = weightedPick(item[`${phase}_outcomes`]);
+    return picked || (keyed && typeof keyed === "object" ? keyed : null);
+  }
+
+  function itemLines(item, phase) {
+    if (!item || typeof item !== "object") return [];
+    const lines = item[`${phase}_lines`] || item.inspect_lines || item.lines;
+    if (Array.isArray(lines) && lines.length) return lines;
+    if (typeof item.description === "string" && item.description.trim()) {
+      return [{ speaker: item.name || item.id || "Item", text: item.description }];
+    }
+    return [{ speaker: item.name || item.id || "Item", text: "There is nothing more to read here." }];
+  }
+
+  function inspectOutcomeForItem(item) {
+    if (!item || !item.id) return null;
+    const inspectedFlag = `item_inspected:${item.id}`;
+    const alreadyInspected = Boolean(state.flags[inspectedFlag]);
+    if (alreadyInspected && item.repeat_inspect_outcome !== true) return null;
+    const outcome = itemOutcome(item, "inspect") || {};
+    return {
+      ...outcome,
+      set_flags: {
+        ...(outcome.set_flags || {}),
+        [inspectedFlag]: true,
+      }
+    };
+  }
+
+  function openItemInspect(itemId) {
+    const count = Number(state.inventory[itemId] || 0);
+    const item = items[itemId];
+    if (!count || !item) {
+      playSfx("sfx.ui.error");
+      queueFloat("Item unavailable", "hit");
+      render();
+      return;
+    }
+    const event = {
+      id: `inspect:${itemId}`,
+      type: "item_inspect",
+      name: itemLabel(itemId),
+      item_id: itemId,
+      asset_id: itemAssetId(item, itemId),
+      once: false,
+    };
+    talk(event, itemLines(item, "inspect"), inspectOutcomeForItem(item));
+  }
+
   function eventsAt(gameMap, x, y) {
     const radius = INTERACT_RADIUS;
-    return (Array.isArray(gameMap.events) ? gameMap.events : []).filter((event) => (
-      Math.hypot(Number(event.x) - x, Number(event.y) - y) <= radius &&
-      !state.flags[`event_done:${event.id}`] &&
-      entryAllows(event)
-    ));
+    return mapEvents(gameMap).filter((event) => {
+      const position = eventRuntimePosition(event, gameMap);
+      return (
+        Math.hypot(position.x - x, position.y - y) <= radius &&
+        !state.flags[`event_done:${event.id}`] &&
+        !eventRuntimeHidden(event, gameMap) &&
+        entryAllows(event) &&
+        conditionPasses(event.conditions)
+      );
+    });
   }
 
   function nearbyEvent() {
     const gameMap = currentMap();
     return eventsAt(gameMap, state.x, state.y)
-      .map((event) => ({ event, distance: Math.hypot(Number(event.x) - state.x, Number(event.y) - state.y) }))
+      .map((event) => {
+        const position = eventRuntimePosition(event, gameMap);
+        return { event, distance: Math.hypot(position.x - state.x, position.y - state.y) };
+      })
       .sort((a, b) => a.distance - b.distance)[0]?.event || null;
   }
 
@@ -675,6 +1289,7 @@
     renderBattleUiShowcase();
     renderEnding();
     renderEntrySelect();
+    maybeStartSceneTrigger("on_entry");
   }
 
   function createMapWorld(gameMap) {
@@ -725,19 +1340,24 @@
 
   function renderEvents(gameMap, layer) {
     const focus = nearbyEvent();
-    (Array.isArray(gameMap.events) ? gameMap.events : []).forEach((event) => {
-      if (state.flags[`event_done:${event.id}`] || !entryAllows(event)) {
+    mapEvents(gameMap).forEach((event) => {
+      if (state.flags[`event_done:${event.id}`] || eventRuntimeHidden(event, gameMap) || !entryAllows(event) || !conditionPasses(event.conditions)) {
         return;
       }
       const marker = document.createElement("div");
       const type = String(event.type || "npc");
-      marker.className = `event-sprite ${markerClass(event)}${focus && focus.id === event.id ? " nearby" : ""}`;
-      const markerX = Number(event.x);
-      const markerY = Number(event.y);
+      const movingState = eventMovingState(event, gameMap);
+      const movingDirection = movingState.direction;
+      marker.className = `event-sprite ${markerClass(event)}${focus && focus.id === event.id ? " nearby" : ""}${movingDirection ? ` walking moving-${movingDirection}` : ""}`;
+      marker.dataset.eventKey = eventStateKey(gameMap.id, event.id);
+      const position = eventRuntimePosition(event, gameMap);
+      const markerX = position.x;
+      const markerY = position.y;
       marker.style.left = `${coordToPx(markerX)}px`;
       marker.style.top = `${coordToPx(markerY)}px`;
+      if (movingDirection) applyWalkPose(marker, movingState.phase, movingDirection);
       const eventAsset = eventAssetId(event);
-      const sprite = motionAssetPath(eventAsset) || assetPath(eventAsset);
+      const sprite = (movingDirection ? motionAssetPath(eventAsset, "walk") : "") || motionAssetPath(eventAsset) || assetPath(eventAsset);
       if (sprite) {
         marker.classList.add("has-image");
         const img = document.createElement("img");
@@ -827,6 +1447,7 @@
     body.className = "avatar-body";
     const sprite = assetPath(state.hero.spriteAssetId);
     const idleMotion = motionAssetPath(state.hero.spriteAssetId);
+    const walkMotion = motionAssetPath(state.hero.spriteAssetId, "walk");
     if (!state.moving && idleMotion) {
       const img = document.createElement("img");
       img.className = "avatar-sprite";
@@ -843,6 +1464,12 @@
       sheet.className = "avatar-walk-sheet";
       sheet.style.backgroundImage = `url("${encodeURI(assetPath(state.hero.walkSheetAssetId))}")`;
       body.appendChild(sheet);
+    } else if (state.moving && walkMotion) {
+      const img = document.createElement("img");
+      img.className = "avatar-sprite";
+      img.src = walkMotion;
+      img.alt = "";
+      body.appendChild(img);
     } else if (sprite) {
       const img = document.createElement("img");
       img.className = "avatar-sprite";
@@ -882,6 +1509,7 @@
     if (type === "rest") return "rest-event";
     if (type === "pickup" || type === "item") return "item-event";
     if (type === "quest") return "quest-event";
+    if (type === "scene") return "quest-event";
     if (type === "shop") return "shop-event";
     if (type === "transfer") return "transfer-event";
     return "npc";
@@ -892,6 +1520,7 @@
     if (type === "rest") return "+";
     if (type === "pickup" || type === "item") return "*";
     if (type === "quest") return "?";
+    if (type === "scene") return "!";
     if (type === "shop") return "$";
     if (type === "transfer") return ">";
     return "i";
@@ -908,10 +1537,24 @@
     if ((type === "pickup" || type === "item") && event.item_id && items[event.item_id]) {
       return items[event.item_id].icon_asset_id || items[event.item_id].asset_id || `icon.item.${slug(event.item_id)}`;
     }
-    if (type === "npc" || type === "shop" || type === "quest") {
+    if (type === "npc" || type === "shop" || String(event.id || "").startsWith("npc.")) {
       const eventSlug = slug(event.id);
       const candidate = `sprite.${eventSlug}`;
       if (assetPath(candidate)) return candidate;
+      const spriteKeys = Object.keys(data.assets || {})
+        .filter((assetId) => assetId.startsWith("sprite."))
+        .sort((a, b) => b.length - a.length);
+      const inferred = spriteKeys.find((assetId) => eventSlug.includes(assetId.slice("sprite.".length)));
+      if (inferred) return inferred;
+      const aliases = {
+        queen: "sprite.queen_of_hearts",
+        hatter: "sprite.mad_hatter",
+        hare: "sprite.march_hare",
+        gardener: "sprite.card_gardener",
+        guard: "sprite.card_guard",
+      };
+      const alias = Object.entries(aliases).find(([token, assetId]) => eventSlug.includes(token) && assetPath(assetId));
+      if (alias) return alias[1];
     }
     return null;
   }
@@ -924,6 +1567,7 @@
   function renderInteractionHint() {
     if (
       state.dialogue ||
+      state.scene ||
       state.battle ||
       state.battleUi ||
       (state.completed && !state.endingDismissed) ||
@@ -949,6 +1593,34 @@
     });
   }
 
+  function renderInventoryPanel() {
+    if (!elements.inventory) return;
+    const entries = Object.entries(state.inventory)
+      .filter(([, count]) => Number(count || 0) > 0)
+      .sort(([left], [right]) => itemLabel(left).localeCompare(itemLabel(right)));
+    const body = entries.length
+      ? `<div class="inventory-list">${entries.map(([itemId, count]) => {
+          const item = items[itemId] || { id: itemId, name: itemId };
+          const role = item.story_role || item.effect || "";
+          const description = item.description || "";
+          const assetId = itemAssetId(item, itemId);
+          const iconPath = assetPath(assetId);
+          return `
+            <button class="inventory-item" type="button" data-item-id="${escapeHtml(itemId)}">
+              ${iconPath ? `<img src="${encodeURI(iconPath)}" alt="">` : `<span class="inventory-fallback">*</span>`}
+              <span class="inventory-copy">
+                <strong>${escapeHtml(itemLabel(itemId))}</strong>
+                ${role ? `<span class="item-meta">${escapeHtml(role)}</span>` : ""}
+                ${description ? `<span class="item-desc">${escapeHtml(description)}</span>` : ""}
+              </span>
+              <span class="item-count">x${Number(count)}</span>
+            </button>
+          `;
+        }).join("")}</div>`
+      : "<div class=\"empty-panel-line\">No items</div>";
+    elements.inventory.innerHTML = `<section class="panel-section"><h2>Items</h2>${body}</section>`;
+  }
+
   function renderPanel() {
     const hpRatio = clamp(state.hero.hp / state.hero.maxHp, 0, 1) * 100;
     const entryLine = state.entryTitle ? `<div>${escapeHtml(state.entryTitle)}</div>` : "";
@@ -969,6 +1641,7 @@
       ? questIds.map((id) => `<div>${escapeHtml(quests[id].title || id)}: ${escapeHtml(state.quests[id] || "locked")}</div>`).join("")
       : "<div>No active quests</div>";
     elements.questLog.innerHTML = `<section class="panel-section"><h2>Quests</h2>${questLines}</section>`;
+    renderInventoryPanel();
     const logLines = state.log.length ? state.log.map((line) => `<div>${escapeHtml(line)}</div>`).join("") : "<div>Find someone to talk to.</div>";
     elements.messageLog.innerHTML = `<section class="panel-section"><h2>Log</h2>${logLines}</section>`;
   }
@@ -1040,6 +1713,10 @@
     state.quests = {};
     state.log = [];
     state.dialogue = null;
+    state.scene = null;
+    state.eventPositions = {};
+    state.eventHidden = {};
+    state.eventMoving = {};
     state.battle = null;
     state.completed = false;
     state.endingDismissed = false;
@@ -1072,6 +1749,8 @@
     state.avatarEl.style.left = `${coordToPx(playerFootX(state.x))}px`;
     state.avatarEl.style.top = `${coordToPx(playerFootY(state.y))}px`;
     state.avatarEl.className = `avatar facing-${state.facing}${state.moving ? " walking" : ""}`;
+    if (state.moving) applyWalkPose(state.avatarEl, state.walkFrame, state.facing);
+    else clearWalkPose(state.avatarEl);
     updateAvatarFrame();
   }
 
@@ -1084,6 +1763,14 @@
 
   function updateAvatarFrame() {
     if (!state.avatarEl) return;
+    const spriteImage = state.avatarEl.querySelector(".avatar-sprite");
+    if (spriteImage) {
+      const sprite = assetPath(state.hero.spriteAssetId);
+      const idleMotion = motionAssetPath(state.hero.spriteAssetId);
+      const walkMotion = motionAssetPath(state.hero.spriteAssetId, "walk");
+      const nextSprite = state.moving ? (walkMotion || sprite || idleMotion) : (idleMotion || sprite);
+      if (nextSprite && spriteImage.getAttribute("src") !== nextSprite) spriteImage.src = nextSprite;
+    }
     const frameImage = state.avatarEl.querySelector(".avatar-walk-frame");
     const col = state.moving ? state.walkFrame : 0;
     const row = directionRow();
@@ -1111,7 +1798,7 @@
   }
 
   function updateMovement(dt) {
-    if (state.dialogue || state.battle || state.completed && !state.endingDismissed) {
+    if (state.dialogue || state.scene || state.battle || state.completed && !state.endingDismissed) {
       state.moving = false;
       updateAvatarPosition();
       return;
@@ -1152,15 +1839,23 @@
       render();
       return;
     }
-    if (touchEvent && touchEvent.trigger === "touch" && Math.hypot(Number(touchEvent.x) - state.x, Number(touchEvent.y) - state.y) <= INTERACT_RADIUS * 0.36) {
-      interact(touchEvent);
+    if (touchEvent && maybeStartSceneTrigger("touch", touchEvent)) {
+      return;
+    }
+    if (touchEvent) {
+      const touchPosition = eventRuntimePosition(touchEvent, currentMap());
+      if (touchEvent.trigger === "touch" && Math.hypot(touchPosition.x - state.x, touchPosition.y - state.y) <= INTERACT_RADIUS * 0.36) {
+        interact(touchEvent);
+      }
     }
   }
 
   function animationFrame(now) {
     const last = state.lastFrame || now;
     state.lastFrame = now;
-    updateMovement(Math.min(0.05, (now - last) / 1000));
+    const dt = Math.min(0.05, (now - last) / 1000);
+    const sceneBlocking = updateScene(dt);
+    if (!sceneBlocking) updateMovement(dt);
     state.frameRequest = window.requestAnimationFrame(animationFrame);
   }
 
@@ -1178,6 +1873,7 @@
       render();
       return;
     }
+    if (maybeStartSceneTrigger("interact", target)) return;
     const outcome = chooseOutcome(target);
     const type = String(target.type || "npc");
     if (type === "story" || type === "choice") {
@@ -1187,7 +1883,7 @@
     }
     if (type === "battle" || type === "encounter") return startBattle(target);
     if (type === "rest") return rest(target);
-    if (type === "pickup" || type === "item") return pickup(target);
+    if (type === "pickup" || type === "item") return pickup(target, outcome);
     if (type === "transfer") return transfer(target);
     if (type === "shop") return talk(target, outcome && outcome.lines ? outcome.lines : shopLines(target), outcome);
     if (type === "quest") return acceptQuest(target, outcome);
@@ -1235,6 +1931,7 @@
     state.dialogue.index += 1;
     if (state.dialogue.index >= state.dialogue.lines.length) {
       const event = state.dialogue.event;
+      const sceneId = state.dialogue.sceneId;
       if (event.once) {
         state.flags[`event_done:${event.id}`] = true;
       }
@@ -1246,8 +1943,20 @@
       state.dialogue = null;
       stopVoice();
       checkCompletion();
+      if (sceneId) {
+        continueSceneFromDialogue(sceneId);
+        return;
+      }
     }
     render();
+  }
+
+  function dialoguePortraitAssetId(line, event) {
+    if (line && typeof line.portrait_asset_id === "string") return line.portrait_asset_id;
+    const actorId = line && (line.actor_id || line.speaker_actor_id);
+    const actorAsset = actorId ? actorAssetId(actorId) : null;
+    if (actorAsset) return actorAsset;
+    return eventAssetId(event);
   }
 
   function renderDialogue() {
@@ -1260,7 +1969,7 @@
     elements.dialogueSpeaker.textContent = line.speaker || state.dialogue.event.name || "NPC";
     elements.dialogueText.textContent = line.text || String(line);
     playVoiceForLine(line);
-    const portrait = assetPath(eventAssetId(state.dialogue.event));
+    const portrait = assetPath(dialoguePortraitAssetId(line, state.dialogue.event));
     elements.dialoguePortrait.innerHTML = portrait ? `<img src="${encodeURI(portrait)}" alt="">` : "";
     elements.dialogue.classList.remove("hidden");
   }
@@ -1277,15 +1986,30 @@
     render();
   }
 
-  function pickup(event) {
+  function pickup(event, outcome = null) {
     const itemId = event.item_id || "item.unknown";
+    const item = items[itemId] || { id: itemId, name: itemId };
     state.inventory[itemId] = (state.inventory[itemId] || 0) + Number(event.quantity || 1);
-    const label = items[itemId] ? items[itemId].name || itemId : itemId;
-    addLog(`Got ${label}.`);
+    const label = itemLabel(itemId);
+    addLog(event.log || `Got ${label}.`);
     playSfx("sfx.pickup.item");
     queueFloat(`+ ${label}`, "good");
     flashMap("good");
-    state.flags[`event_done:${event.id}`] = true;
+    if (event.once !== false) state.flags[`event_done:${event.id}`] = true;
+    applyOutcome(itemOutcome(item, "pickup"), event);
+    applyOutcome(event.on_pickup, event);
+    applyOutcome(outcome, event);
+    const pickupLines = (outcome && outcome.lines) || event.pickup_lines || event.lines || itemLines(item, "pickup");
+    if (Array.isArray(pickupLines) && pickupLines.length) {
+      talk({
+        ...event,
+        name: label,
+        item_id: itemId,
+        asset_id: event.asset_id || itemAssetId(item, itemId),
+        once: false,
+      }, pickupLines, null);
+      return;
+    }
     render();
   }
 
@@ -1814,10 +2538,11 @@
     }
     if (event.reward_item_id) {
       state.inventory[event.reward_item_id] = (state.inventory[event.reward_item_id] || 0) + 1;
-      addLog(`Got ${event.reward_item_id}.`);
-      queueFloat(`+ ${event.reward_item_id}`, "good");
+      addLog(`Got ${itemLabel(event.reward_item_id)}.`);
+      queueFloat(`+ ${itemLabel(event.reward_item_id)}`, "good");
     }
-    applyOutcome(weightedPick(event.win_outcomes), event);
+    const winOutcome = weightedPick(event.win_outcomes);
+    applyOutcome(winOutcome, event);
     if (elements.battleUiShowcase) {
       elements.battleUiShowcase.classList.add("hidden");
       elements.battleUiShowcase.classList.remove("battle-ui-real");
@@ -1826,6 +2551,10 @@
     }
     state.battle = null;
     checkCompletion();
+    if (winOutcome && Array.isArray(winOutcome.lines) && winOutcome.lines.length) {
+      talk({ ...event, name: event.name || state.battle?.enemy?.name || "Victory", once: false }, winOutcome.lines, null);
+      return;
+    }
     render();
   }
 
@@ -1879,7 +2608,7 @@
   }
 
   function save() {
-    const { keys, frameRequest, worldEl, avatarEl, ...serializable } = state;
+    const { keys, frameRequest, worldEl, avatarEl, eventMoving, ...serializable } = state;
     localStorage.setItem("web-rpg-save", JSON.stringify({ ...serializable, effects: [] }));
     addLog("Saved.");
     render();
@@ -1894,7 +2623,7 @@
     }
     try {
       const loaded = JSON.parse(raw);
-      Object.assign(state, loaded, { effects: [], keys: new Set(), frameRequest: state.frameRequest, worldEl: null, avatarEl: null });
+      Object.assign(state, loaded, { effects: [], keys: new Set(), frameRequest: state.frameRequest, worldEl: null, avatarEl: null, eventMoving: {} });
       checkCompletion();
       addLog("Loaded.");
     } catch (error) {
@@ -1909,6 +2638,9 @@
       state.keys.add(key);
     } else if (event.key === " " || event.key === "Enter") {
       if (state.dialogue) nextDialogue();
+      else if (state.scene) {
+        // Scene beats own input while actors are moving or timed waits are running.
+      }
       else interact();
     } else {
       return;
@@ -1983,6 +2715,12 @@
     elements.entryOptions.addEventListener("click", (event) => {
       const button = event.target.closest("[data-entry-id]");
       if (button) selectEntry(button.dataset.entryId);
+    });
+  }
+  if (elements.inventory) {
+    elements.inventory.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-item-id]");
+      if (button) openItemInspect(button.dataset.itemId);
     });
   }
 

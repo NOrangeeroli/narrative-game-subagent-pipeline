@@ -113,6 +113,296 @@ def read_shard_returns(directory: Path) -> list[Json]:
     return payloads
 
 
+def collect_source_ref_tokens(value: Any) -> set[str]:
+    tokens: set[str] = set()
+    if isinstance(value, str):
+        if value:
+            tokens.add(value)
+    elif isinstance(value, dict):
+        for key in ("id", "source_id", "chunk_id", "source_chunk_id", "path", "source_path"):
+            item = value.get(key)
+            if isinstance(item, str) and item:
+                tokens.add(item)
+        for item in value.values():
+            tokens.update(collect_source_ref_tokens(item))
+    elif isinstance(value, list):
+        for item in value:
+            tokens.update(collect_source_ref_tokens(item))
+    return tokens
+
+
+def validate_finest_source_coverage(run_root: Path, result: ValidationResult, artifacts: dict[str, Any], units_by_level: dict[int, dict[str, Json]]) -> None:
+    source_index_path = path_for(run_root, "source_index")
+    if not source_index_path.exists():
+        return
+    try:
+        source_index = read_json(source_index_path)
+    except Exception as exc:  # noqa: BLE001
+        result.add("error", "invalid_json", f"Cannot parse source_index.json for V3 source coverage: {exc}", str(source_index_path.relative_to(run_root)))
+        return
+    chunks = [chunk for chunk in as_list(source_index.get("chunks")) if isinstance(chunk, dict)]
+    if not chunks:
+        return
+    finest = min(artifacts["levels"])
+    found_tokens: set[str] = set()
+    for unit in units_by_level.get(finest, {}).values():
+        found_tokens.update(collect_source_ref_tokens(unit.get("source_refs")))
+        for action in as_list(unit.get("protagonist_action_beats")):
+            if isinstance(action, dict):
+                found_tokens.update(collect_source_ref_tokens(action.get("source_refs")))
+
+    missing: list[str] = []
+    for chunk in chunks:
+        aliases = {str(chunk.get("id", "")), str(chunk.get("path", ""))}
+        aliases = {alias for alias in aliases if alias}
+        if aliases.isdisjoint(found_tokens):
+            missing.append(str(chunk.get("id") or chunk.get("path") or "<unnamed>"))
+    if missing:
+        preview = ", ".join(missing[:10])
+        if len(missing) > 10:
+            preview += f", ... ({len(missing)} total)"
+        result.add(
+            "error",
+            "source_coverage_gap",
+            f"V3 finest-level story extraction is missing source_index chunk coverage: {preview}",
+            f"story_levels.{level_id(finest)}.units.source_refs",
+        )
+
+
+def validate_coarsest_global_dispatch(run_root: Path, result: ValidationResult, levels: list[int]) -> None:
+    if not levels:
+        return
+    coarsest = max(levels)
+    lid = level_id(coarsest)
+    checks = [
+        (
+            f"story_levels/{lid}/shards",
+            "coarsest_story_sharded",
+            "Coarsest StoryLevelExtractor must be a single global packet, not parallel shard packets.",
+        ),
+        (
+            f"story_levels/{lid}/shard_returns",
+            "coarsest_story_sharded",
+            "Coarsest StoryLevelExtractor must produce a single global return, not merged shard returns.",
+        ),
+        (
+            f"design_levels/{lid}/shards",
+            "coarsest_design_sharded",
+            "Coarsest LevelStateGraphDesigner must be a single global packet, not parallel shard packets.",
+        ),
+        (
+            f"design_levels/{lid}/shard_returns",
+            "coarsest_design_sharded",
+            "Coarsest LevelStateGraphDesigner must produce a single global return, not merged shard returns.",
+        ),
+    ]
+    for relative, kind, message in checks:
+        directory = design_v3_path(run_root, relative)
+        files = sorted(directory.glob("*.json")) if directory.exists() else []
+        if len(files) > 1:
+            result.add(
+                "error",
+                kind,
+                f"{message} Found {len(files)} JSON files.",
+                str(DESIGN_V3_ROOT / relative),
+            )
+
+
+def packet_scope(payload: Json) -> Json:
+    scope = payload.get("scope")
+    return scope if isinstance(scope, dict) else {}
+
+
+def input_path_values(payload: Json) -> list[str]:
+    values: list[str] = []
+    inputs = payload.get("input_paths")
+    if isinstance(inputs, dict):
+        for value in inputs.values():
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, list):
+                values.extend(item for item in value if isinstance(item, str))
+    values.extend(item for item in as_list(packet_scope(payload).get("allowed_input_paths")) if isinstance(item, str))
+    return values
+
+
+def validate_packet_scope(run_root: Path, result: ValidationResult, levels: list[int]) -> None:
+    if not levels:
+        return
+    finest = min(levels)
+    coarsest = max(levels)
+    packet_paths: list[Path] = []
+    packet_root = run_root / "workspace" / "controller-packets"
+    if packet_root.exists():
+        packet_paths.extend(sorted(packet_root.rglob("*.json")))
+    for level in levels:
+        lid = level_id(level)
+        for relative in (f"story_levels/{lid}/shards", f"design_levels/{lid}/shards"):
+            directory = design_v3_path(run_root, relative)
+            if directory.exists():
+                packet_paths.extend(sorted(directory.glob("*.json")))
+
+    seen_paths: set[Path] = set()
+    for path in packet_paths:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        try:
+            payload = read_json(path)
+        except Exception as exc:  # noqa: BLE001
+            result.add("error", "invalid_json", f"Cannot parse V3 controller packet: {exc}", str(path.relative_to(run_root)))
+            continue
+        if not isinstance(payload, dict):
+            continue
+        scope = packet_scope(payload)
+        role = str(scope.get("role") or payload.get("role") or payload.get("role_card") or payload.get("metadata", {}).get("packet_kind") or "")
+        level = scope.get("level", payload.get("level"))
+        if not isinstance(level, int) or level not in levels:
+            continue
+        global_packet = bool(scope.get("global", payload.get("coarsest_enabled_level") is True))
+        relative = str(path.relative_to(run_root))
+        values = input_path_values(payload)
+
+        if "StoryLevelExtractor" in role or "/story_levels/" in relative:
+            if not scope:
+                result.add("error", "missing_packet_scope", "V3 StoryLevelExtractor packet needs a scope declaration.", relative)
+            if level < coarsest and level > finest:
+                assigned = as_list(scope.get("assigned_lower_level_unit_ids") or payload.get("assigned_lower_level_unit_ids"))
+                if not assigned:
+                    result.add("error", "packet_scope_gap", "Non-coarsest higher-level StoryLevelExtractor packet must declare assigned_lower_level_unit_ids.", relative)
+                forbidden = f"workspace/design_layer_v3/story_levels/{level_id(level - 1)}/linear_story.json"
+                for value in values:
+                    if value.endswith(forbidden) or value.endswith(f"story_levels/{level_id(level - 1)}/linear_story.json"):
+                        result.add("error", "packet_scope_leak", "Non-coarsest StoryLevelExtractor packet must use a child-unit slice, not full lower-level linear_story.json.", relative)
+            if level == coarsest and global_packet:
+                for value in values:
+                    if "inputs/source_material/full_text.txt" in value or "inputs/source_material/chunks/" in value:
+                        result.add("error", "packet_scope_leak", "Coarsest StoryLevelExtractor packet must not receive full source text or source chunks.", relative)
+
+        if "LevelStateGraphDesigner" in role or "/design_levels/" in relative:
+            if not scope:
+                result.add("error", "missing_packet_scope", "V3 LevelStateGraphDesigner packet needs a scope declaration.", relative)
+            if level < coarsest:
+                assigned = as_list(scope.get("assigned_story_unit_ids") or payload.get("assigned_story_unit_ids"))
+                parents = as_list(scope.get("parent_graph_node_ids") or payload.get("parent_graph_node_ids"))
+                if not assigned:
+                    result.add("error", "packet_scope_gap", "Non-coarsest LevelStateGraphDesigner packet must declare assigned_story_unit_ids.", relative)
+                if not parents:
+                    result.add("error", "packet_scope_gap", "Non-coarsest LevelStateGraphDesigner packet must declare parent_graph_node_ids.", relative)
+                forbidden_suffixes = [
+                    f"story_levels/{level_id(level)}/linear_story.json",
+                    f"design_levels/{level_id(level + 1)}/story_graph.json",
+                    f"design_levels/{level_id(level + 1)}/state_model.json",
+                    f"design_levels/{level_id(level + 1)}/contracts.json",
+                ]
+                for value in values:
+                    if any(value.endswith(suffix) for suffix in forbidden_suffixes):
+                        result.add("error", "packet_scope_leak", "Non-coarsest LevelStateGraphDesigner packet must use controller-made story/parent slices, not full canonical artifacts.", relative)
+            elif global_packet:
+                for value in values:
+                    if f"story_levels/{level_id(level - 1)}/" in value or "inputs/source_material/" in value:
+                        result.add("error", "packet_scope_leak", "Coarsest LevelStateGraphDesigner packet must not receive lower-level story/source artifacts.", relative)
+
+
+def write_story_level_slices(run_root: Path, level: int, groups: dict[str, list[str]] | None = None) -> None:
+    lid = level_id(level)
+    story_path = design_v3_path(run_root, f"story_levels/{lid}/linear_story.json")
+    if not story_path.exists():
+        return
+    story = read_json(story_path)
+    units = [unit for unit in as_list(story.get("units")) if isinstance(unit, dict)]
+    by_id = dict_by_id(units)
+    if groups is None:
+        parent_groups: dict[str, list[str]] = {}
+        for unit in units:
+            parent = unit.get("parent_unit_id")
+            if isinstance(parent, str) and parent:
+                parent_groups.setdefault(parent, []).append(unit["id"])
+        groups = parent_groups or {str(unit.get("id")): [str(unit.get("id"))] for unit in units if isinstance(unit.get("id"), str)}
+
+    slices_dir = design_v3_path(run_root, f"story_levels/{lid}/slices")
+    ensure_dir(slices_dir)
+    for shard_id, unit_ids in sorted(groups.items()):
+        selected = [by_id[unit_id] for unit_id in unit_ids if unit_id in by_id]
+        payload = {
+            "metadata": {
+                "schema_version": "0.1.0",
+                "generated_by": "DesignLayerV3SliceProjector",
+                "source_artifact": str(DESIGN_V3_ROOT / f"story_levels/{lid}/linear_story.json"),
+                "projection": "story_units_by_scope",
+            },
+            "level": level,
+            "level_id": lid,
+            "shard_id": shard_id,
+            "unit_ids": [unit.get("id") for unit in selected],
+            "units": selected,
+        }
+        write_json(slices_dir / f"{stable_id(shard_id)}.json", payload)
+
+
+def write_fact_level_slices(run_root: Path, level: int, groups: dict[str, list[str]]) -> None:
+    lid = level_id(level)
+    filename = "local_facts.json" if level == min(normalize_levels(read_json(design_v3_path(run_root, "hierarchy_policy.json")), ValidationResult())) else "fact_view.json"
+    fact_path = design_v3_path(run_root, f"facts/{lid}/{filename}")
+    if not fact_path.exists():
+        return
+    facts = read_json(fact_path)
+    slices_dir = design_v3_path(run_root, f"facts/{lid}/slices")
+    ensure_dir(slices_dir)
+    for shard_id, unit_ids in sorted(groups.items()):
+        unit_set = set(unit_ids)
+        payload: Json = {
+            "metadata": {
+                "schema_version": "0.1.0",
+                "generated_by": "DesignLayerV3SliceProjector",
+                "source_artifact": str(DESIGN_V3_ROOT / f"facts/{lid}/{filename}"),
+                "projection": "facts_by_story_unit_or_source_ref",
+            },
+            "level": level,
+            "level_id": lid,
+            "shard_id": shard_id,
+            "unit_ids": unit_ids,
+        }
+        for key, value in facts.items():
+            if key in {"metadata", "level", "level_id"}:
+                continue
+            if isinstance(value, list):
+                selected = []
+                for item in value:
+                    tokens = collect_source_ref_tokens(item)
+                    item_units = set(str(unit) for unit in as_list(item.get("story_unit_ids") if isinstance(item, dict) else []))
+                    evidence_units = set(str(unit) for unit in as_list(item.get("evidence_child_unit_ids") if isinstance(item, dict) else []))
+                    if tokens & unit_set or item_units & unit_set or evidence_units & unit_set:
+                        selected.append(item)
+                payload[key] = selected
+            else:
+                payload[key] = value
+        write_json(slices_dir / f"{stable_id(shard_id)}.json", payload)
+
+
+def project_v3_slices(run_root: Path) -> None:
+    result = ValidationResult()
+    policy = load_json_at(design_v3_path(run_root, "hierarchy_policy.json"), result, "hierarchy_policy.json")
+    if not policy:
+        return
+    levels = normalize_levels(policy, result)
+    for level in levels:
+        if level == min(levels):
+            write_story_level_slices(run_root, level)
+            # Finest fact slices follow parent_unit_id groups after higher levels exist.
+            story_path = design_v3_path(run_root, f"story_levels/{level_id(level)}/linear_story.json")
+            if story_path.exists():
+                units = [unit for unit in as_list(read_json(story_path).get("units")) if isinstance(unit, dict)]
+                groups: dict[str, list[str]] = {}
+                for unit in units:
+                    parent = unit.get("parent_unit_id") or unit.get("id")
+                    if isinstance(parent, str) and isinstance(unit.get("id"), str):
+                        groups.setdefault(parent, []).append(unit["id"])
+                write_fact_level_slices(run_root, level, groups)
+        else:
+            write_story_level_slices(run_root, level)
+
+
 def merge_story_level_shards(run_root: Path, level: int) -> None:
     lid = level_id(level)
     target = design_v3_path(run_root, f"story_levels/{lid}/linear_story.json")
@@ -308,6 +598,26 @@ def normalize_effect(effect: Any) -> Json:
     return normalized
 
 
+def effect_state_id(effect: Any) -> str | None:
+    if not isinstance(effect, dict):
+        return None
+    state_id = effect.get("state_variable_id") or effect.get("state")
+    return state_id if isinstance(state_id, str) else None
+
+
+def edge_game_ending_values(edge: Json) -> list[str]:
+    values: list[str] = []
+    for effect in as_list(edge.get("effects")):
+        if effect_state_id(effect) != "state.game.ending_id":
+            continue
+        if not isinstance(effect, dict):
+            continue
+        value = effect.get("value")
+        if isinstance(value, str) and value.strip():
+            values.append(value)
+    return values
+
+
 def state_refs_from_ops(items: Any) -> set[str]:
     refs: set[str] = set()
     for item in as_list(items):
@@ -392,11 +702,34 @@ def validate_story_levels(result: ValidationResult, artifacts: dict[str, Any]) -
                     result.add("error", "invalid_reference", f"child_unit_id references missing lower-level story unit: {child_id}", f"story_levels.{level_id(level)}.units[{index}].child_unit_ids")
         if level > min(levels):
             lower_units = units_by_level.get(level - 1, {})
+            child_to_parents: dict[str, set[str]] = {}
             for unit in units:
                 for child_id in as_list(unit.get("child_unit_ids")):
+                    if isinstance(child_id, str) and isinstance(unit.get("id"), str):
+                        child_to_parents.setdefault(child_id, set()).add(unit["id"])
                     child = lower_units.get(str(child_id), {})
                     if child and child.get("parent_unit_id") != unit.get("id"):
                         result.add("error", "story_parent_child_mismatch", f"Child {child_id} does not point back to parent {unit.get('id')}.", f"story_levels.{level_id(level)}.units.child_unit_ids")
+            missing_child_ids = sorted(set(lower_units) - set(child_to_parents))
+            if missing_child_ids:
+                shown = ", ".join(missing_child_ids[:10])
+                suffix = "" if len(missing_child_ids) <= 10 else f", and {len(missing_child_ids) - 10} more"
+                result.add(
+                    "error",
+                    "story_parent_child_gap",
+                    f"Higher-level story units do not cover lower-level children: {shown}{suffix}",
+                    f"story_levels.{level_id(level)}.units.child_unit_ids",
+                )
+            duplicate_child_ids = sorted(child_id for child_id, parent_ids in child_to_parents.items() if len(parent_ids) > 1)
+            if duplicate_child_ids:
+                shown = ", ".join(duplicate_child_ids[:10])
+                suffix = "" if len(duplicate_child_ids) <= 10 else f", and {len(duplicate_child_ids) - 10} more"
+                result.add(
+                    "error",
+                    "story_parent_child_duplicate",
+                    f"Lower-level story units are assigned to multiple higher-level parents: {shown}{suffix}",
+                    f"story_levels.{level_id(level)}.units.child_unit_ids",
+                )
         _ = unit_ids
     return units_by_level
 
@@ -412,7 +745,10 @@ def validate_design_v3(run_root: Path, write_report: bool = True) -> ValidationR
     levels: list[int] = artifacts["levels"]
     finest = min(levels)
     coarsest = max(levels)
+    validate_coarsest_global_dispatch(run_root, result, levels)
+    validate_packet_scope(run_root, result, levels)
     units_by_level = validate_story_levels(result, artifacts)
+    validate_finest_source_coverage(run_root, result, artifacts, units_by_level)
 
     facts = artifacts["canonical_facts"]
     fact_ids = unique_id_check(as_list(facts.get("facts")), "facts.canonical_fact_graph.facts", result)
@@ -509,6 +845,21 @@ def validate_design_v3(run_root: Path, write_report: bool = True) -> ValidationR
                 if state_id not in state_defs and not any(state_id in ids for ids in state_ids_by_level.values()):
                     result.add("error", "invalid_reference", f"Graph edge references missing state variable: {state_id}", f"design_levels.{lid}.story_graph.edges[{edge_index}]")
 
+        validate_graph_path_closure(
+            result,
+            nodes=graph_nodes_by_level[level],
+            edges=edges,
+            start_node_id=graph.get("start_node_id"),
+            path=f"design_levels.{lid}.story_graph",
+        )
+
+    validate_ending_ownership(
+        result,
+        levels=levels,
+        graph_nodes_by_level=graph_nodes_by_level,
+        graph_edges_by_level=graph_edges_by_level,
+    )
+
     all_state_ids = set(state_defs)
     all_node_ids = set().union(*graph_node_ids_by_level.values()) if graph_node_ids_by_level else set()
     for level in levels:
@@ -577,7 +928,308 @@ def graph_order(graph: Json) -> dict[str, int]:
     }
 
 
-def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Json], dict[str, Json]]:
+def is_terminal_node(node: Json) -> bool:
+    return bool(node.get("is_terminal") is True or node.get("node_type") == "terminal")
+
+
+def graph_adjacency(edges: list[Json]) -> dict[str, list[str]]:
+    adjacency: dict[str, list[str]] = {}
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = edge.get("from")
+        target = edge.get("to")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, []).append(target)
+    return adjacency
+
+
+def reachable_nodes(start_node_id: str, adjacency: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    stack = [start_node_id]
+    while stack:
+        node_id = stack.pop()
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        stack.extend(adjacency.get(node_id, []))
+    return seen
+
+
+def nodes_that_can_reach_terminals(nodes: dict[str, Json], adjacency: dict[str, list[str]]) -> set[str]:
+    reverse: dict[str, list[str]] = {}
+    for source, targets in adjacency.items():
+        for target in targets:
+            reverse.setdefault(target, []).append(source)
+    terminals = {node_id for node_id, node in nodes.items() if is_terminal_node(node)}
+    can_reach = set(terminals)
+    stack = list(terminals)
+    while stack:
+        node_id = stack.pop()
+        for predecessor in reverse.get(node_id, []):
+            if predecessor in can_reach:
+                continue
+            can_reach.add(predecessor)
+            stack.append(predecessor)
+    return can_reach
+
+
+def validate_graph_path_closure(
+    result: ValidationResult,
+    *,
+    nodes: dict[str, Json],
+    edges: list[Json],
+    start_node_id: Any,
+    path: str,
+    path_without_terminal_kind: str = "path_without_terminal",
+    nonterminal_sink_kind: str = "nonterminal_sink",
+) -> None:
+    if not isinstance(start_node_id, str) or start_node_id not in nodes:
+        return
+    adjacency = graph_adjacency(edges)
+    reachable = reachable_nodes(start_node_id, adjacency)
+    can_reach_terminal = nodes_that_can_reach_terminals(nodes, adjacency)
+    for node_id in sorted(reachable):
+        node = nodes.get(node_id, {})
+        if node_id not in can_reach_terminal:
+            result.add(
+                "error",
+                path_without_terminal_kind,
+                f"Reachable graph node cannot reach a terminal ending node: {node_id}",
+                path,
+            )
+        if not adjacency.get(node_id) and not is_terminal_node(node):
+            result.add(
+                "error",
+                nonterminal_sink_kind,
+                f"Reachable graph sink must be terminal: {node_id}",
+                path,
+            )
+
+
+def parent_chain_for_node(node_id: str, all_nodes: dict[str, Json]) -> list[str]:
+    chain = [node_id]
+    seen = {node_id}
+    current = all_nodes.get(node_id, {})
+    while isinstance(current, dict):
+        parent = current.get("parent_node_id")
+        if not isinstance(parent, str) or not parent or parent in seen:
+            break
+        chain.append(parent)
+        seen.add(parent)
+        current = all_nodes.get(parent, {})
+    return chain
+
+
+def validate_ending_ownership(
+    result: ValidationResult,
+    *,
+    levels: list[int],
+    graph_nodes_by_level: dict[int, dict[str, Json]],
+    graph_edges_by_level: dict[int, list[Json]],
+) -> None:
+    if not levels:
+        return
+    finest = min(levels)
+    coarsest = max(levels)
+    coarsest_nodes = graph_nodes_by_level.get(coarsest, {})
+    coarsest_edges = graph_edges_by_level.get(coarsest, [])
+    coarsest_terminal_nodes = {
+        node_id: node
+        for node_id, node in coarsest_nodes.items()
+        if is_terminal_node(node)
+    }
+    if not coarsest_terminal_nodes:
+        result.add(
+            "error",
+            "missing_coarsest_ending",
+            "Coarsest V3 story_graph must declare at least one terminal ending node.",
+            f"design_levels.{level_id(coarsest)}.story_graph.nodes",
+        )
+
+    outgoing_by_node = graph_adjacency(coarsest_edges)
+    incoming_game_endings: dict[str, set[str]] = {}
+    for edge in coarsest_edges:
+        if not isinstance(edge, dict):
+            continue
+        target = edge.get("to")
+        if not isinstance(target, str) or target not in coarsest_terminal_nodes:
+            continue
+        values = set(edge_game_ending_values(edge))
+        if values:
+            incoming_game_endings.setdefault(target, set()).update(values)
+
+    ending_ids: dict[str, str] = {}
+    ending_id_to_node: dict[str, str] = {}
+    for node_id, node in coarsest_terminal_nodes.items():
+        edge_ending_values = incoming_game_endings.get(node_id, set())
+        if len(edge_ending_values) > 1:
+            result.add(
+                "error",
+                "ambiguous_coarsest_ending_node",
+                f"Multiple state.game.ending_id values target one coarsest terminal node {node_id}: {sorted(edge_ending_values)}",
+                f"design_levels.{level_id(coarsest)}.story_graph.edges",
+            )
+        ending_id = node.get("ending_id")
+        if not isinstance(ending_id, str) or not ending_id.strip():
+            result.add(
+                "error",
+                "missing_ending_id",
+                f"Coarsest terminal node must declare ending_id: {node_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.nodes.{node_id}.ending_id",
+            )
+            continue
+        if ending_id in ending_id_to_node:
+            result.add(
+                "error",
+                "duplicate_ending_id",
+                f"Duplicate coarsest ending_id: {ending_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.nodes.{node_id}.ending_id",
+            )
+        else:
+            ending_id_to_node[ending_id] = node_id
+        ending_ids[node_id] = ending_id
+        for edge_ending_id in sorted(edge_ending_values):
+            if edge_ending_id != ending_id:
+                result.add(
+                    "error",
+                    "ending_transition_mismatch",
+                    f"Edge writes state.game.ending_id={edge_ending_id} into coarsest ending node {node_id}, but node ending_id is {ending_id}.",
+                    f"design_levels.{level_id(coarsest)}.story_graph.edges",
+                )
+        if outgoing_by_node.get(node_id):
+            result.add(
+                "error",
+                "terminal_has_outgoing_edge",
+                f"Coarsest terminal ending node must not have outgoing edges: {node_id}",
+                f"design_levels.{level_id(coarsest)}.story_graph.edges",
+            )
+
+    all_nodes: dict[str, Json] = {}
+    node_level: dict[str, int] = {}
+    for level in levels:
+        for node_id, node in graph_nodes_by_level.get(level, {}).items():
+            all_nodes[node_id] = node
+            node_level[node_id] = level
+
+    variant_ids: dict[str, str] = {}
+    finest_terminal_endings: dict[str, set[str]] = {ending_id: set() for ending_id in ending_id_to_node}
+    for level in levels:
+        if level == coarsest:
+            continue
+        for node_id, node in graph_nodes_by_level.get(level, {}).items():
+            if not is_terminal_node(node):
+                continue
+            ending_id = node.get("ending_id")
+            variant_id = node.get("ending_variant_id")
+            if isinstance(ending_id, str) and ending_id:
+                if ending_id not in ending_id_to_node:
+                    result.add(
+                        "error",
+                        "unknown_ending_id",
+                        f"Lower-level terminal references undeclared coarsest ending_id: {ending_id}",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                    )
+                    continue
+                variant_of = node.get("variant_of_ending_id")
+                if isinstance(variant_of, str) and variant_of and variant_of != ending_id:
+                    result.add(
+                        "error",
+                        "ending_variant_mismatch",
+                        f"variant_of_ending_id must match ending_id on {node_id}: {variant_of} != {ending_id}",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.variant_of_ending_id",
+                    )
+                if isinstance(variant_id, str) and variant_id:
+                    if variant_id in variant_ids:
+                        result.add(
+                            "error",
+                            "duplicate_ending_variant_id",
+                            f"Duplicate ending_variant_id: {variant_id}",
+                            f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_variant_id",
+                        )
+                    else:
+                        variant_ids[variant_id] = node_id
+                chain = parent_chain_for_node(node_id, all_nodes)
+                coarsest_ending_match = any(
+                    ancestor_id in ending_ids and ending_ids[ancestor_id] == ending_id
+                    for ancestor_id in chain
+                )
+                if not coarsest_ending_match:
+                    result.add(
+                        "error",
+                        "ending_lineage_mismatch",
+                        f"Ending variant {node_id} must descend from coarsest ending_id {ending_id}.",
+                        f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.parent_node_id",
+                    )
+                elif level == finest:
+                    finest_terminal_endings.setdefault(ending_id, set()).add(node_id)
+                continue
+
+            chain = parent_chain_for_node(node_id, all_nodes)
+            inherited_ending_id = next(
+                (
+                    ending_ids[ancestor_id]
+                    for ancestor_id in chain
+                    if ancestor_id in ending_ids
+                ),
+                None,
+            )
+            if inherited_ending_id and level == finest:
+                finest_terminal_endings.setdefault(inherited_ending_id, set()).add(node_id)
+            elif isinstance(variant_id, str) and variant_id:
+                result.add(
+                    "error",
+                    "missing_ending_id",
+                    f"Terminal node with ending_variant_id must also declare ending_id: {node_id}",
+                    f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                )
+            elif level == finest:
+                result.add(
+                    "error",
+                    "terminal_without_ending_lineage",
+                    f"Finest-level terminal node must declare or inherit an ending_id: {node_id}",
+                    f"design_levels.{level_id(level)}.story_graph.nodes.{node_id}.ending_id",
+                )
+
+    for ending_id, node_id in sorted(ending_id_to_node.items()):
+        if not finest_terminal_endings.get(ending_id):
+            result.add(
+                "error",
+                "ending_without_finest_terminal",
+                f"Coarsest ending_id has no finest-level terminal descendant: {ending_id}",
+                f"design_levels.{level_id(finest)}.story_graph.nodes",
+            )
+
+
+def validate_public_v3_graph(branch_graph: Json) -> ValidationResult:
+    result = ValidationResult()
+    nodes = {
+        node["id"]: node
+        for node in as_list(branch_graph.get("nodes"))
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    edges = [edge for edge in as_list(branch_graph.get("edges")) if isinstance(edge, dict)]
+    for node_id, node in nodes.items():
+        if is_terminal_node(node) and not isinstance(node.get("ending_id"), str):
+            result.add(
+                "error",
+                "public_terminal_missing_ending_id",
+                f"V3 public terminal node must carry ending_id: {node_id}",
+                f"branch_graph.nodes.{node_id}.ending_id",
+            )
+    validate_graph_path_closure(
+        result,
+        nodes=nodes,
+        edges=edges,
+        start_node_id=branch_graph.get("start_node_id"),
+        path="branch_graph",
+        path_without_terminal_kind="public_path_without_terminal",
+        nonterminal_sink_kind="public_nonterminal_sink",
+    )
+    return result
+
+
+def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Json]]:
     levels: list[int] = artifacts["levels"]
     design = artifacts["design_levels"]
     finest = min(levels)
@@ -605,6 +1257,47 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
 
     def sort_nodes(ids: list[str]) -> list[str]:
         return sorted(ids, key=lambda node_id: (node_level.get(node_id, 999), level_orders.get(node_level.get(node_id, 0), {}).get(node_id, 9999), node_id))
+
+    def ending_metadata_for(node_id: str) -> Json:
+        node = all_nodes.get(node_id, {})
+        chain = parent_chain_for_node(node_id, all_nodes)
+        lineage = list(reversed(chain))
+        inherited_ending_id = next(
+            (
+                str(all_nodes[ancestor_id].get("ending_id"))
+                for ancestor_id in lineage
+                if isinstance(all_nodes.get(ancestor_id, {}).get("ending_id"), str)
+                and str(all_nodes[ancestor_id].get("ending_id")).strip()
+            ),
+            None,
+        )
+        explicit_ending_id = node.get("ending_id")
+        ending_id = explicit_ending_id if isinstance(explicit_ending_id, str) and explicit_ending_id.strip() else inherited_ending_id
+        explicit_variant_id = node.get("ending_variant_id")
+        variant_id = explicit_variant_id if isinstance(explicit_variant_id, str) and explicit_variant_id.strip() else None
+        if not ending_id:
+            return {}
+        should_publish = (
+            is_terminal_node(node)
+            or isinstance(node.get("ending_id"), str)
+            or isinstance(node.get("ending_variant_id"), str)
+            or isinstance(node.get("variant_of_ending_id"), str)
+        )
+        if not should_publish:
+            return {}
+        if not variant_id and is_terminal_node(node):
+            variant_id = f"{ending_id}.{safe_suffix(node_id)}"
+        metadata: Json = {
+            "ending_id": ending_id,
+            "ending_lineage": lineage,
+        }
+        if variant_id:
+            metadata["ending_variant_id"] = variant_id
+            variant_of = node.get("variant_of_ending_id")
+            metadata["variant_of_ending_id"] = (
+                variant_of if isinstance(variant_of, str) and variant_of.strip() else ending_id
+            )
+        return metadata
 
     def entry_for(node_id: str, seen: set[str] | None = None) -> str | None:
         if node_id in public_node_ids:
@@ -667,10 +1360,10 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
         }
         if isinstance(node.get("source_derivation"), dict):
             public_node["source_derivation"] = node["source_derivation"]
+        public_node.update(ending_metadata_for(node_id))
         public_nodes.append(public_node)
 
     public_edges: list[Json] = []
-    public_edge_origins: dict[str, Json] = {}
     seen_edge_ids: set[str] = set()
     for edge in as_list(design[finest]["story_graph"].get("edges")):
         if not isinstance(edge, dict) or not isinstance(edge.get("id"), str):
@@ -692,11 +1385,11 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
             "label": str(edge.get("label", "")),
             "condition_type": str(edge.get("condition_type", "unconditional")),
             "conditions": as_list(edge.get("conditions")),
+            "effects": [normalize_effect(effect) for effect in as_list(edge.get("effects"))],
             "source_rule_ids": [edge["id"]],
             "layer": f"v3.{level_id(finest)}",
         }
         public_edges.append(public_edge)
-        public_edge_origins[edge_id] = edge
 
     clusters = []
     for node_id in sort_nodes(list(expanded_node_ids)):
@@ -747,7 +1440,7 @@ def public_graph_from_v3(artifacts: dict[str, Any]) -> tuple[Json, dict[str, Jso
         ],
         "nodes": public_nodes,
         "edges": public_edges,
-    }, public_edge_origins, public_node_map
+    }, public_node_map
 
 
 def compile_requirements(run_root: Path, artifacts: dict[str, Any]) -> Json:
@@ -882,9 +1575,15 @@ def compile_synopsis(artifacts: dict[str, Any]) -> Json:
     }
 
 
-def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json, public_edge_origins: dict[str, Json], node_public_map: dict[str, Json]) -> Json:
+def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json, node_public_map: dict[str, Json]) -> Json:
     facts = artifacts["canonical_facts"]
     policy = artifacts["global_policy"]
+    finest = min(artifacts["levels"])
+    public_node_ids = {
+        node.get("id")
+        for node in as_list(branch_graph.get("nodes"))
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
     variables: list[Json] = []
     seen_state_ids: set[str] = set()
     for level in sorted(artifacts["levels"], reverse=True):
@@ -900,8 +1599,7 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json, public_edge_o
     for edge in as_list(branch_graph.get("edges")):
         if not isinstance(edge, dict) or not isinstance(edge.get("id"), str):
             continue
-        origin = public_edge_origins.get(edge["id"], {})
-        effects = [normalize_effect(effect) for effect in as_list(origin.get("effects"))]
+        effects = [normalize_effect(effect) for effect in as_list(edge.get("effects"))]
         if edge.get("conditions") or effects or edge.get("condition_type") not in ("unconditional", ""):
             event_rules.append({
                 "id": f"rule.{safe_suffix(edge['id'])}",
@@ -951,6 +1649,35 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json, public_edge_o
         "description": item.get("summary", ""),
     } for item in as_list(facts.get("objects")) if isinstance(item, dict))
 
+    def hide_private_node_refs(value: Any) -> Any:
+        if isinstance(value, str):
+            return re.sub(r"\bnode\.", "v3graph.", value)
+        if isinstance(value, list):
+            return [hide_private_node_refs(item) for item in value]
+        if isinstance(value, dict):
+            return {key: hide_private_node_refs(item) for key, item in value.items()}
+        return value
+
+    node_contracts: list[Json] = []
+    for level in artifacts["levels"]:
+        for contract in as_list(artifacts["design_levels"][level]["contracts"].get("contracts")):
+            if not isinstance(contract, dict):
+                continue
+            compiled_contract = strip_internal_trace(contract)
+            private_node_id = contract.get("graph_node_id")
+            if level != finest:
+                compiled_contract = hide_private_node_refs(compiled_contract)
+                public_info = node_public_map.get(str(private_node_id), {})
+                public_node_id = public_info.get("entry") if isinstance(public_info, dict) else None
+                if public_node_id not in public_node_ids and isinstance(public_info, dict):
+                    public_node_id = public_info.get("exit")
+                if public_node_id in public_node_ids:
+                    compiled_contract["graph_node_id"] = public_node_id
+                else:
+                    compiled_contract.pop("graph_node_id", None)
+                compiled_contract["source_v3_level"] = level_id(level)
+            node_contracts.append(compiled_contract)
+
     return {
         "metadata": {"schema_version": "0.2.0", "generated_by": "DesignLayerV3Assembler", "notes": ["Compiled from Design Layer V3."]},
         "design_layer": {"version": "v3"},
@@ -991,12 +1718,7 @@ def compile_game_ir(artifacts: dict[str, Any], branch_graph: Json, public_edge_o
             for node in as_list(branch_graph.get("nodes"))
             if isinstance(node, dict)
         ],
-        "node_contracts": [
-            strip_internal_trace(contract)
-            for level in artifacts["levels"]
-            for contract in as_list(artifacts["design_levels"][level]["contracts"].get("contracts"))
-            if isinstance(contract, dict)
-        ],
+        "node_contracts": node_contracts,
         "event_rules": event_rules,
         "compiler_trace": {"compiled_from_design_layer_version": "v3"},
     }
@@ -1009,6 +1731,9 @@ def validate_compiled_public(requirements: Json, synopsis: Json, branch_graph: J
     result.extend(validate_branch_graph(branch_graph))
     result.extend(validate_game_ir(game_ir, branch_graph))
     result.extend(validate_graph_ir_consistency(branch_graph, game_ir))
+    design_layer = game_ir.get("design_layer") if isinstance(game_ir.get("design_layer"), dict) else {}
+    if design_layer.get("version") == "v3":
+        result.extend(validate_public_v3_graph(branch_graph).findings)
     return result
 
 
@@ -1035,8 +1760,8 @@ def compile_design_v3(run_root: Path) -> ValidationResult:
 
     requirements = compile_requirements(run_root, artifacts)
     synopsis = compile_synopsis(artifacts)
-    branch_graph, public_edge_origins, node_public_map = public_graph_from_v3(artifacts)
-    game_ir = compile_game_ir(artifacts, branch_graph, public_edge_origins, node_public_map)
+    branch_graph, node_public_map = public_graph_from_v3(artifacts)
+    game_ir = compile_game_ir(artifacts, branch_graph, node_public_map)
 
     assembled_root = design_v3_path(run_root, "assembled")
     staged = {

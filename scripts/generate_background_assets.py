@@ -23,7 +23,6 @@ from compile_rpg_manifest import compile_rpg_manifest
 from export_boundary_previews import export_boundary_previews
 from generate_rpg_boundaries_from_masks import generate_boundaries as generate_rpg_boundaries
 from generate_assets import (
-    build_background_prompt,
     build_rpg_asset_prompt,
     render_rpg_svg,
     remote_rpg_asset_shape,
@@ -86,8 +85,6 @@ def normalize_video_provider(value: str | None) -> str:
 
 def prompt_for_asset(asset: Json, manifest: Json) -> str:
     section = asset["section"]
-    if section == "backgrounds":
-        return build_background_prompt({"asset_id": asset["asset_id"], "spec": asset.get("spec", {})}, manifest)
     role = "map_asset" if section == "map_assets" else "battle_background"
     return build_rpg_asset_prompt({"asset_id": asset["asset_id"], "spec": asset.get("spec", {})}, role, manifest)
 
@@ -101,7 +98,7 @@ def output_path_for_asset(run_root: Path, asset: Json) -> Path:
 
 def write_local_svg(asset: Json, output_path: Path) -> list[str]:
     section = asset["section"]
-    role = "background" if section == "backgrounds" else ("map_asset" if section == "map_assets" else "battle_background")
+    role = "map_asset" if section == "map_assets" else "battle_background"
     source_svg = output_path.parents[2] / "sources" / f"{asset['asset_id']}.svg"
     return write_png_from_svg(render_rpg_svg({"asset_id": asset["asset_id"], "spec": asset.get("spec", {})}, role), output_path, source_svg)
 
@@ -111,6 +108,8 @@ def imagegen_request(run_root: Path, asset: Json, prompt: str, output_path: Path
     write_json(request_path, {
         "asset_id": asset["asset_id"],
         "asset_kind": asset["background_type"],
+        "provider": "imagegen",
+        "requested_provider": "imagegen",
         "prompt": prompt,
         "output_file": str(output_path.relative_to(run_root)),
         "note": "Codex agent must call image_gen, save/copy the generated image to output_file, then rerun postprocessing/provenance.",
@@ -167,8 +166,8 @@ def generate_static_image(
 
     try:
         if provider in {"openai-ppioImage"}:
-            role = "background" if asset["section"] == "backgrounds" else ("map_asset" if asset["section"] == "map_assets" else "battle_background")
-            image_type, aspect_ratio = ("background", "16:9") if role == "background" else remote_rpg_asset_shape(role)
+            role = "map_asset" if asset["section"] == "map_assets" else "battle_background"
+            image_type, aspect_ratio = remote_rpg_asset_shape(role)
             images = generate_provider_images(
                 provider=provider,
                 model=model,
@@ -256,8 +255,6 @@ def generate_video_if_enabled(run_root: Path, asset: Json, static_result: Json, 
 
 def selected_assets(probe: Json, scope: str) -> list[Json]:
     assets = [asset for asset in probe.get("background_assets", []) if isinstance(asset, dict)]
-    if scope == "all":
-        return assets
     return [asset for asset in assets if asset.get("scope") == scope]
 
 
@@ -301,7 +298,7 @@ def generate_backgrounds(
 
     boundary_report = None
     boundary_validation_report = None
-    if status == "pass" and scope in ("rpg", "all") and any(asset.get("scope") == "rpg" for asset in assets):
+    if status == "pass" and any(asset.get("scope") == "rpg" for asset in assets):
         try:
             boundary_report = generate_rpg_boundaries(run_root=run_root, provider=provider, env_file=env_file, overwrite=overwrite)
             if boundary_report.get("status") == "needs_boundary_imagegen":
@@ -344,7 +341,7 @@ def generate_backgrounds(
         for _, static_result in static_entries:
             record_asset_result(run_root, static_result)
 
-    if status == "pass" and boundary_report is None and scope in ("rpg", "all") and any(asset.get("scope") == "rpg" for asset in assets):
+    if status == "pass" and boundary_report is None and any(asset.get("scope") == "rpg" for asset in assets):
         try:
             boundary_report = export_boundary_previews(run_root)
         except Exception as exc:  # noqa: BLE001
@@ -362,11 +359,7 @@ def generate_backgrounds(
         "boundary_report": boundary_report,
         "boundary_validation_report": boundary_validation_report,
     }
-    report_name = {
-        "rpg": "rpg-background-generation-report.json",
-        "vn": "vn-background-generation-report.json",
-        "all": "background-generation-report.json",
-    }[scope]
+    report_name = "rpg-background-generation-report.json"
     write_json(run_root / "reports" / report_name, report)
     return report
 
@@ -374,7 +367,7 @@ def generate_backgrounds(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-root", required=True)
-    parser.add_argument("--scope", choices=("rpg", "vn", "all"), default="all")
+    parser.add_argument("--scope", choices=("rpg",), default="rpg")
     parser.add_argument("--image-provider", default=None)
     parser.add_argument("--video-provider", default=None)
     parser.add_argument("--image-model", default=None)

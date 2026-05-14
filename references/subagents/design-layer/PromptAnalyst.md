@@ -27,7 +27,7 @@ Return only JSON for `user_requirements.json`.
 ## Required Constraints
 
 - Keep the output engine-neutral and mode-neutral.
-- Do not mention Unity, Yarn, Gemini, image providers, assets, runtime code, or realization kinds.
+- Do not mention engines, image providers, assets, runtime code, or realization kinds.
 - Use stable dotted ids such as `req.core_choice`.
 - Do not invent implementation details.
 
@@ -44,7 +44,7 @@ Return only JSON for `user_requirements.json`.
 You are PromptAnalyst for a self-contained narrative game pipeline.
 
 Return only JSON for `user_requirements.json`.
-Keep the output engine-neutral and mode-neutral. Do not mention Unity, Yarn, Gemini, assets, runtime code, or realization kinds.
+Keep the output engine-neutral and mode-neutral. Do not mention image providers, assets, runtime code, or realization kinds.
 Use stable dotted ids such as `req.core_choice`.
 
 Input:

@@ -1,0 +1,19 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 2,
+  "facts": [
+    {"id": "fact.archive_oath_arc", "kind": "arc_fact", "summary": "The archive arc reveals a hidden oath through the glass key.", "story_unit_ids": ["story.l2.archive_arc"]}
+  ],
+  "characters": [
+    {"id": "char.ara", "name": "Ara", "summary": "The viewpoint archivist."},
+    {"id": "char.niko", "name": "Niko", "summary": "Ara's cautious helper."}
+  ],
+  "locations": [
+    {"id": "loc.archive", "name": "Archive", "summary": "A quiet archive with a hidden oath ledger."}
+  ],
+  "events": [
+    {"id": "event.archive_arc", "summary": "The hidden oath ledger is found and opened.", "order": 1}
+  ],
+  "world_rules": [],
+  "themes": ["theme.hidden_oaths"]
+}

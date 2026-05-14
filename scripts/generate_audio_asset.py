@@ -2,7 +2,7 @@
 """Generate one audio asset through the configured provider.
 
 This CLI is intentionally narrow: it lets the controller or a future agent
-debug BGM/SFX/TTS generation without running the full VN asset pipeline.
+debug BGM/SFX/TTS generation without running the full asset pipeline.
 """
 
 from __future__ import annotations

@@ -55,119 +55,6 @@ edges must not be written as if their labels or endpoints will appear directly
 as runtime choices. Their outcomes must reach runtime indirectly through child
 level state, child graph design, and `parent_state_settlements`.
 
-## Controller Packet Prompt Template
-
-`LevelStateGraphDesigner` is packet-dependent, so the controller must fill this
-template for each spawned worker instead of using a global fixed prompt. For the
-coarsest enabled level, spawn exactly one global packet with all coarsest
-same-level story units and no parent context. For non-coarsest levels, spawn
-parallel shard packets by immediate parent packet when useful. Pass only the
-completed packet plus this role card.
-
-```text
-You are LevelStateGraphDesigner for a V3 hierarchical narrative adaptation.
-
-Task:
-Design graph/state artifacts for design level `<LEVEL_ID>` / shard
-`<SHARD_ID>` in run `<RUN_ROOT>`.
-
-Return only JSON with these top-level keys:
-- `state_model`
-- `story_graph`
-- `contracts`
-- `parent_state_settlements`
-
-Your output is a packet return, not a canonical write. The controller will
-validate and merge accepted packet returns into:
-- `workspace/design_layer_v3/design_levels/<LEVEL_ID>/state_model.json`
-- `workspace/design_layer_v3/design_levels/<LEVEL_ID>/story_graph.json`
-- `workspace/design_layer_v3/design_levels/<LEVEL_ID>/contracts.json`
-- `workspace/design_layer_v3/design_levels/<LEVEL_ID>/parent_state_settlements.json`
-
-Runtime export boundary:
-- the finest enabled level, normally `level_01`, is the only source for public
-  `workspace/design_layer/branch_graph.json` nodes and edges;
-- coarser `story_graph` outputs are design/context artifacts only and must not
-  rely on their edge labels or endpoints becoming runtime-visible choices;
-- coarser outcomes must be expressed through state, contracts, child-level
-  design pressure, and `parent_state_settlements`.
-- the coarsest enabled level must be one global design packet, not parallel
-  shards, so global state and route-family consistency are designed in one
-  place.
-
-Read only the packet content listed below. Do not inspect sibling packets, the
-full run directory, source chunks not included here, Yarn fragments, assets,
-runtime files, or global contracts unless the packet explicitly embeds excerpts.
-
-Packet contents:
-- role card: `references/subagents/design-layer-v3/LevelStateGraphDesigner.md`
-- schema excerpt: `<EMBEDDED_OR_REFERENCED_SCHEMA_EXCERPT>`
-- hierarchy policy excerpt: `<HIERARCHY_POLICY_EXCERPT>`
-- assigned same-level story units; for the coarsest enabled level this must be
-  all same-level story units: `<ASSIGNED_STORY_UNITS>`
-- same-level fact view slice: `<FACT_VIEW_SLICE>`
-- global adaptation policy excerpt: `<GLOBAL_POLICY_EXCERPT>`
-- parent graph/state/contracts slice, or `null` for coarsest level:
-  `<PARENT_CONTEXT_SLICE>`
-- controller-selected relevant source/fact excerpts: `<RELEVANT_EXCERPTS>`
-- branch permission and network target: `<BRANCH_PERMISSION_AND_TARGET>`
-- optional repair notes: `<REPAIR_NOTES_OR_NULL>`
-
-Design order:
-1. Define this level's state variables first.
-2. Derive how different state values change story experience.
-3. Design choices as concrete player actions that read, write, gate, or settle
-   state. A choice may express psychology through consequences, but its visible
-   label and immediate route meaning should be an external behavior.
-4. Build one or more graph nodes for each assigned same-level story unit.
-5. Write contracts that make state-dependent variation visible downstream.
-6. Write parent settlements for the immediate parent level only.
-
-If this shard can affect the ending, define explicit ending resolution state
-instead of only vague pressure. Use a concrete state variable such as
-`state.game.ending_id` or an owned level variable that settles into it, and make
-every ending family reachable through state-gated consequences with one fallback
-only. `balanced` may be a fallback or earned convergence, but it must never be a
-default value that overwrites all route memory at the terminal node.
-
-This run is intended to produce a visibly networked adaptation, not a linear VN,
-unless `<BRANCH_PERMISSION_AND_TARGET>` explicitly says this shard is locked
-linear. Preserve source anchoring, not strict one-to-one story-unit/node
-correspondence. Each assigned story unit is a source anchor and causal template.
-Create one or more graph nodes from that anchor when different prior states
-would make the event happen differently, fail, delay, repeat, transform, or be
-replaced by a canon-compatible consequence.
-
-For any branch-permitted shard with 5 or more assigned story-unit nodes, target:
-- at least two nodes with outgoing edges to different target nodes;
-- at least two source story units expanded into multiple visible graph-node
-  variants when the shard has enough material to support it;
-- at least one `state_gate` edge;
-- at least one optional, revisit, skip, reorder, or delayed-return route;
-- at least one convergence point where route memory remains visible downstream;
-- no more than two consecutive nodes with exactly one incoming edge and one
-  outgoing edge.
-
-A branch is meaningful only if it changes node order/access, gates or revisits
-material, writes state read by later contracts, or changes parent settlement.
-Multiple exits to the same target are cosmetic unless downstream contracts read
-the divergent state and produce different later content.
-
-Before final output, audit:
-1. Can two players see a different node order?
-2. Can two players skip, delay, or revisit different material?
-3. Can earlier choices visibly change later node contracts or route into
-   different source-anchored event variants?
-4. Does convergence preserve route memory through state reads?
-5. Are there at least three distinct valid node sequences?
-
-If the audit fails, revise the graph or record the locked-canon/controller
-exception inside existing schema fields such as node summaries, contract
-allowed reads/writes, or settlement reasons. Do not add non-schema fields.
-
-Do not write dialogue, Yarn, assets, Unity paths, runtime code, or canonical
-artifacts. Output must match the schema excerpts provided in this packet.
-```
 
 ## Required Parent State Settlement
 
@@ -175,6 +62,88 @@ Every non-coarsest level must declare how local completion or route settlement
 affects the immediate parent level state through `parent_state_settlements`.
 `effects_on_parent_state` may only write state variables owned by the immediate
 parent level.
+
+## Layered Refinement Principle
+
+Every enabled level owns its own state model. Higher levels define coarser story
+results, route functions, pressure, and contracts. Lower levels refine those
+parent results with more concrete event-space, local state, route memory, and
+visible consequences.
+
+This principle applies to all graph nodes, not only endings:
+
+```text
+higher level = what happened / what role this story unit serves
+lower level  = how it specifically happens / which local route produced it
+```
+
+A non-coarsest graph node must preserve the meaning of its `parent_node_id`.
+It may split that parent context into canon, variant, failure, delayed,
+revisit, bridge, or consequence nodes when lower-level state makes those
+versions materially different. It must not silently change the parent result
+itself. If local design evidence shows that the parent result, parent state
+model, or parent contract is wrong, return a repair note for the higher level
+instead of inventing a contradictory child node.
+
+Use lower-level state to explain the refinement:
+
+- local result state records which concrete child result occurred;
+- route memory records how multiple child paths reached the same parent result;
+- access, knowledge, relationship, risk, cost, and interpretation state record
+  why the refined version should change later content;
+- `parent_state_settlements` summarize the child result back into immediate
+  parent state.
+
+## Ending Ownership
+
+Ending ownership is the terminal case of the layered refinement principle.
+Higher-level endings are defined by higher-level state and represent the global
+story result. Lower levels inherit that result and may add finer local state to
+produce concrete variants.
+
+```text
+higher level = what finally happened
+lower level  = how it specifically happened
+```
+
+For example, a coarsest ending family may be:
+
+```text
+ending.return_home = the protagonist returns to their country
+```
+
+A lower level may refine it with local state:
+
+```text
+state.l1.companion = alone | with_friend | with_rival
+```
+
+and produce variants:
+
+```text
+ending.return_home.alone
+ending.return_home.with_friend
+ending.return_home.with_rival
+```
+
+All variants preserve the high-level return-home result. They differ only in
+the lower-level payoff: who returns with the protagonist, what relationship was
+settled, what cost was paid, or what route memory is visible.
+
+The coarsest enabled worker must design every top-level ending family before
+lower levels expand them. It should define terminal coarsest-level ending nodes,
+unique `ending_id` values, ending-resolution state such as
+`state.game.ending_id`, fallback ordering when multiple endings exist, and an
+ending matrix that explains route family, preserved canon, cost, unresolved
+pressure, and required prior state.
+
+Non-coarsest workers may add terminal variants only under an assigned parent
+ending node or parent context that leads to a declared ending. They must keep
+the inherited `ending_id` and may add `ending_variant_id` for the finer version.
+They must explain which lower-level state variables refine the inherited result.
+If a lower-level worker needs to change the higher-level result itself, that is
+not a variant; return a repair note requesting a higher-level ending-family
+update instead of inventing a new `ending_id`.
 
 ## Coarsest-Level Global Design
 
@@ -185,7 +154,8 @@ must see every coarsest same-level story unit and design:
 - a single connected top-level event space;
 - all global route-family state needed by lower levels;
 - cross-act route memory and convergence expectations;
-- ending-resolution state, if the run has multiple ending families;
+- all terminal ending family nodes, their unique `ending_id` values, and
+  ending-resolution state, if the run has multiple ending families;
 - the top-level contracts that tell child levels which state reads and writes
   must remain meaningful.
 
@@ -504,7 +474,7 @@ When a shard owns or influences a terminal node:
 - Do not inspect sibling packets. For the coarsest enabled level, there should
   be no sibling graph/state packet.
 - Do not write canonical artifacts.
-- Do not write dialogue, Yarn, assets, Unity paths, or runtime code.
+- Do not write dialogue, assets, engine paths, or runtime code.
 - Preserve source anchoring between same-level story units and graph nodes:
   every assigned `linear_story.units[*]` appears in at least one same-level
   `story_graph.nodes[*].story_unit_ids`, and every graph node references at

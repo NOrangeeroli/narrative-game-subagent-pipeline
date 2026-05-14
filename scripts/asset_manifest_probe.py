@@ -12,13 +12,11 @@ from pipeline_lib import Json, as_list, load_optional_json, path_for, write_json
 
 
 BACKGROUND_SECTIONS = {
-    "backgrounds": ("vn_background", "vn"),
     "map_assets": ("rpg_background", "rpg"),
     "battle_backgrounds": ("rpg_background", "rpg"),
 }
 
 MANIFEST_SECTION_GROUPS = {
-    "backgrounds": "vn_backgrounds",
     "map_assets": "rpg_backgrounds",
     "battle_backgrounds": "rpg_backgrounds",
     "tilesets": "tilesets",
@@ -28,12 +26,10 @@ MANIFEST_SECTION_GROUPS = {
     "skill_icons": "skill_icons",
     "equipment_icons": "equipment_icons",
     "rpg_ui": "rpg_ui",
-    "cgs": "cgs",
     "ui": "ui",
 }
 
 SUBAGENT_ROLE_CARDS = {
-    "vn_backgrounds": "references/subagents/background/VNBackgroundGenerator.md",
     "rpg_backgrounds": "references/subagents/background/RPGBackgroundGenerator.md",
     "bgm": "references/subagents/audio/BGMAudioGenerator.md",
     "sfx": "references/subagents/audio/SFXAudioGenerator.md",
@@ -125,19 +121,6 @@ def collect_manifest_assets(run_root: Path, manifest: Json) -> list[Json]:
         group = audio_kind if audio_kind in {"bgm", "sfx", "voice"} else "audio"
         add(manifest_asset_entry(run_root, "audio", group, audio, kind=audio_kind))
 
-    for character in as_list(manifest.get("characters")):
-        if not isinstance(character, dict):
-            continue
-        for portrait in as_list(character.get("portrait_assets")):
-            if isinstance(portrait, dict):
-                add(manifest_asset_entry(run_root, "characters.portrait_assets", "portraits", portrait, kind="portrait"))
-        canon_ref = {
-            "asset_id": character.get("canon_ref_asset_id"),
-            "file_ref": character.get("canon_ref_file_ref"),
-            "spec": character.get("spec") if isinstance(character.get("spec"), dict) else {},
-        }
-        add(manifest_asset_entry(run_root, "characters.canon_ref", "character_refs", canon_ref, kind="character_ref"))
-
     return assets
 
 
@@ -178,10 +161,8 @@ def probe_asset_manifest(run_root: Path) -> Json:
             "issues": [{"code": "missing_manifest", "message": "Missing workspace/asset-manifest.json."}],
             "background": False,
             "rpg_background": False,
-            "vn_background": False,
             "background_count": 0,
             "rpg_background_count": 0,
-            "vn_background_count": 0,
             "background_assets": [],
             "asset_count": 0,
             "existing_asset_count": 0,
@@ -196,7 +177,6 @@ def probe_asset_manifest(run_root: Path) -> Json:
     missing_assets = [asset for asset in assets if not asset.get("exists")]
     background_assets = [asset for asset in assets if asset.get("section") in BACKGROUND_SECTIONS]
     rpg_assets = [asset for asset in background_assets if asset.get("scope") == "rpg"]
-    vn_assets = [asset for asset in background_assets if asset.get("scope") == "vn"]
     dispatch = [
         {
             "dispatch_group": group_name,
@@ -214,10 +194,8 @@ def probe_asset_manifest(run_root: Path) -> Json:
         "issues": [],
         "background": bool(background_assets),
         "rpg_background": bool(rpg_assets),
-        "vn_background": bool(vn_assets),
         "background_count": len(background_assets),
         "rpg_background_count": len(rpg_assets),
-        "vn_background_count": len(vn_assets),
         "background_assets": background_assets,
         "asset_count": len(assets),
         "existing_asset_count": len(assets) - len(missing_assets),

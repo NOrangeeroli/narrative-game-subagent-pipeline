@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small motion-asset providers for VN v4 assets."""
+"""Small motion-asset providers for RPG runtime media."""
 
 from __future__ import annotations
 

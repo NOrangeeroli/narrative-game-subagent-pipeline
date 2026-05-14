@@ -15,30 +15,26 @@ These agents produce the base design layer. They may depend on earlier design-la
 | BranchGraphDesigner | `design-layer/BranchGraphDesigner.md` | `workspace/design_layer/branch_graph.json` |
 | BaseGameIRDesigner | `design-layer/BaseGameIRDesigner.md` | `workspace/design_layer/game_ir.json` |
 
-## Post Design
+## RPG Overlay Design
 
-These agents run after the design layer. They should not reopen requirements or synopsis by default; use the durable downstream context in `game_ir.design_brief`, the graph topology in `branch_graph.json`, and controller-provided slices.
+These agents are used by the unified RPG design layer. They add RPG system
+intent from V3 story hierarchy without rewriting the narrative graph.
 
 | Agent | Role Card | Canonical Output |
 | --- | --- | --- |
-| NodeRealizationPlanner | `post-design/NodeRealizationPlanner.md` | `workspace/realization/node-realization-plans.json` |
-| NodeDialogueWriter | `post-design/NodeDialogueWriter.md` | `workspace/vn/fragments/<node-id>.yarn` and `.manifest.json` |
-| BattleRealizationWriter | `post-design/BattleRealizationWriter.md` | `workspace/realization/battles/<node-id>.battle.json` |
-| InteractionRealizationWriter | `post-design/InteractionRealizationWriter.md` | `workspace/realization/interactions/<node-id>.interaction.json` |
-| PuzzleRealizationWriter | `post-design/PuzzleRealizationWriter.md` | `workspace/realization/puzzles/<node-id>.puzzle.json` |
-| ExplorationRealizationWriter | `post-design/ExplorationRealizationWriter.md` | `workspace/realization/explorations/<node-id>.exploration.json` |
-| AssetDirector | `post-design/AssetDirector.md` | `workspace/asset-direction.json` |
-| ReviewSubagent | `post-design/ReviewSubagent.md` | Review findings only |
+| RPGSystemPlanner | `design-layer-rpg/RPGSystemPlanner.md` | `workspace/design_layer_rpg/rpg-overlay-plan.json` |
+| RPGDesignReviewer | `design-layer-rpg/RPGDesignReviewer.md` | `workspace/design_layer_rpg/rpg-overlay-review.json` |
 
 ## RPG Post Design
 
-These agents are used only for explicit `--target web-rpg` runs. They are parallel to VN realization and must not change the design-layer files.
+These agents are used for RPG realization and must not change the design-layer files. In narrative-first overlay runs, they should prefer assigned packets under `workspace/controller-packets/postdesign/rpg/*.json` instead of reading the full public graph.
 
 | Agent | Role Card | Canonical Output |
 | --- | --- | --- |
 | RPGCampaignPlanner | `post-design/rpg/RPGCampaignPlanner.md` | `workspace/rpg/rpg-campaign.json`, `workspace/rpg/world-map.json` |
 | RPGMapBuilder | `post-design/rpg/RPGMapBuilder.md` | `workspace/rpg/maps/*.map.json` |
 | RPGContentWriter | `post-design/rpg/RPGContentWriter.md` | `workspace/rpg/actors.json`, `enemies.json`, `items.json`, `skills.json`, `quests.json`, `npc-dialogue.json` |
+| RPGSceneScriptWriter | `post-design/rpg/RPGSceneScriptWriter.md` | `workspace/rpg/scene-scripts.json` |
 | RPGBalanceReviewer | `post-design/rpg/RPGBalanceReviewer.md` | Review findings or repaired RPG balance payloads |
 
 ## Audio Asset Generation
@@ -62,4 +58,3 @@ dynamic agents.
 | Agent | Role Card | Canonical Output |
 | --- | --- | --- |
 | RPGBackgroundGenerator | `background/RPGBackgroundGenerator.md` | `reports/rpg-background-generation-report.json`; also owns RPG boundary reports and `bgv.*` media |
-| VNBackgroundGenerator | `background/VNBackgroundGenerator.md` | `reports/vn-background-generation-report.json` |

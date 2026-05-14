@@ -1,0 +1,41 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "start_node_id": "v3.l1.ch01.entry",
+  "nodes": [
+    {
+      "id": "v3.l1.ch01.entry",
+      "title": "Index Desk",
+      "summary": "Ara searches the archive index desk and finds the glass key.",
+      "node_type": "scene",
+      "story_unit_ids": ["story.l1.ch01"],
+      "parent_node_id": "v3.l2.archive_arc",
+      "is_terminal": false
+    },
+    {
+      "id": "v3.l1.ch02.resolve",
+      "title": "Ledger Opens",
+      "summary": "Niko helps Ara turn the key and the oath ledger opens.",
+      "node_type": "terminal",
+      "story_unit_ids": ["story.l1.ch02"],
+      "parent_node_id": "v3.l2.ending.archive_remembered",
+      "is_terminal": true,
+      "ending_id": "ending.archive_remembered",
+      "ending_variant_id": "ending.archive_remembered.key_found",
+      "variant_of_ending_id": "ending.archive_remembered"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge.v3.l1.search_to_open",
+      "from": "v3.l1.ch01.entry",
+      "to": "v3.l1.ch02.resolve",
+      "label": "Turn the glass key",
+      "condition_type": "player_choice",
+      "conditions": [],
+      "effects": [
+        {"state_variable_id": "state.l1.key_found", "operation": "set", "value": true}
+      ]
+    }
+  ]
+}

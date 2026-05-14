@@ -26,14 +26,60 @@ story extraction:   fine -> coarse
 graph/state design: coarse -> fine
 ```
 
-Story extraction levels support controller sharding by default. Graph/state
-design proceeds coarse-to-fine, but the coarsest enabled graph/state level must
-be designed by exactly one clean-context `LevelStateGraphDesigner` worker. That
-top-level worker owns the global graph, global state model, route-family
-settlement, cross-act consistency, and ending-resolution state. Non-coarsest
-graph/state levels may then be sharded by immediate parent packet. Workers
-return partial payloads only; the controller merges shard returns
-deterministically before the next level begins.
+Non-coarsest story extraction levels support controller sharding by default. For
+long source-adaptation RPG runs, enable three levels by default: L1 source
+scene/chapter chunks, L2 arc packets, and L3 global story/design. For
+source-adaptation runs, finest-level story extraction must cover the complete
+source inventory from `inputs/source_material/source_index.json`: the controller
+partitions every chunk/span across shard packets, waits for every shard return,
+and rejects the level merge if any source chunk is unassigned, unfinished, or
+missing from accepted extraction trace. Representative or sample-only excerpts
+are not valid `level_01` extraction input for a source adaptation. Non-coarsest
+higher-level story extraction must also be sliced: a worker receives only its
+assigned immediate child story units/fact excerpts, not the full lower-level
+`linear_story.json`. The coarsest enabled story extraction level is the global
+story-line layer and must be produced by exactly one clean-context
+`StoryLevelExtractor` worker with all immediate lower-level story unit summaries,
+but not full source text, all L1 detail, or lower-level design artifacts.
+
+Graph/state design proceeds coarse-to-fine, but the coarsest enabled
+graph/state level must be designed by exactly one clean-context
+`LevelStateGraphDesigner` worker. That top-level worker owns the global graph,
+global state model, route-family settlement, cross-act consistency, and
+ending-resolution state. Non-coarsest graph/state levels may then be sharded by
+immediate parent packet. A non-coarsest design worker receives only its parent
+graph/state/contracts slice, assigned same-level story unit slice, local
+fact/policy slice, and controller-selected evidence excerpts. It must not
+receive all same-level story units, all parent graph/state artifacts, all source
+chunks, full source text, or sibling shard packets. Workers return partial
+payloads only; the controller merges shard returns deterministically before the
+next level begins.
+
+Every subagent packet should include a `scope` object with role, level,
+`shard_id`, `global`, assigned ids, parent ids when applicable,
+`allowed_input_paths`, and `forbidden_input_patterns`. Validation may reject
+non-coarsest packets that point to complete same-level/lower-level canonical
+artifacts instead of controller-made slices.
+
+Canonical story artifacts remain whole-level files:
+
+```text
+story_levels/level_<NN>/linear_story.json
+```
+
+For shard dispatch, the controller derives read-only slices:
+
+```text
+story_levels/level_<NN>/slices/*.json
+facts/level_<NN>/slices/*.json
+adaptation/slices/*.json
+design_levels/level_<NN>/slices/*.json
+```
+
+Slices are deterministic projections from canonical artifacts and controller
+scope decisions. They must not contain new creative content, must be
+rebuildable from canonical artifacts, and must not be treated as accepted
+canonical artifacts.
 
 Design must preserve source anchoring at every enabled level, but graph/state
 design is allowed to expand one source story unit into multiple state-dependent
@@ -133,6 +179,18 @@ Shape:
 For higher levels, `child_unit_ids` must reference units from the immediate
 lower level. For non-coarsest levels, `parent_unit_id` must reference a unit in
 the immediate higher level.
+
+Every immediate lower-level story unit must be covered by exactly one
+higher-level story parent through `parent_unit_id` and the matching
+`child_unit_ids` list. The coarsest enabled story level has no `parent_unit_id`,
+but its units collectively define the global story line consumed by adaptation
+policy and top-level graph/state design.
+
+For source-adaptation `level_01` extraction, `source_refs` are audit evidence,
+not optional decoration. Across all accepted finest-level shard returns, every
+source chunk/span listed in `inputs/source_material/source_index.json` must be
+represented by at least one story unit or an explicit controller-recorded
+compression decision before the controller writes canonical `linear_story.json`.
 
 `protagonist_action_beats` records source-grounded protagonist behavior and its
 impact. Use it to distinguish what the protagonist actively does from external
@@ -276,6 +334,81 @@ primarily name an internal mood, belief, interpretation, preference, or abstract
 stance. Psychological or interpretive consequences belong in edge `effects`,
 state variables, contracts, node summaries, and later visible payoff.
 
+### Ending Ownership
+
+Each enabled design level owns its own state model. A higher-level ending is
+defined by higher-level state and represents the global story result. Lower
+levels inherit that result and may add finer local state to produce concrete
+ending variants.
+
+```text
+higher level = what finally happened
+lower level  = how it specifically happened
+```
+
+The coarsest enabled `LevelStateGraphDesigner` owns every top-level ending
+family. It must create terminal coarsest-level `story_graph.nodes[*]` with
+stable `ending_id` values and ending-resolution state such as
+`state.game.ending_id` or a run-specific equivalent. Coarsest terminal ending
+nodes must not have outgoing edges. If a coarsest transition writes
+`state.game.ending_id`, the target terminal node's `ending_id` must be the same
+value; multiple top-level ending values must not collapse into one terminal
+node.
+
+Lower levels may expand a declared coarsest ending into more specific terminal
+variants. They must not invent a new ending family. A lower-level variant keeps
+the inherited `ending_id` and may add `ending_variant_id`:
+
+```json
+{
+  "id": "v3.l1.ending.return_home.with_friend",
+  "title": "Return Home With A Friend",
+  "summary": "The protagonist returns to their country with a companion made possible by the lower-level route.",
+  "node_type": "terminal",
+  "story_unit_ids": ["story.l1.final_scene"],
+  "parent_node_id": "v3.l2.ending.return_home",
+  "is_terminal": true,
+  "ending_id": "ending.return_home",
+  "ending_variant_id": "ending.return_home.with_friend",
+  "variant_of_ending_id": "ending.return_home",
+  "source_derivation": {
+    "kind": "consequence",
+    "base_story_unit_ids": ["story.l1.final_scene"],
+    "canon_function": "Preserve the high-level return-home result while refining who returns with the protagonist.",
+    "required_prior_state": ["state.l1.companion"],
+    "divergence_from_source": "Companion payoff differs by route memory.",
+    "invented_content_scope": "ending variant payoff"
+  }
+}
+```
+
+Required ending rules:
+
+- every coarsest terminal node must declare a unique `ending_id`;
+- every distinct coarsest `state.game.ending_id` result must target its own
+  matching coarsest ending node;
+- every lower-level `ending_id` must match a coarsest ending family;
+- `variant_of_ending_id`, when present, must equal `ending_id`;
+- lower-level ending variants must trace through `parent_node_id` to a coarsest
+  terminal node with the same `ending_id`;
+- every coarsest `ending_id` must have at least one finest-level terminal
+  descendant;
+- every finest-level terminal node must declare or inherit `ending_id`; use a
+  non-terminal handoff/boundary marker for local arc exits that are not real
+  game endings;
+- every public V3 terminal node compiled into `branch_graph.json` must carry
+  `ending_id`;
+- every public path reachable from `branch_graph.start_node_id` must be able to
+  reach a terminal ending node.
+
+The coarsest design should also provide an ending matrix in
+`adaptation/global_policy.json`, coarsest `contracts.json`, or coarsest
+terminal-node metadata. The matrix should explain the high-level state values
+that determine each ending family, preserved canon, route family, cost,
+unresolved pressure, and emotional resolution. Validators may enforce structural
+ending rules, while reviewers should check whether endings are accumulated
+outcomes rather than final arbitrary menu choices.
+
 ### `contracts.json`
 
 ```json
@@ -355,3 +488,28 @@ public branch nodes, public branch edges, runtime-visible choice labels, or
 SceneWriter targets. Coarser state variables, contracts, and
 `parent_state_settlements` may still be compiled into `game_ir.json` when they
 settle onto finest-level public nodes.
+
+Finest-level edge `conditions` and `effects` are copied into public
+`branch_graph.edges[*].conditions` and `branch_graph.edges[*].effects`. Runtime
+exporters should read these public edge fields and must not recover transition
+state by reopening private V3 `design_levels/*/story_graph.json` files.
+
+For V3 public terminal nodes, the compiler preserves ending metadata derived
+from the private hierarchy:
+
+```json
+{
+  "ending_id": "ending.return_home",
+  "ending_variant_id": "ending.return_home.with_friend",
+  "variant_of_ending_id": "ending.return_home",
+  "ending_lineage": [
+    "v3.l2.ending.return_home",
+    "v3.l1.ending.return_home.with_friend"
+  ]
+}
+```
+
+These fields let post-design and runtime export understand the terminal result
+without reopening private V3 artifacts. The compiler may inherit ending metadata
+from an ancestor, but it must not synthesize missing ending nodes or missing
+ending families.

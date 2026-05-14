@@ -1,0 +1,50 @@
+{
+  "metadata": {"schema_version": "0.1.0", "generated_by": "V3RegressionFixture"},
+  "level": 1,
+  "level_id": "level_01",
+  "granularity": "chapter",
+  "units": [
+    {
+      "id": "story.l1.ch01",
+      "title": "Chapter 1",
+      "summary": "Ara enters the archive and finds the glass key hidden below the index desk.",
+      "sequence_index": 1,
+      "source_refs": [{"source_id": "prompt", "span": [0, 30]}],
+      "child_unit_ids": [],
+      "parent_unit_id": "story.l2.archive_arc",
+      "key_events": ["event.arrival", "event.key_found"],
+      "characters": ["char.ara"],
+      "locations": ["loc.archive"],
+      "open_questions": ["Why was the key hidden?"],
+      "resolved_questions": [],
+      "reader_experience": {
+        "known_now": "Ara has found a hidden key.",
+        "active_question": "What does the key open?",
+        "withheld_information": "The oath ledger's contents.",
+        "emotional_purpose": "quiet curiosity",
+        "hook": "The key warms near the ledger shelf."
+      }
+    },
+    {
+      "id": "story.l1.ch02",
+      "title": "Chapter 2",
+      "summary": "Niko helps Ara turn the glass key and the oath ledger opens.",
+      "sequence_index": 2,
+      "source_refs": [{"source_id": "prompt", "span": [31, 80]}],
+      "child_unit_ids": [],
+      "parent_unit_id": "story.l2.archive_arc",
+      "key_events": ["event.ledger_open"],
+      "characters": ["char.ara", "char.niko"],
+      "locations": ["loc.archive"],
+      "open_questions": [],
+      "resolved_questions": ["What does the key open?"],
+      "reader_experience": {
+        "known_now": "The key opens the oath ledger.",
+        "active_question": "What oath did the archive hide?",
+        "withheld_information": "The oath's full cost.",
+        "emotional_purpose": "uneasy revelation",
+        "hook": "The first page names Ara."
+      }
+    }
+  ]
+}

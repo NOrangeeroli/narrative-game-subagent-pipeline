@@ -75,7 +75,7 @@ completion.
 
 6. If the rerun returns `needs_boundary_imagegen`, process each RPG boundary
    request under `workspace/generated-assets/imagegen-requests/rpg-boundaries/`:
-   - This stage is RPG-only. Do not run it for VN backgrounds.
+   - This stage is RPG-only and owns RPG map/battle background outputs.
    - Read `source_image_file`, `prompt`, `output_file`, and `route_nodes`.
    - Make `<run-root>/<source_image_file>` visible to the Codex client before
      calling `image_gen`; the prompt relies on the accepted still map as the

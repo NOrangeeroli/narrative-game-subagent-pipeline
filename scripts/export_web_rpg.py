@@ -26,6 +26,10 @@ def outcome_voice_asset_id(event_id: str, outcome_id: str, line_index: int) -> s
     return f"voice.outcome.{safe_voice_token(event_id)}.{safe_voice_token(outcome_id)}.{line_index + 1}"
 
 
+def scene_voice_asset_id(scene_id: str, beat_index: int) -> str:
+    return f"voice.scene.{safe_voice_token(scene_id)}.{beat_index + 1}"
+
+
 def attach_dialogue_voice_assets(dialogues: Any, runtime_assets: dict[str, str]) -> list[Json]:
     result: list[Json] = []
     for dialogue in dialogues if isinstance(dialogues, list) else []:
@@ -87,6 +91,31 @@ def attach_map_outcome_voice_assets(maps: Any, runtime_assets: dict[str, str]) -
         if events:
             updated_map["events"] = events
         result.append(updated_map)
+    return result
+
+
+def attach_scene_voice_assets(scene_scripts: Any, runtime_assets: dict[str, str]) -> list[Json]:
+    result: list[Json] = []
+    for scene in scene_scripts if isinstance(scene_scripts, list) else []:
+        if not isinstance(scene, dict):
+            continue
+        updated = dict(scene)
+        scene_id = str(updated.get("id") or "scene")
+        beats = []
+        for index, beat in enumerate(updated.get("beats") if isinstance(updated.get("beats"), list) else []):
+            if not isinstance(beat, dict):
+                beats.append(beat)
+                continue
+            beat_payload = dict(beat)
+            beat_kind = beat_payload.get("kind") or beat_payload.get("type")
+            if beat_kind in ("dialogue", "line"):
+                voice_asset_id = scene_voice_asset_id(scene_id, index)
+                if voice_asset_id in runtime_assets:
+                    beat_payload.setdefault("voice_asset_id", voice_asset_id)
+            beats.append(beat_payload)
+        if beats:
+            updated["beats"] = beats
+        result.append(updated)
     return result
 
 
@@ -161,6 +190,7 @@ def build_rpg_payload(run_root: Path, runtime_assets: dict[str, str]) -> Json:
         "encounter_tables": manifest.get("encounter_tables") or [],
         "quests": manifest.get("quests") or [],
         "npc_dialogue": attach_dialogue_voice_assets(manifest.get("npc_dialogue") or [], runtime_assets),
+        "scene_scripts": attach_scene_voice_assets(manifest.get("scene_scripts") or [], runtime_assets),
         "events": manifest.get("events") or [],
         "shops": manifest.get("shops") or [],
         "rest_points": manifest.get("rest_points") or [],

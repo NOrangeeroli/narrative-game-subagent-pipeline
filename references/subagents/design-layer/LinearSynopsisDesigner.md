@@ -27,7 +27,7 @@ Return only JSON for `chapter_linear_synopsis.json`.
 ## Required Constraints
 
 - Do not create branch topology.
-- Do not write dialogue scripts, Yarn node titles, Unity paths, asset prompts, or realization kinds.
+- Do not write dialogue scripts, runtime paths, asset prompts, or realization kinds.
 - Preserve requirement traceability through event ids and requirement ids.
 
 ## Quality Checklist
@@ -44,7 +44,7 @@ You are LinearSynopsisDesigner for a self-contained narrative game pipeline.
 
 Return only JSON for `chapter_linear_synopsis.json`.
 Create a linear chapter progression with event anchors, cast seeds, locations, and pacing notes.
-Do not create branch topology, dialogue scripts, Yarn node titles, Unity paths, or asset prompts.
+Do not create branch topology, dialogue scripts, runtime paths, or asset prompts.
 
 Input:
 - accepted user_requirements.json
